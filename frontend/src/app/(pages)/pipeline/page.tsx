@@ -15,12 +15,14 @@ import {
 import type { Project } from "@/app/components/shared/types";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 
+// The team's own vocabulary — same words they use on the Notion board.
 const LANE_LABELS: Record<PipelineLane, string> = {
-    entrada: "Intake",
-    triagem: "Triage",
-    revisao: "Review",
-    negociacao: "Negotiation",
-    assinatura: "Signature",
+    entrada: "Entrada",
+    triagem: "Triagem",
+    revisao: "Revisão",
+    negociacao: "Negociação",
+    assinatura: "Assinatura",
+    arquivado: "Arquivado",
 };
 
 const RISK_STYLES: Record<string, string> = {

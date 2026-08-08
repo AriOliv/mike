@@ -319,6 +319,7 @@ export const PIPELINE_LANES = [
     "revisao",
     "negociacao",
     "assinatura",
+    "arquivado",
 ] as const;
 export type PipelineLane = (typeof PIPELINE_LANES)[number];
 export type RiskLevel = "critico" | "atencao" | "ok";

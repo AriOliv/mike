@@ -16,6 +16,7 @@ export const LANES = [
     "revisao",
     "negociacao",
     "assinatura",
+    "arquivado",
 ] as const;
 export type Lane = (typeof LANES)[number];
 

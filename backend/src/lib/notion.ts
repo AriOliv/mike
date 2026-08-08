@@ -11,6 +11,17 @@
 import { createServerSupabase } from "./supabase";
 
 const API = "https://api.notion.com/v1";
+
+// The board is read by the legal team, so lanes show their own vocabulary
+// rather than the storage slug.
+export const LANE_LABELS: Record<string, string> = {
+    entrada: "Entrada",
+    triagem: "Triagem",
+    revisao: "Revisão",
+    negociacao: "Negociação",
+    assinatura: "Assinatura",
+    arquivado: "Arquivado",
+};
 const VERSION = "2022-06-28";
 
 // Card properties besides the title. Name -> Notion schema definition.
@@ -18,13 +29,7 @@ const SCHEMA: Record<string, unknown> = {
     Counterparty: { rich_text: {} },
     Lane: {
         select: {
-            options: [
-                { name: "entrada" },
-                { name: "triagem" },
-                { name: "revisao" },
-                { name: "negociacao" },
-                { name: "assinatura" },
-            ],
+            options: Object.values(LANE_LABELS).map((name) => ({ name })),
         },
     },
     Risk: {
@@ -129,12 +134,49 @@ async function resolveDatabase(db: Db): Promise<{ id: string; titleProp: string 
 
 async function ensureSchema(databaseId: string, meta: Record<string, unknown>): Promise<void> {
     const existing = (meta.properties ?? {}) as Record<string, unknown>;
-    const missing: Record<string, unknown> = {};
+    const patch: Record<string, unknown> = {};
     for (const [name, def] of Object.entries(SCHEMA)) {
-        if (!(name in existing)) missing[name] = def;
+        if (!(name in existing)) patch[name] = def;
     }
-    if (Object.keys(missing).length > 0) {
-        await req("PATCH", `/databases/${databaseId}`, { properties: missing });
+
+    // Lane options drift when the team renames a stage. An option that means the
+    // same thing is renamed in place — keeping its id preserves the value on
+    // every card already using it — and genuinely new stages are appended.
+    // Nothing is removed: dropping an option in use would blank those cards.
+    const lane = existing.Lane as
+        | { select?: { options?: { id?: string; name: string }[] } }
+        | undefined;
+    if (lane?.select) {
+        // Compare stages ignoring case and accents, so "revisao" is recognised
+        // as the same stage as "Revisão" and gets renamed rather than duplicated.
+        const norm = (s: string) =>
+            s
+                .normalize("NFKD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase();
+        const wanted = Object.values(LANE_LABELS);
+        const byNorm = new Map(wanted.map((name) => [norm(name), name]));
+        const current = lane.select.options ?? [];
+
+        const options = current.map((option) => {
+            const target = byNorm.get(norm(option.name));
+            return target && target !== option.name
+                ? { id: option.id, name: target }
+                : option;
+        });
+        const covered = new Set(current.map((o) => norm(o.name)));
+        for (const name of wanted) {
+            if (!covered.has(norm(name))) options.push({ name });
+        }
+
+        const changed =
+            options.length !== current.length ||
+            options.some((o, i) => o.name !== current[i]?.name);
+        if (changed) patch.Lane = { select: { options } };
+    }
+
+    if (Object.keys(patch).length > 0) {
+        await req("PATCH", `/databases/${databaseId}`, { properties: patch });
     }
 }
 
@@ -161,7 +203,7 @@ function cardProps(card: Card, titleKey: string): Record<string, unknown> {
             title: [{ type: "text", text: { content: (card.name || "(untitled)").slice(0, 1900) } }],
         },
         Counterparty: rt(card.counterparty),
-        Lane: sel(card.lane),
+        Lane: sel(card.lane ? (LANE_LABELS[card.lane] ?? card.lane) : null),
         Risk: sel(card.risk_level),
         Requester: rt(card.requester_name),
         Updated: {
