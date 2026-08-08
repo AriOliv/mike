@@ -369,6 +369,30 @@ export async function updatePipelineCard(
     });
 }
 
+// ── Acervo: questions across the whole corpus ───────────────────────────────
+export interface AcervoSource {
+    project_id: string | null;
+    contract: string;
+    ref: string | null;
+    quote: string | null;
+}
+
+export interface AcervoAnswer {
+    answer: string;
+    found: boolean;
+    sources: AcervoSource[];
+    /** how many contracts were actually read to produce the answer */
+    searched: number;
+}
+
+export async function askAcervo(question: string): Promise<AcervoAnswer> {
+    return apiRequest("/acervo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+    });
+}
+
 // ── AI contract analysis (dossier) ──────────────────────────────────────────
 export interface DossierFinding {
     clausula?: string | null;

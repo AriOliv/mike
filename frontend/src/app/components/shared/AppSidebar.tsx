@@ -36,6 +36,7 @@ const NAV_ITEMS = [
     { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
     { href: "/pipeline", label: "Pipeline", icon: FolderSkeuoIcon },
     { href: "/radar", label: "Radar", icon: WorkflowSkeuoIcon },
+    { href: "/acervo", label: "Acervo", icon: LibrarySkeuoIcon },
     { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
     { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
     { href: "/tabular-reviews", label: "Tabular Review", icon: TabularReviewSkeuoIcon },
