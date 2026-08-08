@@ -358,6 +358,47 @@ export async function updatePipelineCard(
     });
 }
 
+// ── AI contract analysis (dossier) ──────────────────────────────────────────
+export interface DossierFinding {
+    clausula?: string | null;
+    trecho_fonte?: string | null;
+    justificativa?: string | null;
+    sugestao?: string | null;
+    nota?: string | null;
+}
+
+export interface DossierRedline {
+    clausula?: string | null;
+    de?: string | null;
+    para?: string | null;
+    porque?: string | null;
+}
+
+export interface DossierPayload {
+    resumo_executivo?: string;
+    riscos_criticos?: DossierFinding[];
+    pontos_atencao?: DossierFinding[];
+    pontos_favoraveis?: DossierFinding[];
+    redlines?: DossierRedline[];
+    conformidade?: Record<string, string>;
+    pontos_abertos?: string[];
+}
+
+export interface Dossier {
+    id: string;
+    project_id: string;
+    payload: DossierPayload;
+    risk_level: string | null;
+    source: string;
+    created_at: string;
+    updated_at: string;
+}
+
+/** Null when the contract has no analysis yet — a normal state, not an error. */
+export async function getDossier(projectId: string): Promise<Dossier | null> {
+    return apiRequest<Dossier | null>(`/projects/${projectId}/dossier`);
+}
+
 // ── Deadline radar ──────────────────────────────────────────────────────────
 export type ObligationMark = "recorrente" | "critico" | "tarefa";
 

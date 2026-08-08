@@ -236,6 +236,22 @@ create index if not exists idx_obligations_user_due
 create index if not exists idx_obligations_project
   on public.obligations(project_id);
 
+-- AI contract analysis: structured review whose every item quotes the clause
+-- it came from, so a finding can be traced back to the document text.
+create table if not exists public.dossiers (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null unique references public.projects(id) on delete cascade,
+  user_id text not null,
+  payload jsonb not null default '{}'::jsonb,
+  risk_level text,
+  source text not null default 'import',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_dossiers_project
+  on public.dossiers(project_id);
+
 -- Server-owned key/value store for integration state (e.g. the Notion database
 -- the pipeline mirror created, and the cursor of the last sync).
 create table if not exists public.app_settings (
@@ -1138,6 +1154,7 @@ alter table public.courtlistener_opinion_cluster_index enable row level security
 revoke all on public.user_profiles from anon, authenticated;
 revoke all on public.projects from anon, authenticated;
 revoke all on public.obligations from anon, authenticated;
+revoke all on public.dossiers from anon, authenticated;
 revoke all on public.project_subfolders from anon, authenticated;
 revoke all on public.library_folders from anon, authenticated;
 revoke all on public.documents from anon, authenticated;

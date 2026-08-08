@@ -6,7 +6,13 @@ import { ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID } from "../components/assistant/Mod
 const STORAGE_KEY = "mike.selectedModel";
 
 function isAllowed(id: string): boolean {
-    return ALLOWED_MODEL_IDS.has(id) || id.startsWith("ollama/");
+    // ollama/ and custom/ models are discovered at runtime, so they can never
+    // appear in the static allow-list — the prefix is what makes them valid.
+    return (
+        ALLOWED_MODEL_IDS.has(id) ||
+        id.startsWith("ollama/") ||
+        id.startsWith("custom/")
+    );
 }
 
 function readStored(): string {
