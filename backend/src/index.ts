@@ -1,6 +1,7 @@
 import { app } from "./app";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { notionEnabled, startNotionSyncer } from "./lib/notion";
+import { driveEnabled, startDriveSyncer } from "./lib/drive";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -26,5 +27,12 @@ app.listen(PORT, () => {
     startNotionSyncer();
   } else {
     console.log("Notion mirror off (NOTION_TOKEN / NOTION_PARENT_ID unset).");
+  }
+  // Mirrors project documents to a shared Drive folder. Inert unless a service
+  // account file and DRIVE_FOLDER_ID are both set.
+  if (driveEnabled()) {
+    startDriveSyncer();
+  } else {
+    console.log("Drive mirror off (GOOGLE_SERVICE_ACCOUNT_FILE / DRIVE_FOLDER_ID unset).");
   }
 });

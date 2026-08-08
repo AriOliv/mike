@@ -199,6 +199,9 @@ services:
       - R2_BUCKET_NAME=mike
       # Local Ollama running on the host. Override OLLAMA_MODEL to change the tag.
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+    volumes:
+      # service-account key for the Drive mirror (read-only, git-ignored)
+      - ./backend/secrets:/app/secrets:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

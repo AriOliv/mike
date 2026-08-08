@@ -27,3 +27,6 @@ e2e/.auth/
 # harness only; CI scaffolds its own fresh copy on every run
 /supabase/
 backend/supabase/
+
+# service account keys (never commit)
+backend/secrets/

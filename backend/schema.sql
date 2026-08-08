@@ -298,6 +298,11 @@ create table if not exists public.documents (
 create index if not exists idx_documents_user_project
   on public.documents(user_id, project_id);
 
+-- Google Drive mirror (null = never mirrored).
+alter table public.documents
+  add column if not exists drive_file_id text,
+  add column if not exists drive_link text;
+
 create index if not exists idx_documents_project_folder
   on public.documents(project_id, folder_id);
 
