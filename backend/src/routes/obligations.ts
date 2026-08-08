@@ -5,6 +5,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { checkProjectAccess } from "../lib/access";
+import { removeCalendarEvent } from "../lib/gcal";
 
 export const obligationsRouter = Router();
 
@@ -138,5 +139,7 @@ obligationsRouter.delete("/:id", requireAuth, async (req, res) => {
         .eq("id", req.params.id)
         .eq("user_id", userId);
     if (error) return void res.status(500).json({ detail: error.message });
+    // Best-effort: the deadline is gone either way, the event should follow.
+    void removeCalendarEvent(req.params.id);
     res.status(204).end();
 });

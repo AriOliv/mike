@@ -2,6 +2,7 @@ import { app } from "./app";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { notionEnabled, startNotionSyncer } from "./lib/notion";
 import { driveEnabled, startDriveSyncer } from "./lib/drive";
+import { calendarEnabled, startCalendarSyncer } from "./lib/gcal";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -34,5 +35,11 @@ app.listen(PORT, () => {
     startDriveSyncer();
   } else {
     console.log("Drive mirror off (GOOGLE_SERVICE_ACCOUNT_FILE / DRIVE_FOLDER_ID unset).");
+  }
+  // Mirrors radar deadlines onto a shared Google Calendar.
+  if (calendarEnabled()) {
+    startCalendarSyncer();
+  } else {
+    console.log("Calendar mirror off (GOOGLE_SERVICE_ACCOUNT_FILE / GOOGLE_CALENDAR_ID unset).");
   }
 });

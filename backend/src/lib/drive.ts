@@ -7,79 +7,21 @@
 // Auth is a signed JWT exchanged for an access token — done with node's crypto
 // rather than pulling in the Google SDK, which would be a large dependency for
 // three REST calls.
-import { createSign } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { createServerSupabase } from "./supabase";
 import { downloadFile } from "./storage";
+import { SCOPES, googleAccessToken, serviceAccountConfigured } from "./google";
 
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const SCOPE = "https://www.googleapis.com/auth/drive";
 const FILES = "https://www.googleapis.com/drive/v3/files";
 
-type ServiceAccount = { client_email: string; private_key: string };
+export function driveEnabled(): boolean {
+    return !!(serviceAccountConfigured() && process.env.DRIVE_FOLDER_ID?.trim());
+}
 
-let cachedKey: ServiceAccount | null = null;
-let cachedToken: { value: string; expiresAt: number } | null = null;
 // project id -> Drive folder id, so a busy project does not re-query every upload
 const folderCache = new Map<string, string>();
 
-export function driveEnabled(): boolean {
-    return !!(
-        process.env.GOOGLE_SERVICE_ACCOUNT_FILE?.trim() && process.env.DRIVE_FOLDER_ID?.trim()
-    );
-}
-
-function serviceAccount(): ServiceAccount {
-    if (cachedKey) return cachedKey;
-    const path = process.env.GOOGLE_SERVICE_ACCOUNT_FILE!.trim();
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as ServiceAccount;
-    if (!parsed.client_email || !parsed.private_key) {
-        throw new Error("service account file is missing client_email/private_key");
-    }
-    cachedKey = parsed;
-    return parsed;
-}
-
-const b64url = (input: Buffer | string) =>
-    Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-async function accessToken(): Promise<string> {
-    const now = Math.floor(Date.now() / 1000);
-    if (cachedToken && cachedToken.expiresAt - 60 > now) return cachedToken.value;
-
-    const { client_email, private_key } = serviceAccount();
-    const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-    const claims = b64url(
-        JSON.stringify({
-            iss: client_email,
-            scope: SCOPE,
-            aud: TOKEN_URL,
-            iat: now,
-            exp: now + 3600,
-        }),
-    );
-    const signer = createSign("RSA-SHA256");
-    signer.update(`${header}.${claims}`);
-    const assertion = `${header}.${claims}.${b64url(signer.sign(private_key))}`;
-
-    const response = await fetch(TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            assertion,
-        }),
-    });
-    if (!response.ok) {
-        throw new Error(`drive token: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
-    }
-    const json = (await response.json()) as { access_token: string; expires_in: number };
-    cachedToken = { value: json.access_token, expiresAt: now + json.expires_in };
-    return json.access_token;
-}
-
 async function api(url: string, init: RequestInit): Promise<Record<string, unknown>> {
-    const token = await accessToken();
+    const token = await googleAccessToken(SCOPES.drive);
     const headers = { ...(init.headers as Record<string, string>), Authorization: `Bearer ${token}` };
     const response = await fetch(url, { ...init, headers });
     if (!response.ok) {
