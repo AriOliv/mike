@@ -86,6 +86,7 @@ function activeSectionFromSegments(
     if (segments[0] === "assistant") return "assistant";
     if (segments[0] === "tabular-reviews") return "reviews";
     if (segments[0] === "dossier") return "dossier";
+    if (segments[0] === "review") return "review";
     return "documents";
 }
 
@@ -95,7 +96,8 @@ function shouldShowWorkspaceShell(segments: string[]) {
     return (
         segments[0] === "assistant" ||
         segments[0] === "tabular-reviews" ||
-        segments[0] === "dossier"
+        segments[0] === "dossier" ||
+        segments[0] === "review"
     );
 }
 
@@ -111,7 +113,7 @@ export function ProjectWorkspaceProvider({
     const [projectLoading, setProjectLoading] = useState(true);
     const [searchBySection, setSearchBySection] = useState<
         Record<ProjectWorkspaceSection, string>
-    >({ documents: "", assistant: "", reviews: "", dossier: "" });
+    >({ documents: "", assistant: "", reviews: "", dossier: "", review: "" });
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
     const [projectChatsLoading, setProjectChatsLoading] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
@@ -507,6 +509,7 @@ export function ProjectSectionToolbar({
                 { id: "documents", label: "Documents" },
                 { id: "assistant", label: "Chats" },
                 { id: "reviews", label: "Tabular Reviews" },
+                { id: "review", label: "Review" },
                 { id: "dossier", label: "Analysis" },
             ]}
             active={activeSection}
@@ -516,7 +519,9 @@ export function ProjectSectionToolbar({
                         ? `/projects/${projectId}`
                         : next === "assistant"
                           ? `/projects/${projectId}/assistant`
-                          : next === "dossier"
+                          : next === "review"
+                            ? `/projects/${projectId}/review`
+                            : next === "dossier"
                             ? `/projects/${projectId}/dossier`
                             : `/projects/${projectId}/tabular-reviews`;
                 router.push(href);

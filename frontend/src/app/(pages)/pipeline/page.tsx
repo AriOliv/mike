@@ -207,11 +207,11 @@ export default function PipelinePage() {
                                             e.dataTransfer.effectAllowed = "move";
                                         }}
                                         onDragEnd={() => setDragging(null)}
-                                        onClick={() => router.push(`/projects/${card.id}`)}
+                                        onClick={() => router.push(`/projects/${card.id}/review`)}
                                         onKeyDown={(e) => {
                                             if (e.key === "Enter" || e.key === " ") {
                                                 e.preventDefault();
-                                                router.push(`/projects/${card.id}`);
+                                                router.push(`/projects/${card.id}/review`);
                                             }
                                         }}
                                         className={`cursor-pointer rounded-lg border border-gray-200 bg-white p-3 text-left shadow-sm transition hover:border-gray-300 hover:shadow ${

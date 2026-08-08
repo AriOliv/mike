@@ -25,7 +25,8 @@ export type ProjectWorkspaceSection =
     | "documents"
     | "assistant"
     | "reviews"
-    | "dossier";
+    | "dossier"
+    | "review";
 
 export type ProjectContextMenu = {
     x: number;

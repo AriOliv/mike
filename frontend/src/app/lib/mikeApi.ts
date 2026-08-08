@@ -405,6 +405,31 @@ export interface Dossier {
     updated_at: string;
 }
 
+export interface DocumentPreview {
+    document_id: string;
+    filename: string;
+    inline: boolean;
+    url: string;
+}
+
+/**
+ * Fetches a protected file with the session token and hands back an object URL.
+ * An <iframe> cannot send an Authorization header, so the bytes have to be
+ * pulled in JS first. Callers must revoke the URL when done.
+ */
+export async function fetchAuthedObjectUrl(url: string): Promise<string> {
+    const authHeaders = await getAuthHeader();
+    const response = await fetch(url, { cache: "no-store", headers: authHeaders });
+    if (!response.ok) throw await toApiError(response, url);
+    return URL.createObjectURL(await response.blob());
+}
+
+/** Viewable copy of the contract; null when the project has no document. */
+export async function getDocumentPreview(projectId: string): Promise<DocumentPreview | null> {
+    const preview = await apiRequest<DocumentPreview | null>(`/projects/${projectId}/preview`);
+    return preview ? { ...preview, url: `${API_BASE}${preview.url}` } : null;
+}
+
 /** Null when the contract has no analysis yet — a normal state, not an error. */
 export async function getDossier(projectId: string): Promise<Dossier | null> {
     return apiRequest<Dossier | null>(`/projects/${projectId}/dossier`);
