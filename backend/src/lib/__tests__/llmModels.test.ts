@@ -50,6 +50,12 @@ describe("providerForModel", () => {
         expect(providerForModel("claude-nonexistent")).toBe("claude");
         expect(providerForModel("gpt-nonexistent")).toBe("openai");
     });
+
+    it("maps ollama and custom prefixes to their dynamic providers", () => {
+        expect(providerForModel("ollama/qwen3.6")).toBe("ollama");
+        expect(providerForModel("custom/gpt-4o-mini")).toBe("custom");
+        expect(providerForModel("custom")).toBe("custom");
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -69,6 +75,15 @@ describe("resolveModel", () => {
     it("falls back for unknown model ids", () => {
         expect(resolveModel("gpt-3.5-turbo", DEFAULT_MAIN_MODEL)).toBe(
             DEFAULT_MAIN_MODEL,
+        );
+    });
+
+    it("accepts dynamic ollama/* and custom/* endpoint models", () => {
+        expect(resolveModel("ollama/qwen3.6", DEFAULT_MAIN_MODEL)).toBe(
+            "ollama/qwen3.6",
+        );
+        expect(resolveModel("custom/my-model", DEFAULT_MAIN_MODEL)).toBe(
+            "custom/my-model",
         );
     });
 

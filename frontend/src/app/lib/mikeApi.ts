@@ -312,6 +312,21 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     return models;
 }
 
+export interface CustomModelOption {
+    id: string;
+    label: string;
+    group: "Custom";
+}
+
+// Models from the configured remote OpenAI-compatible endpoint. Empty when no
+// endpoint is configured (CUSTOM_OPENAI_BASE_URL unset) or it is unreachable.
+export async function getCustomModels(): Promise<CustomModelOption[]> {
+    const { models } = await apiRequest<{ models: CustomModelOption[] }>(
+        "/models/custom",
+    );
+    return models;
+}
+
 export async function saveApiKey(
     provider: ApiKeyProvider,
     apiKey: string | null,

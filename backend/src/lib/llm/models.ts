@@ -18,6 +18,8 @@ export const GEMINI_MAIN_MODELS = [
 export const OPENAI_MAIN_MODELS = ["gpt-5.5", "gpt-5.4"] as const;
 // Ollama models are detected dynamically (see GET /models/ollama). Any id of
 // the form "ollama/<tag>" is valid — see providerForModel / resolveModel.
+// Custom OpenAI-compatible endpoint models work the same way (GET /models/custom);
+// any id of the form "custom/<model>" is valid.
 
 // Mid-tier (used for tabular review) — user picks one in account settings.
 export const CLAUDE_MID_MODELS = ["claude-sonnet-4-6"] as const;
@@ -52,6 +54,7 @@ const ALL_MODELS = new Set<string>([
 
 export function providerForModel(model: string): Provider {
     if (model.startsWith("ollama")) return "ollama";
+    if (model.startsWith("custom")) return "custom";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("gpt-")) return "openai";
@@ -59,6 +62,10 @@ export function providerForModel(model: string): Provider {
 }
 
 export function resolveModel(id: string | null | undefined, fallback: string): string {
-    if (id && (ALL_MODELS.has(id) || id.startsWith("ollama/"))) return id;
+    if (
+        id &&
+        (ALL_MODELS.has(id) || id.startsWith("ollama/") || id.startsWith("custom/"))
+    )
+        return id;
     return fallback;
 }

@@ -15,11 +15,12 @@ import {
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
+import { useCustomModels } from "@/app/hooks/useCustomModels";
 
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI" | "Local";
+    group: "Anthropic" | "Google" | "OpenAI" | "Local" | "Custom";
 }
 
 export const MODELS: ModelOption[] = [
@@ -50,7 +51,7 @@ export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google", "OpenAI", "Local"];
+const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google", "OpenAI", "Local", "Custom"];
 const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
 
@@ -63,7 +64,8 @@ interface Props {
 export function ModelToggle({ value, onChange, apiKeys }: Props) {
     const [isOpen, setIsOpen] = useState(false);
     const ollamaModels = useOllamaModels();
-    const models = [...MODELS, ...ollamaModels];
+    const customModels = useCustomModels();
+    const models = [...MODELS, ...ollamaModels, ...customModels];
     const selected = models.find((m) => m.id === value);
     const selectedLabel = selected?.label ?? "Model";
     const selectedAvailable = apiKeys
