@@ -1,14 +1,14 @@
 // Status of server-side integrations, and manual triggers for them.
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { notionEnabled, syncPipelineToNotion } from "../lib/notion";
+import { notionBoardUrl, notionEnabled, syncPipelineToNotion } from "../lib/notion";
 import { driveEnabled, syncDocumentsToDrive } from "../lib/drive";
 
 export const integrationsRouter = Router();
 
-integrationsRouter.get("/status", requireAuth, (_req, res) => {
+integrationsRouter.get("/status", requireAuth, async (_req, res) => {
     res.json({
-        notion: { enabled: notionEnabled() },
+        notion: { enabled: notionEnabled(), board_url: await notionBoardUrl() },
         drive: { enabled: driveEnabled(), folder_id: process.env.DRIVE_FOLDER_ID ?? null },
     });
 });

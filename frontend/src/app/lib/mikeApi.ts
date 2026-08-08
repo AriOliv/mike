@@ -332,6 +332,16 @@ export interface PipelineCard {
     requester_name: string | null;
     lane_updated_at: string | null;
     updated_at: string;
+    notion_url: string | null;
+}
+
+export interface IntegrationStatus {
+    notion: { enabled: boolean; board_url: string | null };
+    drive: { enabled: boolean; folder_id: string | null };
+}
+
+export async function getIntegrationStatus(): Promise<IntegrationStatus> {
+    return apiRequest("/integrations/status");
 }
 
 export async function getPipeline(): Promise<{

@@ -208,7 +208,10 @@ create table if not exists public.projects (
   lane text,
   risk_level text,
   requester_name text,
-  lane_updated_at timestamptz
+  lane_updated_at timestamptz,
+  -- where the card lives on the mirrored Notion board (null until synced)
+  notion_page_id text,
+  notion_url text
 );
 
 create index if not exists idx_projects_lane

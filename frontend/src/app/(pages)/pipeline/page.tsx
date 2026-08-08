@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, ExternalLink, Loader2 } from "lucide-react";
 import {
+    getIntegrationStatus,
     getPipeline,
     listProjects,
     updatePipelineCard,
@@ -37,6 +38,7 @@ export default function PipelinePage() {
     const [overLane, setOverLane] = useState<PipelineLane | null>(null);
     const [adding, setAdding] = useState(false);
     const [candidates, setCandidates] = useState<Project[]>([]);
+    const [notionBoardUrl, setNotionBoardUrl] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -53,6 +55,12 @@ export default function PipelinePage() {
     useEffect(() => {
         void load();
     }, [load]);
+
+    useEffect(() => {
+        void getIntegrationStatus()
+            .then((s) => setNotionBoardUrl(s.notion?.board_url ?? null))
+            .catch(() => setNotionBoardUrl(null));
+    }, []);
 
     // Projects not on the board yet — the only way to add a contract to the
     // pipeline from the UI.
@@ -109,6 +117,17 @@ export default function PipelinePage() {
                 >
                     + Add contract
                 </button>
+                {notionBoardUrl && (
+                    <a
+                        href={notionBoardUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm transition hover:border-gray-300"
+                    >
+                        Open board in Notion
+                        <ExternalLink className="h-3 w-3" />
+                    </a>
+                )}
                 {adding && (
                     <>
                         <div className="fixed inset-0 z-40" onClick={() => setAdding(false)} />
@@ -242,6 +261,19 @@ export default function PipelinePage() {
                                                 </option>
                                             ))}
                                         </select>
+
+                                        {card.notion_url && (
+                                            <a
+                                                href={card.notion_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-700 hover:underline"
+                                            >
+                                                Notion
+                                                <ExternalLink className="h-2.5 w-2.5" />
+                                            </a>
+                                        )}
                                     </div>
                                 ))}
 

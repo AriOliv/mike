@@ -22,7 +22,7 @@ export type Lane = (typeof LANES)[number];
 const RISK_LEVELS = ["critico", "atencao", "ok"] as const;
 
 const CARD_COLUMNS =
-    "id, name, counterparty, lane, risk_level, requester_name, lane_updated_at, updated_at, created_at, user_id";
+    "id, name, counterparty, lane, risk_level, requester_name, lane_updated_at, updated_at, created_at, user_id, notion_url";
 
 function normalizeString(value: unknown): string | null {
     if (typeof value !== "string") return null;

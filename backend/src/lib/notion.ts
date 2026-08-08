@@ -172,18 +172,34 @@ function cardProps(card: Card, titleKey: string): Record<string, unknown> {
     };
 }
 
-async function upsert(databaseId: string, titleKey: string, card: Card): Promise<void> {
+type UpsertedPage = { id: string; url: string | null };
+
+async function upsert(
+    databaseId: string,
+    titleKey: string,
+    card: Card,
+): Promise<UpsertedPage> {
     const query = await req("POST", `/databases/${databaseId}/query`, {
         filter: { property: "ProjectId", rich_text: { equals: card.id } },
         page_size: 1,
     });
     const results = (query.results ?? []) as { id: string }[];
     const properties = cardProps(card, titleKey);
-    if (results.length > 0) {
-        await req("PATCH", `/pages/${results[0].id}`, { properties });
-    } else {
-        await req("POST", "/pages", { parent: { database_id: databaseId }, properties });
-    }
+    const page =
+        results.length > 0
+            ? await req("PATCH", `/pages/${results[0].id}`, { properties })
+            : await req("POST", "/pages", {
+                  parent: { database_id: databaseId },
+                  properties,
+              });
+    return { id: page.id as string, url: (page.url as string) ?? null };
+}
+
+/** Link to the mirrored board, or null when the mirror has never run. */
+export async function notionBoardUrl(): Promise<string | null> {
+    if (!notionEnabled()) return null;
+    const id = await getSetting(createServerSupabase(), "notion_database_id");
+    return id ? `https://www.notion.so/${id.replace(/-/g, "")}` : null;
 }
 
 export type NotionSyncSummary = {
@@ -218,7 +234,14 @@ export async function syncPipelineToNotion(): Promise<NotionSyncSummary> {
 
         for (const card of (data ?? []) as unknown as Card[]) {
             try {
-                await upsert(databaseId, titleKey, card);
+                const page = await upsert(databaseId, titleKey, card);
+                // Remember where the card landed so the app can link to it.
+                // Writing updated_at here would re-select the row on the next
+                // run, so the sync would never settle — leave it untouched.
+                await db
+                    .from("projects")
+                    .update({ notion_page_id: page.id, notion_url: page.url })
+                    .eq("id", card.id);
                 summary.synced = (summary.synced ?? 0) + 1;
             } catch (e) {
                 summary.errors = (summary.errors ?? 0) + 1;
