@@ -20,6 +20,7 @@ import { integrationsRouter } from "./routes/integrations";
 import { dossiersRouter } from "./routes/dossiers";
 import { previewRouter } from "./routes/preview";
 import { acervoRouter } from "./routes/acervo";
+import { termsRouter } from "./routes/terms";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
 
@@ -187,6 +188,7 @@ app.use("/integrations", integrationsRouter);
 app.use("/projects/:projectId/dossier", dossiersRouter);
 app.use("/projects/:projectId/preview", previewRouter);
 app.use("/acervo", acervoRouter);
+app.use("/projects/:projectId/terms", termsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

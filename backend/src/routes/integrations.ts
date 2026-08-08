@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { notionBoardUrl, notionEnabled, syncPipelineToNotion } from "../lib/notion";
 import { driveEnabled, syncDocumentsToDrive } from "../lib/drive";
 import { calendarEnabled, syncObligationsToCalendar } from "../lib/gcal";
+import { extractMissingContractTerms } from "../lib/contractTerms";
 
 export const integrationsRouter = Router();
 
@@ -35,4 +36,11 @@ integrationsRouter.post("/drive/sync", requireAuth, async (req, res) => {
 integrationsRouter.post("/calendar/sync", requireAuth, async (_req, res) => {
     const summary = await syncObligationsToCalendar();
     res.json(summary);
+});
+
+// Extract commercial terms for contracts that have none yet.
+integrationsRouter.post("/terms/extract-missing", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const limit = Math.min(Number(req.query.limit ?? 100) || 100, 200);
+    res.json(await extractMissingContractTerms(userId, limit));
 });

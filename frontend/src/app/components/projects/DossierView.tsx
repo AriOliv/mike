@@ -8,6 +8,7 @@ import {
     type DossierFinding,
     type DossierRedline,
 } from "@/app/lib/mikeApi";
+import { ContractTermsCard } from "./ContractTermsCard";
 
 const RISK_STYLES: Record<string, string> = {
     critico: "bg-red-100 text-red-700",
@@ -120,10 +121,17 @@ export function DossierView({ projectId }: { projectId: string }) {
         );
     }
 
+    // Terms are extracted independently of the dossier, so a contract can have
+    // one without the other — show whatever exists rather than an empty page.
     if (!dossier) {
         return (
-            <div className="mx-6 rounded-xl border border-dashed border-gray-200 px-4 py-12 text-center text-sm text-gray-400">
-                No AI analysis for this contract yet.
+            <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="max-w-4xl px-6 pb-10">
+                    <ContractTermsCard projectId={projectId} />
+                    <div className="rounded-xl border border-dashed border-gray-200 px-4 py-12 text-center text-sm text-gray-400">
+                        No AI analysis for this contract yet.
+                    </div>
+                </div>
             </div>
         );
     }
@@ -142,6 +150,7 @@ export function DossierView({ projectId }: { projectId: string }) {
         // but unreachable.
         <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="max-w-4xl px-6 pb-10">
+            <ContractTermsCard projectId={projectId} />
             <div className="mb-5 flex items-center gap-2">
                 {dossier.risk_level && (
                     <span

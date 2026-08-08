@@ -393,6 +393,33 @@ export async function askAcervo(question: string): Promise<AcervoAnswer> {
     });
 }
 
+// ── Commercial terms of a contract ──────────────────────────────────────────
+export interface ContractTerms {
+    project_id: string;
+    auto_renewal: boolean | null;
+    term_end: string | null;
+    notice_days: number | null;
+    /** date the decision must be made by: term_end minus the notice period */
+    notice_deadline: string | null;
+    penalty_value: string | null;
+    penalty_recurrence: string | null;
+    liability_cap: string | null;
+    unilateral_amendment: boolean | null;
+    amendment_notes: string | null;
+    price_regulatory_impact: string | null;
+    sources: Record<string, string>;
+    extracted_at: string;
+}
+
+/** Null when nothing has been extracted for this contract yet. */
+export async function getContractTerms(projectId: string): Promise<ContractTerms | null> {
+    return apiRequest<ContractTerms | null>(`/projects/${projectId}/terms`);
+}
+
+export async function extractContractTerms(projectId: string): Promise<ContractTerms> {
+    return apiRequest(`/projects/${projectId}/terms/extract`, { method: "POST" });
+}
+
 // ── AI contract analysis (dossier) ──────────────────────────────────────────
 export interface DossierFinding {
     clausula?: string | null;
