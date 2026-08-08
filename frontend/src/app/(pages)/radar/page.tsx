@@ -10,6 +10,7 @@ import {
     type ObligationMark,
 } from "@/app/lib/mikeApi";
 import { PageHeader } from "@/app/components/shared/PageHeader";
+import { RadarCalendar } from "@/app/components/radar/RadarCalendar";
 
 const MARK_STYLES: Record<ObligationMark, string> = {
     critico: "bg-red-100 text-red-700",
@@ -44,6 +45,7 @@ export default function RadarPage() {
     const [items, setItems] = useState<Obligation[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [view, setView] = useState<"list" | "calendar">("list");
 
     const load = useCallback(async () => {
         try {
@@ -91,9 +93,40 @@ export default function RadarPage() {
         );
     }
 
+    const viewToggle = (
+        <div className="flex gap-1 px-6 pb-3">
+            {(["list", "calendar"] as const).map((v) => (
+                <button
+                    key={v}
+                    onClick={() => setView(v)}
+                    className={`rounded-md px-2.5 py-1 text-xs capitalize transition-colors ${
+                        view === v
+                            ? "bg-gray-900 text-white"
+                            : "border border-gray-200 text-gray-600 hover:bg-gray-50"
+                    }`}
+                >
+                    {v}
+                </button>
+            ))}
+        </div>
+    );
+
+    if (view === "calendar") {
+        return (
+            <div className="flex h-full flex-col">
+                <PageHeader>Radar</PageHeader>
+                {viewToggle}
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                    <RadarCalendar />
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="flex h-full flex-col">
             <PageHeader>Radar</PageHeader>
+            {viewToggle}
 
             {error && (
                 <div className="mx-6 mb-3 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
