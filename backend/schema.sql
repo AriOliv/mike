@@ -201,8 +201,40 @@ create table if not exists public.projects (
   visibility text not null default 'private',
   shared_with jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  -- Contract pipeline ("esteira"): a project with a non-null lane is a
+  -- contract moving through the pipeline. Null for ordinary projects.
+  counterparty text,
+  lane text,
+  risk_level text,
+  requester_name text,
+  lane_updated_at timestamptz
+);
+
+create index if not exists idx_projects_lane
+  on public.projects(user_id, lane)
+  where lane is not null;
+
+-- Deadlines/obligations plotted on the radar.
+create table if not exists public.obligations (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null,
+  project_id uuid references public.projects(id) on delete cascade,
+  title text not null,
+  mark text not null default 'recorrente',   -- recorrente | critico | tarefa
+  due_date date not null,
+  done boolean not null default false,
+  note text,
+  source_quote text,
+  created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create index if not exists idx_obligations_user_due
+  on public.obligations(user_id, due_date);
+
+create index if not exists idx_obligations_project
+  on public.obligations(project_id);
 
 create index if not exists idx_projects_user
   on public.projects(user_id);
@@ -1092,6 +1124,7 @@ alter table public.courtlistener_opinion_cluster_index enable row level security
 
 revoke all on public.user_profiles from anon, authenticated;
 revoke all on public.projects from anon, authenticated;
+revoke all on public.obligations from anon, authenticated;
 revoke all on public.project_subfolders from anon, authenticated;
 revoke all on public.library_folders from anon, authenticated;
 revoke all on public.documents from anon, authenticated;

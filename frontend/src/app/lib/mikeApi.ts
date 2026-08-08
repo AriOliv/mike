@@ -312,6 +312,109 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     return models;
 }
 
+// ── Contract pipeline ("esteira") ───────────────────────────────────────────
+export const PIPELINE_LANES = [
+    "entrada",
+    "triagem",
+    "revisao",
+    "negociacao",
+    "assinatura",
+] as const;
+export type PipelineLane = (typeof PIPELINE_LANES)[number];
+export type RiskLevel = "critico" | "atencao" | "ok";
+
+export interface PipelineCard {
+    id: string;
+    name: string;
+    counterparty: string | null;
+    lane: PipelineLane;
+    risk_level: RiskLevel | null;
+    requester_name: string | null;
+    lane_updated_at: string | null;
+    updated_at: string;
+}
+
+export async function getPipeline(): Promise<{
+    lanes: PipelineLane[];
+    cards: PipelineCard[];
+    by_lane: Record<PipelineLane, PipelineCard[]>;
+}> {
+    return apiRequest("/pipeline");
+}
+
+export async function updatePipelineCard(
+    projectId: string,
+    patch: {
+        lane?: PipelineLane | null;
+        risk_level?: RiskLevel | null;
+        counterparty?: string | null;
+        requester_name?: string | null;
+    },
+): Promise<PipelineCard> {
+    return apiRequest(`/pipeline/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+    });
+}
+
+// ── Deadline radar ──────────────────────────────────────────────────────────
+export type ObligationMark = "recorrente" | "critico" | "tarefa";
+
+export interface Obligation {
+    id: string;
+    project_id: string | null;
+    title: string;
+    mark: ObligationMark;
+    due_date: string;
+    done: boolean;
+    note: string | null;
+    source_quote: string | null;
+    projects?: { name: string; counterparty: string | null; lane: string | null } | null;
+}
+
+export async function getObligations(params?: {
+    from?: string;
+    to?: string;
+    includeDone?: boolean;
+}): Promise<Obligation[]> {
+    const qs = new URLSearchParams();
+    if (params?.from) qs.set("from", params.from);
+    if (params?.to) qs.set("to", params.to);
+    if (params?.includeDone) qs.set("include_done", "true");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiRequest(`/obligations${suffix}`);
+}
+
+export async function createObligation(input: {
+    title: string;
+    due_date: string;
+    mark?: ObligationMark;
+    project_id?: string | null;
+    note?: string | null;
+}): Promise<Obligation> {
+    return apiRequest("/obligations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export async function updateObligation(
+    id: string,
+    patch: { done?: boolean; title?: string; due_date?: string; mark?: ObligationMark; note?: string | null },
+): Promise<Obligation> {
+    return apiRequest(`/obligations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+    });
+}
+
+export async function deleteObligation(id: string): Promise<void> {
+    await apiRequest(`/obligations/${id}`, { method: "DELETE" });
+}
+
 export interface CustomModelOption {
     id: string;
     label: string;
