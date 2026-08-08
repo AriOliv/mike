@@ -24,23 +24,37 @@ export const LANE_LABELS: Record<string, string> = {
 };
 const VERSION = "2022-06-28";
 
+// Property names as they exist on the team's board. The mirror writes to the
+// board people already read rather than a parallel set of its own.
+const PROP = {
+    etapa: "Etapa",
+    contraparte: "Contraparte",
+    solicitante: "Solicitante",
+    risco: "Risco",
+    atualizado: "Atualizado",
+    abrirNoApp: "Abrir no app",
+    projectId: "ProjectId",
+} as const;
+
+const RISK_LABELS: Record<string, string> = {
+    critico: "Risco crítico",
+    atencao: "Atenção",
+    ok: "OK",
+};
+
 // Card properties besides the title. Name -> Notion schema definition.
 const SCHEMA: Record<string, unknown> = {
-    Counterparty: { rich_text: {} },
-    Lane: {
-        select: {
-            options: Object.values(LANE_LABELS).map((name) => ({ name })),
-        },
+    [PROP.contraparte]: { rich_text: {} },
+    [PROP.etapa]: {
+        select: { options: Object.values(LANE_LABELS).map((name) => ({ name })) },
     },
-    Risk: {
-        select: {
-            options: [{ name: "critico" }, { name: "atencao" }, { name: "ok" }],
-        },
+    [PROP.risco]: {
+        select: { options: Object.values(RISK_LABELS).map((name) => ({ name })) },
     },
-    Requester: { rich_text: {} },
-    Updated: { date: {} },
-    "Open in app": { url: {} },
-    ProjectId: { rich_text: {} },
+    [PROP.solicitante]: { rich_text: {} },
+    [PROP.atualizado]: { date: {} },
+    [PROP.abrirNoApp]: { url: {} },
+    [PROP.projectId]: { rich_text: {} },
 };
 
 export function notionEnabled(): boolean {
@@ -143,7 +157,7 @@ async function ensureSchema(databaseId: string, meta: Record<string, unknown>): 
     // same thing is renamed in place — keeping its id preserves the value on
     // every card already using it — and genuinely new stages are appended.
     // Nothing is removed: dropping an option in use would blank those cards.
-    const lane = existing.Lane as
+    const lane = existing[PROP.etapa] as
         | { select?: { options?: { id?: string; name: string }[] } }
         | undefined;
     if (lane?.select) {
@@ -172,7 +186,7 @@ async function ensureSchema(databaseId: string, meta: Record<string, unknown>): 
         const changed =
             options.length !== current.length ||
             options.some((o, i) => o.name !== current[i]?.name);
-        if (changed) patch.Lane = { select: { options } };
+        if (changed) patch[PROP.etapa] = { select: { options } };
     }
 
     if (Object.keys(patch).length > 0) {
@@ -202,15 +216,15 @@ function cardProps(card: Card, titleKey: string): Record<string, unknown> {
         [titleKey]: {
             title: [{ type: "text", text: { content: (card.name || "(untitled)").slice(0, 1900) } }],
         },
-        Counterparty: rt(card.counterparty),
-        Lane: sel(card.lane ? (LANE_LABELS[card.lane] ?? card.lane) : null),
-        Risk: sel(card.risk_level),
-        Requester: rt(card.requester_name),
-        Updated: {
+        [PROP.contraparte]: rt(card.counterparty),
+        [PROP.etapa]: sel(card.lane ? (LANE_LABELS[card.lane] ?? card.lane) : null),
+        [PROP.risco]: sel(card.risk_level ? (RISK_LABELS[card.risk_level] ?? card.risk_level) : null),
+        [PROP.solicitante]: rt(card.requester_name),
+        [PROP.atualizado]: {
             date: { start: (card.updated_at ?? new Date().toISOString()).slice(0, 10) },
         },
-        "Open in app": { url: `${base}/projects/${card.id}` },
-        ProjectId: rt(card.id),
+        [PROP.abrirNoApp]: { url: `${base}/projects/${card.id}` },
+        [PROP.projectId]: rt(card.id),
     };
 }
 
@@ -222,7 +236,7 @@ async function upsert(
     card: Card,
 ): Promise<UpsertedPage> {
     const query = await req("POST", `/databases/${databaseId}/query`, {
-        filter: { property: "ProjectId", rich_text: { equals: card.id } },
+        filter: { property: PROP.projectId, rich_text: { equals: card.id } },
         page_size: 1,
     });
     const results = (query.results ?? []) as { id: string }[];
