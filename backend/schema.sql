@@ -236,6 +236,14 @@ create index if not exists idx_obligations_user_due
 create index if not exists idx_obligations_project
   on public.obligations(project_id);
 
+-- Server-owned key/value store for integration state (e.g. the Notion database
+-- the pipeline mirror created, and the cursor of the last sync).
+create table if not exists public.app_settings (
+  key text primary key,
+  value text not null default '',
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists idx_projects_user
   on public.projects(user_id);
 

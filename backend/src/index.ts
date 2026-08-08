@@ -1,5 +1,6 @@
 import { app } from "./app";
 import { manifestPublicKey } from "./lib/manifestSigning";
+import { notionEnabled, startNotionSyncer } from "./lib/notion";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -19,4 +20,11 @@ try {
 
 app.listen(PORT, () => {
   console.log(`Mike backend running on port ${PORT}`);
+  // Mirrors the pipeline to Notion. Inert unless NOTION_TOKEN and
+  // NOTION_PARENT_ID are both set.
+  if (notionEnabled()) {
+    startNotionSyncer();
+  } else {
+    console.log("Notion mirror off (NOTION_TOKEN / NOTION_PARENT_ID unset).");
+  }
 });
