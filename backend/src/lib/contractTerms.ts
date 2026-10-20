@@ -44,6 +44,8 @@ const SCHEMA = {
     unilateral_amendment: "true se a contraparte pode alterar o contrato ao seu exclusivo critério; false; null",
     amendment_notes: "como as alterações podem ser feitas (aviso, aceite, etc.), ou null",
     price_regulatory_impact: "alterações que impactem preço ou aspectos regulatórios, ou null",
+    contract_type:
+        "classificação curta do tipo de contrato (ex.: 'NDA', 'Prestação de serviços', 'MSA', 'Licenciamento', 'Locação', 'Parceria'), ou null. É uma classificação, não precisa de trecho em sources.",
     sources: {
         "<campo>": "trecho VERBATIM do contrato que embasa aquele campo",
     },
@@ -190,6 +192,14 @@ ${text}`,
         },
         { onConflict: "project_id" },
     );
+
+    // Contract type is a derived card field (like risk), so it lives on the
+    // project, not on contract_terms. Only write a real classification — never
+    // blank out a value with a null the model wasn't sure about.
+    const contractType = textOrNull(parsed.contract_type);
+    if (contractType) {
+        await db.from("projects").update({ contract_type: contractType }).eq("id", projectId);
+    }
 
     await syncRenewalObligations(projectId, userId, terms, db);
     return terms;
