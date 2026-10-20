@@ -34,8 +34,17 @@ export type AgentSuggestionProps = {
     children?: ReactNode;
     /** The proposed wording, shown as a redline by the caller. */
     preview?: ReactNode;
-    /** The text "Editar" starts from. Without it, Editar is not offered. */
+    /** The text "Editar" starts from. Without it (and without `editor`), Editar is not offered. */
     editableText?: string;
+    /**
+     * A form shown in place of the preview when "Editar" is pressed, for a
+     * suggestion that is more than text (type, counterparty, owner). The
+     * caller saves with its own form and closes it through `onEditingChange`.
+     */
+    editor?: ReactNode;
+    /** Controls the editing state; optional unless `editor` must close on save. */
+    editing?: boolean;
+    onEditingChange?: (editing: boolean) => void;
     decision?: AgentSuggestionDecision | null;
     /** What a person can do here; false shows the suggestion read-only. */
     canDecide?: boolean;
@@ -87,6 +96,9 @@ export function AgentSuggestion({
     busy = false,
     onAccept,
     onEdit,
+    editor,
+    editing,
+    onEditingChange,
     onReject,
     onReopen,
     details,
@@ -96,7 +108,14 @@ export function AgentSuggestion({
     className,
 }: AgentSuggestionProps) {
     const headingId = useId();
-    const [mode, setMode] = useState<"idle" | "editing" | "rejecting">("idle");
+    const [localMode, setLocalMode] = useState<"idle" | "editing" | "rejecting">("idle");
+    // `editing`, when given, owns whether the editor is open; rejecting stays local.
+    const mode =
+        editing === true ? "editing" : editing === false && localMode === "editing" ? "idle" : localMode;
+    const setMode = (next: "idle" | "editing" | "rejecting") => {
+        if ((next === "editing") !== (mode === "editing")) onEditingChange?.(next === "editing");
+        setLocalMode(next);
+    };
     const [draft, setDraft] = useState(editableText ?? "");
     const [reason, setReason] = useState("");
     const [showDetails, setShowDetails] = useState(false);
@@ -110,7 +129,7 @@ export function AgentSuggestion({
         if (mode !== "idle") field.current?.focus();
     }, [mode]);
 
-    const canEdit = canDecide && !!onEdit && editableText !== undefined;
+    const canEdit = canDecide && (editor !== undefined || (!!onEdit && editableText !== undefined));
     const startEdit = () => {
         setDraft(editableText ?? "");
         setMode("editing");
@@ -128,8 +147,10 @@ export function AgentSuggestion({
     };
 
     function onKeyDown(event: KeyboardEvent<HTMLElement>) {
-        // Shortcuts only on the card itself, never while typing in it.
-        if (event.target !== event.currentTarget || !canDecide || busy || decision) return;
+        // Shortcuts only on the card itself, never while typing or choosing in it.
+        const target = event.target as HTMLElement;
+        if (target.closest("input, textarea, select") || target.isContentEditable) return;
+        if (target !== event.currentTarget || !canDecide || busy || decision) return;
         if (event.metaKey || event.ctrlKey || event.altKey) return;
         if (event.key === "a" && onAccept) {
             event.preventDefault();
@@ -212,7 +233,14 @@ export function AgentSuggestion({
                 </h4>
             </div>
             {children}
-            {mode === "editing" ? (
+            {mode === "editing" && editor !== undefined ? (
+                <div className="space-y-2">
+                    {editor}
+                    <TextButtonUI size="sm" onClick={() => setMode("idle")}>
+                        Cancelar
+                    </TextButtonUI>
+                </div>
+            ) : mode === "editing" ? (
                 <div className="space-y-2">
                     <label className="block text-xs font-medium text-gray-500" htmlFor={`${headingId}-edit`}>
                         Sua redação
