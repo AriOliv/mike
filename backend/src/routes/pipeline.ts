@@ -21,9 +21,14 @@ export const LANES = [
 export type Lane = (typeof LANES)[number];
 
 const RISK_LEVELS = ["critico", "atencao", "ok"] as const;
+const STATUSES = ["a_fazer", "em_andamento", "bloqueado", "concluido"] as const;
+const PRIORITIES = ["baixa", "media", "alta"] as const;
+const isDate = (v: unknown): v is string =>
+    typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 const CARD_COLUMNS =
-    "id, name, counterparty, lane, risk_level, requester_name, lane_updated_at, updated_at, created_at, user_id, notion_url";
+    "id, name, counterparty, lane, status, assignee_email, priority, deadline, completed_at, " +
+    "risk_level, contract_type, requester_name, lane_updated_at, updated_at, created_at, user_id, notion_url";
 
 function normalizeString(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -101,6 +106,46 @@ pipelineRouter.patch("/:projectId", requireAuth, async (req, res) => {
     }
     if ("counterparty" in req.body) patch.counterparty = normalizeString(req.body.counterparty);
     if ("requester_name" in req.body) patch.requester_name = normalizeString(req.body.requester_name);
+
+    // Task fields (the second axis Duda manages). Status is independent of lane.
+    if ("status" in req.body) {
+        const status = req.body.status;
+        if (status !== null && !STATUSES.includes(status)) {
+            return void res
+                .status(400)
+                .json({ detail: `status must be one of: ${STATUSES.join(", ")}` });
+        }
+        patch.status = status;
+    }
+    if ("priority" in req.body) {
+        const priority = req.body.priority;
+        if (priority !== null && !PRIORITIES.includes(priority)) {
+            return void res
+                .status(400)
+                .json({ detail: `priority must be one of: ${PRIORITIES.join(", ")}` });
+        }
+        patch.priority = priority;
+    }
+    if ("assignee_email" in req.body) {
+        const email = normalizeString(req.body.assignee_email);
+        if (email !== null && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+            return void res
+                .status(400)
+                .json({ detail: "assignee_email must be a valid email or null" });
+        }
+        patch.assignee_email = email;
+    }
+    for (const field of ["deadline", "completed_at"] as const) {
+        if (field in req.body) {
+            const value = req.body[field];
+            if (value !== null && !isDate(value)) {
+                return void res
+                    .status(400)
+                    .json({ detail: `${field} must be YYYY-MM-DD or null` });
+            }
+            patch[field] = value;
+        }
+    }
 
     if (Object.keys(patch).length === 0) {
         return void res.status(400).json({ detail: "Nothing to update" });

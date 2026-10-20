@@ -323,12 +323,21 @@ export const PIPELINE_LANES = [
 ] as const;
 export type PipelineLane = (typeof PIPELINE_LANES)[number];
 export type RiskLevel = "critico" | "atencao" | "ok";
+export type TaskStatus = "a_fazer" | "em_andamento" | "bloqueado" | "concluido";
+export type Priority = "baixa" | "media" | "alta";
 
 export interface PipelineCard {
     id: string;
     name: string;
     counterparty: string | null;
     lane: PipelineLane;
+    // Task axis, independent of the lane, mirrored to Notion.
+    status: TaskStatus | null;
+    assignee_email: string | null;
+    priority: Priority | null;
+    deadline: string | null;
+    completed_at: string | null;
+    contract_type: string | null;
     risk_level: RiskLevel | null;
     requester_name: string | null;
     lane_updated_at: string | null;
@@ -360,6 +369,11 @@ export async function updatePipelineCard(
         risk_level?: RiskLevel | null;
         counterparty?: string | null;
         requester_name?: string | null;
+        status?: TaskStatus | null;
+        priority?: Priority | null;
+        assignee_email?: string | null;
+        deadline?: string | null;
+        completed_at?: string | null;
     },
 ): Promise<PipelineCard> {
     return apiRequest(`/pipeline/${projectId}`, {

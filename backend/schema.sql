@@ -211,7 +211,15 @@ create table if not exists public.projects (
   lane_updated_at timestamptz,
   -- where the card lives on the mirrored Notion board (null until synced)
   notion_page_id text,
-  notion_url text
+  notion_url text,
+  -- Task axis of a pipeline card, independent of the lane, mirrored to Notion.
+  status text,          -- a_fazer | em_andamento | bloqueado | concluido
+  assignee_email text,
+  priority text,        -- baixa | media | alta
+  deadline date,
+  completed_at date,
+  -- classified during term extraction (derived, like risk_level)
+  contract_type text
 );
 
 create index if not exists idx_projects_lane
