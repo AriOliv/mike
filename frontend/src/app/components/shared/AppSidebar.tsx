@@ -78,6 +78,7 @@ const WORKSPACE_HOME = "/assistant";
 const NAV_ITEMS = [
     { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
     { href: "/ide", label: "IDE", icon: IdeSkeuoIcon },
+    { href: "/pedidos", label: "Pedidos", icon: ChatSkeuoIcon },
     { href: "/pipeline", label: "Pipeline", icon: FolderSkeuoIcon },
     { href: "/radar", label: "Radar", icon: WorkflowSkeuoIcon },
     { href: "/acervo", label: "Acervo", icon: LibrarySkeuoIcon },

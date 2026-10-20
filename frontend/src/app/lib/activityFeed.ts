@@ -61,6 +61,15 @@ const LANE_LABEL: Record<string, string> = {
     arquivado: "Arquivado",
 };
 
+const KIND_LABEL: Record<string, string> = {
+    contrato_novo: "Contrato novo",
+    revisao: "Revisão de contrato",
+    aditivo: "Aditivo ou renovação",
+    nda: "NDA",
+    parecer: "Parecer ou dúvida",
+    outro: "Outro",
+};
+
 const STATUS_LABEL: Record<string, string> = {
     a_fazer: "A fazer",
     em_andamento: "Em andamento",
@@ -154,7 +163,25 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
         case "folder.watched":
             return { verb: "passou a monitorar a pasta", object: text(after.folder) };
         case "request.created":
-            return { verb: "criou o pedido", object: text(after.request) };
+            return { verb: "criou o pedido", object: text(after.request) ?? text(after.code) };
+        case "request.triaged":
+            return { verb: "fez a triagem", object: text(after.kind) && KIND_LABEL[text(after.kind)!] };
+        case "triage.accepted":
+            return { verb: "aceitou a triagem" };
+        case "triage.edited":
+            return { verb: "ajustou a triagem" };
+        case "triage.rejected":
+            return { verb: "recusou a triagem" };
+        case "request.question":
+            return { verb: "perguntou ao solicitante" };
+        case "request.answered":
+            return { verb: "respondeu" };
+        case "request.delivered":
+            return { verb: "entregou o pedido" };
+        case "participant.invited":
+            return { verb: "convidou", object: text(after.label) ?? text(after.email) };
+        case "participant.revoked":
+            return { verb: "removeu o acesso de", object: text(after.email) };
         case "comment.added":
             return { verb: "comentou" };
         case "review.accepted":

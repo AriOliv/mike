@@ -102,6 +102,29 @@ describe("describeEvent", () => {
         });
     });
 
+    it("describes the requests' moves: triage, suggestion, questions, delivery, guests", () => {
+        expect(describeEvent(event({ action: "request.created", after: { code: "LEG-0007" } })).object).toBe("LEG-0007");
+        expect(describeEvent(event({ action: "request.triaged", after: { kind: "nda" } }))).toEqual({
+            verb: "fez a triagem",
+            object: "NDA",
+        });
+        expect(describeEvent(event({ action: "request.triaged", after: {} })).object).toBeUndefined();
+        expect(describeEvent(event({ action: "triage.accepted" })).verb).toBe("aceitou a triagem");
+        expect(describeEvent(event({ action: "triage.edited" })).verb).toBe("ajustou a triagem");
+        expect(describeEvent(event({ action: "triage.rejected" })).verb).toBe("recusou a triagem");
+        expect(describeEvent(event({ action: "request.question" })).verb).toBe("perguntou ao solicitante");
+        expect(describeEvent(event({ action: "request.answered" })).verb).toBe("respondeu");
+        expect(describeEvent(event({ action: "request.delivered" })).verb).toBe("entregou o pedido");
+        expect(
+            describeEvent(event({ action: "participant.invited", after: { email: "a@b.c", label: "Escritório X" } })).object,
+        ).toBe("Escritório X");
+        expect(describeEvent(event({ action: "participant.invited", after: { email: "a@b.c" } })).object).toBe("a@b.c");
+        expect(describeEvent(event({ action: "participant.revoked", after: { email: "a@b.c" } }))).toEqual({
+            verb: "removeu o acesso de",
+            object: "a@b.c",
+        });
+    });
+
     it("describes the remaining actions and falls back to the raw action", () => {
         expect(describeEvent(event({ action: "document.added", after: { document: "B" } })).object).toBe("B");
         expect(describeEvent(event({ action: "folder.watched", after: { folder: "Fornecedores" } })).object).toBe(
