@@ -67,6 +67,16 @@ docker compose -p mikesync --env-file <ports.env> \
   -f docker-compose.yml -f <override-with-other-image-tags.yml> up -d --build
 ```
 
+On a machine running many Compose projects Docker can fail with "all
+predefined address pools have been fully subnetted"; give the override an
+explicit `networks.default.ipam.config: [{subnet: 10.231.0.0/24}]`.
+
+Smoke test: sign up, confirm the email in Mailpit, log in, then `GET
+/pipeline`, `PATCH /pipeline/:projectId`, `PUT /projects/:id/dossier` (body
+`{"payload": {...}}`) and `POST /obligations` should succeed; the LLM paths
+(`/projects/:id/terms/extract`, `/acervo`) return `model_required` until a
+model is chosen in Settings.
+
 ## Production database
 
 The production deployment (see the deploy repo) has no `db-init` service and
