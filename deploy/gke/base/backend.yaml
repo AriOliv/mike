@@ -49,6 +49,8 @@ spec:
             - { name: STORAGE_DRIVER, value: fs }
             - { name: STORAGE_FS_ROOT, value: /data/files }
             - { name: WORKERS_MODE, value: thread }
+            # Never report to the upstream community Sentry project.
+            - { name: SENTRY_DISABLED, value: "true" }
           volumeMounts: [{ name: files, mountPath: /data }]
           readinessProbe:
             httpGet: { path: /health, port: 3001 }
