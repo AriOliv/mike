@@ -1,0 +1,114 @@
+# Keeps the Avenia fork close to open-legal-products/mike.
+#
+# Every Monday it merges upstream/main into a fresh sync/upstream-<date>
+# branch and opens a draft PR against main. CI on that PR (ci.yml,
+# schema-drift.yml, docker-images.yml) is the gate; nobody merges it without
+# reading the conflicts and the new migrations. A conflicting merge is not
+# pushed: the run opens an issue listing the conflicted files instead, so a
+# person resolves it locally (see docs/upstream-sync.md).
+#
+# Only runs in the fork: upstream has no `upstream` to sync from.
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC (06:00 BRT)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository != 'open-legal-products/mike'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/open-legal-products/mike.git
+          git fetch upstream main --no-tags
+          behind=$(git rev-list --count HEAD..upstream/main)
+          echo "behind=$behind" >> "$GITHUB_ENV"
+          echo "main is $behind commits behind upstream/main"
+
+      - name: Skip when up to date or a sync PR is already open
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open=$(gh pr list --state open --search "head:sync/upstream-" --json number --jq 'length')
+          if [ "$behind" = "0" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "Already up to date."
+          elif [ "$open" != "0" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "A sync PR is already open; update it instead."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream/main
+        if: steps.gate.outputs.skip == 'false'
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          branch="sync/upstream-$(date -u +%Y-%m-%d)"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git checkout -b "$branch"
+          if git merge --no-ff --no-edit upstream/main; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
+            git merge --abort
+          fi
+          # New upstream migrations are what the production database needs
+          # applied by hand; list them for the reviewer.
+          git diff --name-only --diff-filter=A main upstream/main -- backend/migrations > "$RUNNER_TEMP/migrations.txt" || true
+
+      - name: Open draft PR
+        if: steps.gate.outputs.skip == 'false' && steps.merge.outputs.conflicts == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          git push origin "$BRANCH"
+          {
+            echo "Automated merge of \`upstream/main\` ($behind commits)."
+            echo
+            echo "## Migrations to apply on production (by hand, see docs/upstream-sync.md)"
+            if [ -s "$RUNNER_TEMP/migrations.txt" ]; then sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/migrations.txt"; else echo "None."; fi
+            echo
+            echo "## Before merging"
+            echo "- CI green (unit, schema drift, docker images)."
+            echo "- Check upstream changes that overlap modules/contracts (projects, access, documents, llm)."
+            echo "- Smoke-test /pipeline, /radar, /acervo and a project's Analysis tab on a local stack."
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --draft --base main --head "$BRANCH" \
+            --title "chore(sync): merge upstream/main ($(date -u +%Y-%m-%d))" \
+            --body-file "$RUNNER_TEMP/body.md"
+
+      - name: Report conflicts
+        if: steps.gate.outputs.skip == 'false' && steps.merge.outputs.conflicts == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "The weekly merge of \`upstream/main\` ($behind commits) conflicts with main."
+            echo "Resolve it locally following docs/upstream-sync.md."
+            echo
+            echo "## Conflicted files"
+            sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/conflicts.txt"
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "Upstream sync conflicts ($(date -u +%Y-%m-%d))" --body-file "$RUNNER_TEMP/issue.md"
