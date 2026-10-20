@@ -26,7 +26,7 @@ O fork estava 828 commits atrás de `open-legal-products/mike`. Fiz **merge** (s
 3. **Modelos de IA.** Nosso BYOK customizado (`lib/llm/custom.ts`, rota `/user/models`, página account/models) foi **removido** em favor do registro de providers do upstream. Em produção os modelos são declarados em `MIKE_MODEL_CONFIG_JSON` (há exemplo em `backend/.env.example`). Sem modelo escolhido, termos e acervo respondem `model_required` em vez de adivinhar um.
 4. **Login Google.** Ficou a página de login do upstream. O domínio restrito (`hd=avenia.io`) passou a ser configurado no backend pela variável `GOOGLE_OAUTH_HOSTED_DOMAIN`, que tem teste.
 5. **Espelhos Notion/Drive/Calendar.** Antes eram iniciados no `index.ts`; agora sobem pelo runtime de workers (`startContractMirrors`), como os demais jobs do upstream. A inicialização é idempotente e cada espelho continua desligado se faltar a env correspondente.
-6. **Migration de task fields.** O arquivo `20260901_01` colidia com um slot do upstream e foi renomeado para `20261020_02_task_fields.sql`. Ele é idempotente e já está aplicado em produção.
+6. **Migration de task fields.** O arquivo `20260901_01` colidia com um slot do upstream e foi renomeado para `20261020_02_task_fields.sql`; na rodada 2 virou `20261020_90_task_fields.sql` (veja abaixo). Ele é idempotente e já está aplicado em produção.
 7. **`schema.sql`, `docker-compose.yml`, `.gitignore`, `.env.example`.** Mantive as mudanças dos dois lados, incluindo nosso volume `backend/secrets` e as tabelas `obligations`, `dossiers`, `contract_terms` e `app_settings`.
 8. **Frontend.** Sidebar, abas e páginas do upstream, mais Pipeline, Radar, Acervo e as abas Revisão/Análise do projeto. `mikeApi.ts` agora usa `apiFetch` com cookie httpOnly, como o resto do upstream.
 9. **Sentry.** Os novos segmentos de rota entraram no vocabulário de privacidade. Há duas cópias (frontend e backend) e elas precisam ser idênticas.
@@ -83,14 +83,31 @@ O fork estava 828 commits atrás de `open-legal-products/mike`. Fiz **merge** (s
   - Se não houver conflito, cria `sync/upstream-<data>` e abre um **PR draft** listando as migrations novas que a produção vai precisar.
   - Se houver conflito, abre uma **issue** com os arquivos conflitados.
   - Não faz nada se o fork já estiver em dia ou se já houver um PR de sync aberto.
-- **Ponto de atenção:** um PR criado pelo `GITHUB_TOKEN` não dispara o CI. Para isso, criar um secret `SYNC_TOKEN` (fine-grained, com contents, PRs e issues) ou fechar e reabrir o PR.
+- **CI do PR automático:** a rotina dispara os checks via `workflow_dispatch`, sem token pessoal (detalhes na rodada 2).
 - **Regra para que os próximos syncs fiquem pequenos:** todo código do CLM fica em `modules/contracts/`, nos espelhos em `lib/` e nas páginas próprias. Quanto menos editarmos arquivos do upstream, menos conflitos.
 - O manual está em `docs/upstream-sync.md` no fork.
+
+## Rodada 2 (2026-10-20): CI do PR #2
+
+| Check | Também falha no upstream/main? | Causa | Ação |
+|---|---|---|---|
+| Fresh install vs upgraded (schema-drift) | Não, é nosso | Faltavam no `schema.sql` três itens criados pelas `20260808_*`: `obligations.origin`, `idx_contract_terms_deadline` e `idx_documents_drive_pending`. No sentido contrário, as tabelas do CLM só tinham os grants de `service_role` numa instalação nova | Dobrei os três itens no `schema.sql` e criei a migration **nova** `20261020_91_contract_tables_grants.sql`. Nenhuma migration já aplicada foi editada. Drift reproduzido localmente: "NO DRIFT" |
+| Desktop unit and upgrade tests | Não, é nosso | É o mesmo drift, visto pelo runner do app desktop | Resolvido pela linha acima |
+| Frontend build and tests | Não, é nosso | Os testes passavam, mas o piso de cobertura do `src/app/lib` (100% de linhas) caiu porque a seção do CLM no `mikeApi.ts` não tinha testes | Criei `mikeApi.contracts.test.ts`, em arquivo separado para não conflitar com o upstream. Cobertura voltou a 100% / 99,1% |
+| playwright (`chat-management`) | Não, é nosso | Com os três itens de menu que adicionamos (Pipeline, Radar, Acervo), o History ficava sem altura em 1280×720 e a primeira linha de chat caía sob o rodapé da conta | O History ganhou altura mínima (`min-h-40`) e a coluna passa a rolar inteira |
+| CodeQL | 11 de 12 alertas são herdados do upstream; 1 crítico é nosso | Os 11 estão em arquivos idênticos ao upstream; o CodeQL os reportou porque o diff é enorme. O nosso (`js/request-forgery`): o id da URL de `DELETE /obligations/:id` ia direto para o path da API do Calendar e a remoção do evento rodava mesmo sem apagar nada, então dava para remover o evento de outra pessoa | Agora só o id da linha realmente apagada pelo usuário chega ao Calendar, e `eventId` exige UUID. Teste adicionado |
+| dependency-audit (frontend, word-addin) | Sim: advisories publicados depois do nosso merge-base | `markdown-it` e `follow-redirects` | O upstream já tinha corrigido; fiz novo merge do `upstream/main` (2 commits: web search e subagents) |
+
+**Slot de migration.** O upstream ocupou de novo o nosso slot `20261020_02`, então task fields foi renomeada para `20261020_90` (o conteúdo segue idêntico e idempotente). **Regra nova: migrations do fork usam a sequência `_90`–`_99` do dia.** Em produção, a migration já foi aplicada à mão com o nome antigo: na adoção do ledger, registrar `20261020_90` como aplicada.
+
+**Rotina sem token pessoal.** Depois de abrir o PR, `upstream-sync.yml` dispara via `workflow_dispatch` (permissão `actions: write`) os workflows ci, schema-drift, docker-images, stack-tests, e2e e word-addin; os checks aparecem no SHA da cabeça do PR. desktop, security, gitleaks e CodeQL só escutam `pull_request`: para rodá-los, fechar e reabrir o PR. Não editei esses workflows do upstream, para não criar conflito em todo sync. A recomendação de `SYNC_TOKEN` saiu da doc. O workflow passa no actionlint.
+
+**Docs.** PR #3 (draft, base `sync/upstream-2026-10`) versiona este `docs/product/` no fork; gitleaks não encontrou nada.
 
 ## Pendências
 
 - [ ] Revisar e ensaiar a migração do banco de produção (seção acima) **antes** de fazer merge do PR.
-- [ ] Configurar `SYNC_TOKEN` no repo, ou aceitar reabrir o PR para rodar o CI.
+- [x] ~~`SYNC_TOKEN`~~: decidido evitar token pessoal; a rotina usa `workflow_dispatch`.
 - [ ] Migration de `user_id` uuid + FK nas tabelas do CLM.
 - [ ] Converter `risk-rules.v1.yaml` em playbook; o dossiê passa a consumir os achados do playbook.
 - [ ] Acervo passa a usar o texto indexado do upstream.
