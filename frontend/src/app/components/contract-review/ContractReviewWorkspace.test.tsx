@@ -1,0 +1,307 @@
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ContractFicha, ContractReview, ReviewClause } from "@/app/lib/mikeApi";
+
+const api = vi.hoisted(() => ({
+    listContractReviews: vi.fn(),
+    getContractReview: vi.fn(),
+    startContractReview: vi.fn(),
+    decideReviewClause: vi.fn(),
+    getContractFicha: vi.fn(),
+    extractContractFicha: vi.fn(),
+    decideFichaField: vi.fn(),
+    getDocumentFile: vi.fn(),
+}));
+vi.mock("@/app/lib/mikeApi", async (original) => ({
+    ...(await original<typeof import("@/app/lib/mikeApi")>()),
+    ...api,
+}));
+const viewer = vi.hoisted(() => ({ docx: vi.fn() }));
+// The real viewer lazy-loads a Word renderer that jsdom cannot run.
+vi.mock("@/app/components/shared/views/DocxView", () => ({
+    DocxView: (props: { documentId: string; quotes?: { quote: string }[] }) => {
+        viewer.docx(props);
+        return <div role="document" aria-label={`Documento ${props.documentId}`} />;
+    },
+}));
+const toasts = vi.hoisted(() => ({ showToast: vi.fn() }));
+vi.mock("@/shared/ui/ToastUI", async (original) => ({
+    ...(await original<typeof import("@/shared/ui/ToastUI")>()),
+    showToast: toasts.showToast,
+}));
+const errors = vi.hoisted(() => ({ notifyError: vi.fn() }));
+vi.mock("@/app/lib/userFacingError", async (original) => ({
+    ...(await original<typeof import("@/app/lib/userFacingError")>()),
+    notifyError: errors.notifyError,
+}));
+
+import { ContractReviewWorkspace } from "./ContractReviewWorkspace";
+
+function clause(id: string, verdict: ReviewClause["verdict"], extra: Partial<ReviewClause> = {}): ReviewClause {
+    return {
+        id,
+        topicId: "t",
+        ruleId: id,
+        ruleName: `Regra ${id}`,
+        status: "needs_review",
+        quote: `trecho ${id}`,
+        location: `Cláusula ${id}`,
+        analysis: `Avaliação ${id}`,
+        suggestedText: `nova redação ${id}`,
+        verdict,
+        playbook_status: "needs_review",
+        covered: true,
+        sources: [{ kind: "playbook", label: "x", position: `Posição ${id}`, criteria: "" }],
+        rule_findings: [],
+        precedent: null,
+        decision: null,
+        ...extra,
+    };
+}
+
+const REVIEW: ContractReview = {
+    id: "run-1",
+    status: "completed",
+    error: null,
+    summary: "Dois pontos divergem do playbook.",
+    started_at: "2026-10-20T10:00:00Z",
+    completed_at: "2026-10-20T10:01:00Z",
+    model: "m",
+    playbook: { id: "pb", name: "Playbook Avenia v1" },
+    document: { id: "doc-1", name: "Contrato.docx", edited_version_id: "v2" },
+    clauses: [
+        clause("cessao", "alinhado", { status: "acceptable", playbook_status: "acceptable" }),
+        clause("foro", "diverge", {
+            precedent: { same: 2, of: 3, projects: [{ id: "p9", name: "MSA Trópico" }] },
+            sources: [
+                { kind: "playbook", label: "Foro", position: "Lei brasileira e foro de São Paulo", criteria: "" },
+                { kind: "regra", rule_id: "FOR-01", label: "Lei estrangeira", severity: "media", pending_validation: true },
+                { kind: "ficha", path: "foro.lei_aplicavel", label: "Lei aplicável", state: "pendente", quote: "q" },
+            ],
+        }),
+        clause("extra", "nao_aplica", { covered: false, suggestedText: "" }),
+    ],
+    uncovered: [{ rule_id: "REG-08", titulo: "Exclusividade", severidade: "alta", justificativa: "", acao_sugerida: "", campos: [], depende_de_campo_nao_validado: true }],
+};
+
+const FICHA: ContractFicha = {
+    ficha: {
+        "foro.lei_aplicavel": {
+            status: "encontrado",
+            value: { jurisdicao: "US" },
+            citations: [{ quote: "leis de Nova York", clause: "cl. 20", span: null, verified: true, match: "exato" }],
+            confidence: "alta",
+            origin: "ia",
+            notes: null,
+            review: { state: "pendente", by: null, at: null, comment: null },
+        },
+    },
+    findings: [],
+    risk_overall: "atencao",
+    progress: { verified: 0, total: 1 },
+    document_id: "doc-1",
+    extracted_at: "t",
+    model: "m",
+};
+
+const props = () => ({ projectId: "p1", projectName: "MSA Polaris", canEdit: true, onShare: vi.fn() });
+
+beforeEach(() => {
+    api.listContractReviews.mockResolvedValue([
+        { id: "run-1", status: "completed", started_at: "2026-10-20T10:00:00Z", playbook_name: "Playbook Avenia v1", counts: { alinhado: 1, precisa_revisao: 0, diverge: 1 } },
+    ]);
+    api.getContractReview.mockResolvedValue(REVIEW);
+    api.getContractFicha.mockResolvedValue(FICHA);
+    api.decideReviewClause.mockResolvedValue({ decision: null, edit: null });
+});
+
+afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+});
+
+describe("ContractReviewWorkspace", () => {
+    it("shows the document beside the first review, most urgent first, with its sources", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        expect(await screen.findByRole("document", { name: "Documento doc-1" })).toBeInTheDocument();
+        const cards = await screen.findAllByRole("article");
+        expect(cards.map((card) => within(card).getByRole("heading").textContent)).toEqual([
+            "Cláusula foro · Regra foro",
+            "Cláusula cessao · Regra cessao",
+            "Cláusula extra · Regra extra",
+        ]);
+        const foro = cards[0];
+        expect(within(foro).getByText("Diverge")).toBeInTheDocument();
+        expect(within(foro).getByText(/Lei brasileira e foro de São Paulo/)).toBeInTheDocument();
+        expect(within(foro).getByText(/Regra FOR-01/)).toBeInTheDocument();
+        expect(within(foro).getByText(/a confirmar na Ficha/)).toBeInTheDocument();
+        expect(within(foro).getByText(/Igual a 2 de 3 contratos assinados/)).toBeInTheDocument();
+        expect(within(foro).getByRole("link", { name: "MSA Trópico" })).toHaveAttribute("href", "/projects/p9/review");
+        expect(within(cards[2]).getByText(/Sem regra no playbook para este ponto/)).toBeInTheDocument();
+        expect(screen.getByText("REG-08")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "1 diverge: filtrar" })).toBeInTheDocument();
+    });
+
+    it("filters by the traffic light", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("button", { name: "1 alinhado: filtrar" }));
+        expect(screen.getAllByRole("article")).toHaveLength(1);
+        fireEvent.click(screen.getByRole("button", { name: "1 alinhado: filtrar" }));
+        expect(screen.getAllByRole("article")).toHaveLength(3);
+    });
+
+    it("shows the clause in the document when its title is clicked", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Cláusula foro · Regra foro" }));
+        expect(viewer.docx).toHaveBeenLastCalledWith(expect.objectContaining({ quotes: [{ quote: "trecho foro" }] }));
+    });
+
+    it("accepts at once and sends the decision after the undo window", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        expect(await screen.findByRole("button", { name: "Reabrir: Aceito" })).toHaveTextContent("Aceito por você");
+        expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ message: "Aceito: Regra foro", durationMs: 10_000 }));
+        expect(api.decideReviewClause).not.toHaveBeenCalled();
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" }));
+    });
+
+    it("undoes a decision from the toast without touching the document", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Rejeitar/ }));
+        fireEvent.keyDown(within(foro).getByLabelText("Por quê? (opcional)"), { key: "Enter" });
+        const undo = toasts.showToast.mock.calls[0][0].actions[0];
+        expect(undo.label).toBe("Desfazer");
+        act(() => undo.onClick());
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        expect(api.decideReviewClause).not.toHaveBeenCalled();
+        expect(screen.queryByRole("button", { name: /Reabrir/ })).toBeNull();
+    });
+
+    it("reopens a decided clause on the server", async () => {
+        api.getContractReview.mockResolvedValue({
+            ...REVIEW,
+            clauses: [clause("foro", "diverge", { decision: { decision: "aceito", edited_text: null, reason: null, decided_by: "duda@avenia.io", decided_at: "2026-10-20T10:05:00Z", edit: null } })],
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Reabrir: Aceito" }));
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "desfeito" }));
+    });
+
+    it("accepts every aligned suggestion at once", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Aceitar todos os alinhados (1)" }));
+        expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ message: "Aceito: Regra cessao" }));
+    });
+
+    it("moves between clauses with j/k", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        const cards = await screen.findAllByRole("article");
+        const list = cards[0].parentElement!;
+        fireEvent.keyDown(list, { key: "j" });
+        expect(cards[0]).toHaveFocus();
+        fireEvent.keyDown(list, { key: "j" });
+        expect(screen.getAllByRole("article")[1]).toHaveFocus();
+        fireEvent.keyDown(list, { key: "k" });
+        expect(screen.getAllByRole("article")[0]).toHaveFocus();
+    });
+
+    it("teaches the next step before the first review and starts one", async () => {
+        api.listContractReviews.mockResolvedValue([]);
+        api.getContractFicha.mockResolvedValue({ ...FICHA, ficha: null, document_id: null });
+        api.startContractReview.mockResolvedValue({ id: "run-2", status: "running" });
+        api.getContractReview.mockResolvedValue({ ...REVIEW, id: "run-2", status: "running", clauses: [] });
+        render(<ContractReviewWorkspace {...props()} />);
+        expect(await screen.findByText("Nenhuma revisão ainda")).toBeInTheDocument();
+        expect(screen.getByText("O contrato aparece aqui")).toBeInTheDocument();
+        const buttons = screen.getAllByRole("button", { name: /Revisar com o playbook/ });
+        fireEvent.click(buttons[buttons.length - 1]);
+        expect(await screen.findByText("Redigindo edições…")).toBeInTheDocument();
+        expect(api.startContractReview).toHaveBeenCalledWith("p1");
+    });
+
+    it("explains a failed review and a failed load", async () => {
+        api.getContractReview.mockResolvedValueOnce({ ...REVIEW, error: "A revisão falhou. Tente de novo." });
+        const { unmount } = render(<ContractReviewWorkspace {...props()} />);
+        expect(await screen.findByText("A revisão não terminou")).toBeInTheDocument();
+        unmount();
+        api.listContractReviews.mockRejectedValueOnce(new Error("boom"));
+        render(<ContractReviewWorkspace {...props()} />);
+        expect(await screen.findByText("Não consegui carregar a revisão")).toBeInTheDocument();
+        api.listContractReviews.mockResolvedValue([]);
+        fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
+        expect(await screen.findByText("Nenhuma revisão ainda")).toBeInTheDocument();
+    });
+
+    it("shows the Ficha with its count and verifies a field in one click", async () => {
+        api.decideFichaField.mockResolvedValue({ ...FICHA, progress: { verified: 1, total: 1 } });
+        render(<ContractReviewWorkspace {...props()} />);
+        const tab = await screen.findByRole("tab", { name: /Ficha/ });
+        await waitFor(() => expect(tab).toHaveTextContent("0/1"));
+        fireEvent.click(tab);
+        expect(screen.getByText("Lei aplicável")).toBeInTheDocument();
+        expect(screen.getByText("US")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Verificar Lei aplicável" }));
+        await waitFor(() => expect(api.decideFichaField).toHaveBeenCalledWith("p1", { path: "foro.lei_aplicavel", action: "confirmar" }));
+        await waitFor(() => expect(screen.getByRole("tab", { name: /Ficha/ })).toHaveTextContent("1/1"));
+    });
+
+    it("corrects a Ficha field as typed, and shows a citation in the document", async () => {
+        api.decideFichaField.mockResolvedValue(FICHA);
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("tab", { name: /Ficha/ }));
+        fireEvent.click(await screen.findByRole("button", { name: "cl. 20" }));
+        expect(viewer.docx).toHaveBeenLastCalledWith(expect.objectContaining({ quotes: [{ quote: "leis de Nova York" }] }));
+        fireEvent.click(screen.getByRole("button", { name: "Corrigir Lei aplicável" }));
+        const input = screen.getByLabelText("Valor correto de Lei aplicável");
+        fireEvent.change(input, { target: { value: "lei brasileira" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(api.decideFichaField).toHaveBeenCalledWith("p1", {
+                path: "foro.lei_aplicavel",
+                action: "corrigir",
+                value: { nota: "lei brasileira" },
+            }),
+        );
+    });
+
+    it("extracts the Ficha from its empty state", async () => {
+        api.getContractFicha.mockResolvedValue({ ...FICHA, ficha: null });
+        api.extractContractFicha.mockResolvedValue(FICHA);
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Extrair a Ficha" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Extrair a Ficha" }));
+        await waitFor(() => expect(api.extractContractFicha).toHaveBeenCalledWith("p1"));
+        expect(await screen.findByText("Lei aplicável")).toBeInTheDocument();
+    });
+
+    it("shares and exports from the header", async () => {
+        const onShare = vi.fn();
+        api.getDocumentFile.mockResolvedValue({ blob: new Blob(["x"]), filename: "Contrato v2.docx" });
+        const createObjectURL = vi.fn(() => "blob:1");
+        vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+        render(<ContractReviewWorkspace {...props()} onShare={onShare} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Compartilhar" }));
+        expect(onShare).toHaveBeenCalled();
+        await waitFor(() => expect(screen.getByRole("button", { name: "Exportar .docx" })).toBeEnabled());
+        fireEvent.click(screen.getByRole("button", { name: "Exportar .docx" }));
+        await waitFor(() => expect(api.getDocumentFile).toHaveBeenCalledWith("doc-1"));
+        expect(createObjectURL).toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("is read-only for a viewer", async () => {
+        render(<ContractReviewWorkspace {...props()} canEdit={false} />);
+        await screen.findAllByRole("article");
+        expect(screen.queryByRole("button", { name: /Aceitar/ })).toBeNull();
+        expect(screen.queryByRole("button", { name: /Revisar/ })).toBeNull();
+    });
+});

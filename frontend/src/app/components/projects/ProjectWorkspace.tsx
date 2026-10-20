@@ -137,6 +137,8 @@ type ProjectWorkspaceValue = {
      * closed until the server has told us it may open.
      */
     canDo: (capability: Capability) => boolean;
+    /** Opens the project's Access modal: who can open this contract. */
+    openAccess: () => void;
 };
 
 const ProjectWorkspaceContext =
@@ -533,6 +535,8 @@ export function ProjectWorkspaceProvider({
         }
     }
 
+    const openAccess = useCallback(() => setAccessModalOpen(true), []);
+
     const value = useMemo<ProjectWorkspaceValue>(
         () => ({
             projectId,
@@ -557,6 +561,7 @@ export function ProjectWorkspaceProvider({
             setOwnerOnlyAction,
             accessRole,
             canDo,
+            openAccess,
         }),
         [
             projectId,
@@ -576,6 +581,7 @@ export function ProjectWorkspaceProvider({
             setDocumentUploadHeaderAction,
             accessRole,
             canDo,
+            openAccess,
         ],
     );
 

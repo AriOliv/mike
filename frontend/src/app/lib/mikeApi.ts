@@ -4730,3 +4730,152 @@ export async function updateObligation(
 export async function deleteObligation(id: string): Promise<void> {
     await apiRequest(`/obligations/${id}`, { method: "DELETE" });
 }
+
+// ── Contract review by playbook + Ficha (/projects/:id/contract-review) ─────
+export type ReviewVerdict = "alinhado" | "precisa_revisao" | "diverge" | "nao_aplica";
+
+export interface ReviewDecision {
+    decision: "aceito" | "editado" | "rejeitado";
+    edited_text: string | null;
+    reason: string | null;
+    decided_by: string;
+    decided_at: string;
+    edit: EditAnnotation | null;
+}
+
+export type ReviewClauseSource =
+    | { kind: "playbook"; label: string; position: string; criteria: string }
+    | { kind: "regra"; rule_id: string; label: string; severity: string; pending_validation: boolean }
+    | { kind: "ficha"; path: string; label: string; state: string; quote: string | null };
+
+export interface RiskRuleFinding {
+    rule_id: string;
+    titulo: string;
+    severidade: "critica" | "alta" | "media" | "baixa" | "info";
+    justificativa: string;
+    acao_sugerida: string;
+    campos: string[];
+    depende_de_campo_nao_validado: boolean;
+}
+
+export interface ReviewClause extends PlaybookFinding {
+    verdict: ReviewVerdict;
+    playbook_status: PlaybookFindingStatus;
+    covered: boolean;
+    sources: ReviewClauseSource[];
+    rule_findings: RiskRuleFinding[];
+    precedent: { same: number; of: number; projects: { id: string; name: string }[] } | null;
+    decision: ReviewDecision | null;
+}
+
+export interface ContractReview {
+    id: string;
+    status: string;
+    error: string | null;
+    summary: string | null;
+    started_at: string;
+    completed_at: string | null;
+    model: string;
+    playbook: { id: string; name: string };
+    document: { id: string | null; name: string | null; edited_version_id: string | null };
+    clauses: ReviewClause[];
+    uncovered: RiskRuleFinding[];
+}
+
+export interface ContractReviewSummary {
+    id: string;
+    status: string;
+    started_at: string;
+    playbook_name: string;
+    counts: { alinhado: number; precisa_revisao: number; diverge: number };
+}
+
+export interface FichaCitation {
+    quote: string;
+    clause: string | null;
+    span: { start: number; end: number } | null;
+    verified: boolean;
+    match: "exato" | "normalizado" | "nao_encontrado";
+}
+
+export interface FichaField {
+    status: "encontrado" | "inferido" | "ambiguo" | "nao_encontrado" | "nao_aplicavel";
+    value: unknown;
+    citations: FichaCitation[];
+    confidence: "alta" | "media" | "baixa" | null;
+    origin: "ia" | "humano";
+    notes: string | null;
+    ai_value?: unknown;
+    review: { state: "pendente" | "confirmado" | "corrigido"; by: string | null; at: string | null; comment: string | null };
+}
+
+export interface ContractFicha {
+    ficha: Record<string, FichaField> | null;
+    findings: RiskRuleFinding[];
+    risk_overall: "critico" | "atencao" | "ok" | null;
+    progress: { verified: number; total: number };
+    document_id: string | null;
+    extracted_at: string | null;
+    model: string | null;
+}
+
+function contractReviewPath(projectId: string, rest: string): string {
+    return `/projects/${encodeURIComponent(projectId)}/contract-review${rest}`;
+}
+
+export async function listContractReviews(projectId: string): Promise<ContractReviewSummary[]> {
+    return apiRequest(contractReviewPath(projectId, "/reviews"));
+}
+
+export async function startContractReview(
+    projectId: string,
+    options: { playbook_id?: string; model?: string } = {},
+): Promise<{ id: string; status: string }> {
+    return apiRequest(contractReviewPath(projectId, "/reviews"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+    });
+}
+
+export async function getContractReview(projectId: string, runId: string): Promise<ContractReview> {
+    return apiRequest(contractReviewPath(projectId, `/reviews/${encodeURIComponent(runId)}`));
+}
+
+export async function decideReviewClause(
+    projectId: string,
+    runId: string,
+    findingId: string,
+    input: { decision: "aceito" | "editado" | "rejeitado" | "desfeito"; edited_text?: string; reason?: string },
+): Promise<{ decision: ReviewDecision | null; edit: EditAnnotation | null }> {
+    return apiRequest(
+        contractReviewPath(
+            projectId,
+            `/reviews/${encodeURIComponent(runId)}/clauses/${encodeURIComponent(findingId)}/decision`,
+        ),
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+        },
+    );
+}
+
+export async function getContractFicha(projectId: string): Promise<ContractFicha> {
+    return apiRequest(contractReviewPath(projectId, "/ficha"));
+}
+
+export async function extractContractFicha(projectId: string): Promise<ContractFicha> {
+    return apiRequest(contractReviewPath(projectId, "/ficha/extract"), { method: "POST" });
+}
+
+export async function decideFichaField(
+    projectId: string,
+    input: { path: string; action: "confirmar" | "corrigir"; value?: unknown; comment?: string },
+): Promise<ContractFicha> {
+    return apiRequest(contractReviewPath(projectId, "/ficha/fields"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
