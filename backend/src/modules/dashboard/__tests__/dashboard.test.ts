@@ -60,6 +60,21 @@ const inputs = {
         { status: "lida", impact: "alto", request_project_id: "r1", obligation_id: null, created_at: "2026-10-10T00:00:00Z" },
         { status: "nova", impact: "baixo", request_project_id: null, obligation_id: null, created_at: "2026-10-11T00:00:00Z" },
     ],
+    laneEvents: [
+        // c: entrada 2026-10-01 → triagem 10-03 → revisao 10-15 (moves out of entrada and triagem)
+        { project_id: "c", at: "2026-10-03T10:00:00Z", before: "entrada", after: "triagem" },
+        { project_id: "c", at: "2026-10-15T10:00:00Z", before: "triagem", after: "revisao" },
+        // b: entrada → assinatura after 4 days; then archived (archived stays are not measured)
+        { project_id: "b", at: "2026-10-05T10:00:00Z", before: "entrada", after: "assinatura" },
+        { project_id: "b", at: "2026-10-21T10:00:00Z", before: "assinatura", after: "arquivado" },
+        { project_id: "b", at: "2026-10-01T09:00:00Z", before: null, after: "entrada" },
+    ],
+    agentRuns: [
+        { project_id: "d", agent: "revisor", status: "succeeded", cost_usd: "0.25", started_at: "2026-10-09T00:00:00Z" },
+        { project_id: "d", agent: "extrator", status: "succeeded", cost_usd: 0.1, started_at: "2026-10-09T00:00:00Z" },
+        { project_id: "a", agent: "notificador", status: "succeeded", cost_usd: null, started_at: "2026-10-09T00:00:00Z" },
+        { project_id: "a", agent: "revisor", status: "failed", cost_usd: 0.05, started_at: "2025-01-01T00:00:00Z" },
+    ],
     documentProject: new Map([["doc-c", "c"]]),
 };
 
@@ -83,7 +98,9 @@ describe("computeDashboard", () => {
         expect(d.cycle.stage_age.find((s) => s.lane === "revisao")).toEqual({ lane: "revisao", open: 1, median_days: 5 });
         expect(d.cycle.stage_age.find((s) => s.lane === "triagem")).toEqual({ lane: "triagem", open: 0, median_days: null });
         expect(d.cycle.stage_age.map((s) => s.lane)).not.toContain("arquivado");
-        expect(d.cycle.per_stage_history).toBeNull();
+        expect(d.cycle.per_stage_history.find((s) => s.lane === "entrada")).toEqual({ lane: "entrada", moves: 2, median_days: 3 });
+        expect(d.cycle.per_stage_history.find((s) => s.lane === "triagem")).toEqual({ lane: "triagem", moves: 1, median_days: 12 });
+        expect(d.cycle.per_stage_moves).toBe(3);
     });
 
     it("measures SLA and the notice deadlines kept", () => {
@@ -93,7 +110,7 @@ describe("computeDashboard", () => {
 
     it("separates contracts reviewed by agents from those reviewed by people", () => {
         expect(d.agents).toEqual({
-            contracts_reviewed_by_agents: 2,
+            contracts_reviewed_by_agents: 3,
             contracts_reviewed_by_people: 1,
             playbook_runs: 1,
             terms_extracted: 2,
@@ -103,27 +120,37 @@ describe("computeDashboard", () => {
     });
 
     it("shows hours saved with the formula it used", () => {
-        expect(d.hours_saved.hours).toBe(4.2);
+        expect(d.hours_saved.hours).toBe(5.7);
         expect(d.hours_saved.formula).toBe(
-            "2 revisões × 90 min + 2 extrações de prazos × 20 min + 2 mudanças regulatórias × 15 min",
+            "3 revisões × 90 min + 2 extrações de prazos × 20 min + 2 mudanças regulatórias × 15 min",
         );
     });
 
     it("reports adoption per person and never invents an AI cost", () => {
         expect(d.adoption.people[0]).toEqual({ email: "duda@avenia.io", assigned_open: 1, closed: 1, reviews_run: 0 });
         expect(d.adoption.reviews_by_user_id).toEqual([{ user_id: "u1", count: 1 }]);
-        expect(d.ai_cost).toBeNull();
+        expect(d.ai_cost).toEqual({
+            total_usd: 0.35,
+            runs: 2,
+            per_contract_usd: 0.35,
+            by_agent: [
+                { agent: "revisor", usd: 0.25 },
+                { agent: "extrator", usd: 0.1 },
+            ],
+        });
     });
 
     it("handles an empty base", () => {
         const empty = computeDashboard(
-            { cards: [], dossiers: [], terms: [], runs: [], changes: [], documentProject: new Map() },
+            { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], documentProject: new Map() },
             { now: NOW, periodDays: 90, assumptions: DEFAULT_ASSUMPTIONS },
         );
         expect(empty.cycle.median_days_to_close).toBeNull();
         expect(empty.sla.rate).toBeNull();
         expect(empty.hours_saved.hours).toBe(0);
         expect(empty.volume.weekly.length).toBeGreaterThan(12);
+        expect(empty.ai_cost).toBeNull();
+        expect(empty.cycle.per_stage_moves).toBe(0);
     });
 
     it("weeks start on Monday", () => {
@@ -156,13 +183,16 @@ describe("getDashboard", () => {
             { table: "contract_terms", data: [] },
             { table: "documents", data: [{ id: "doc1", project_id: "p1" }] },
             { table: "playbook_runs", data: [] },
+            { table: "card_events", data: [] },
+            { table: "agent_runs", data: [] },
             { table: "regulatory_changes", data: [] },
         ]);
         const result = await getDashboard(fake.db, caller, { period: "30" }, NOW);
         expect(result).toMatchObject({ ok: true, data: { period_days: 30, volume: { opened: 1 } } });
         expect(fake.calls[0].filters).toContainEqual(["in", "project_id", ["p1"]]);
         expect(fake.calls[3].filters).toContainEqual(["in", "document_id", ["doc1"]]);
-        expect(fake.calls[4].filters).toContainEqual(["in", "scan_id", ["s1"]]);
+        expect(fake.calls[4].filters).toContainEqual(["eq", "action", "lane.changed"]);
+        expect(fake.calls[6].filters).toContainEqual(["in", "scan_id", ["s1"]]);
         fake.done();
     });
 
@@ -172,8 +202,8 @@ describe("getDashboard", () => {
 
         contracts.listPipeline.mockResolvedValue({ ok: true, data: { cards: [card({ id: "p1" })] } });
         regulatory.visibleScanIds.mockResolvedValue([]);
-        for (const failAt of ["dossiers", "contract_terms", "documents", "playbook_runs", "regulatory_changes"]) {
-            const order = ["dossiers", "contract_terms", "documents", "playbook_runs", "regulatory_changes"];
+        const order = ["dossiers", "contract_terms", "documents", "playbook_runs", "card_events", "agent_runs", "regulatory_changes"];
+        for (const failAt of order) {
             const steps = order.slice(0, order.indexOf(failAt) + 1).map((table) =>
                 table === failAt
                     ? { table, error: { message: "x" } }

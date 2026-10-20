@@ -5,7 +5,7 @@ const access = vi.hoisted(() => ({ getOrgRole: vi.fn(), listAccessibleProjectIds
 vi.mock("../../../lib/access", () => access);
 const projects = vi.hoisted(() => ({ createProject: vi.fn() }));
 vi.mock("../../projects/projects.service", () => projects);
-const contracts = vi.hoisted(() => ({ createObligation: vi.fn(), updatePipelineCard: vi.fn(), contractCorpus: vi.fn() }));
+const contracts = vi.hoisted(() => ({ createObligation: vi.fn(), updatePipelineCard: vi.fn(), contractCorpus: vi.fn(), recordCardEvent: vi.fn() }));
 vi.mock("../../contracts/contracts.service", () => contracts);
 const dbq = vi.hoisted(() => ({ enqueueDbJob: vi.fn() }));
 vi.mock("../../../lib/dbq/enqueue", () => dbq);
@@ -379,6 +379,14 @@ describe("one-click actions", () => {
             requester_name: "Agente regulatório",
             assignee_email: "duda@avenia.io",
         });
+        expect(contracts.recordCardEvent).toHaveBeenCalledWith(fake.db, expect.objectContaining({
+            projectId: "pnew",
+            actorType: "agent",
+            actorName: "Agente regulatório",
+            onBehalfOf: "ana@avenia.io",
+            action: "request.created",
+            after: expect.objectContaining({ origin: "regulatory", url: "https://bcb/999", affected: 2 }),
+        }));
         expect(fake.calls[2].payload).toMatchObject({ request_project_id: "pnew", status: "lida" });
         fake.done();
     });
@@ -421,7 +429,7 @@ describe("one-click actions", () => {
         projects.createProject.mockResolvedValue({ ok: true, project: { id: "pnew" } });
         contracts.updatePipelineCard.mockResolvedValue({ ok: true, data: {} });
         const fake = scriptedDb([
-            { table: "regulatory_changes", data: change({ impact: "medio", effective_date: null }) },
+            { table: "regulatory_changes", data: change({ impact: "medio", effective_date: null, url: null, affected: null }) },
             { table: "regulatory_scans", data: { ...otherScan, user_id: "u1" } },
             { table: "regulatory_changes", op: "update", data: change() },
             { table: "projects", data: [] },

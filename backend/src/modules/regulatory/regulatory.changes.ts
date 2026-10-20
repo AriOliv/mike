@@ -11,7 +11,7 @@ import type { Db } from "../../lib/supabase";
 import { getOrgRole, listAccessibleProjectIds } from "../../lib/access";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { createProject } from "../projects/projects.service";
-import { createObligation, updatePipelineCard } from "../contracts/contracts.service";
+import { createObligation, recordCardEvent, updatePipelineCard } from "../contracts/contracts.service";
 import { PRESETS, TOPICS, type Affected } from "./regulatory.match";
 import { SOURCE_IDS, SOURCE_LABELS } from "./regulatory.sources";
 import { enqueueRegulatoryScan } from "./regulatory.scan";
@@ -440,6 +440,27 @@ export async function createRequestFromChange(
         assignee_email: typeof body.assignee_email === "string" ? body.assignee_email : null,
     });
     if (!card.ok) return card;
+    // The card's feed opens with where the request came from: the act, its
+    // official link, and who turned it into work.
+    await recordCardEvent(db, {
+        projectId,
+        orgId: scan.org_id,
+        actorType: "agent",
+        actorId: "agent:regulatorio@1",
+        actorName: "Agente regulatório",
+        onBehalfOf: caller.userEmail ?? null,
+        action: "request.created",
+        after: {
+            origin: "regulatory",
+            scan: scan.name,
+            change_id: changeId,
+            title,
+            url: change.url ?? null,
+            impact: change.impact,
+            affected: ((change.affected as Affected[] | null) ?? []).length,
+        },
+        source: "agent",
+    });
 
     const patch = {
         request_project_id: projectId,

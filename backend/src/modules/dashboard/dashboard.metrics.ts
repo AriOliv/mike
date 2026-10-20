@@ -6,10 +6,10 @@
 //
 // Every number is computed from rows that already exist (projects on the
 // pipeline, dossiers, contract terms, playbook runs, regulatory changes), all
-// scoped to the contracts the caller can see. Where a measure needs data the
-// platform does not record yet, the payload says so instead of inventing it:
-// time per stage waits for the card event log, and AI cost for the agent run
-// ledger.
+// scoped to the contracts the caller can see. Time per stage comes from the
+// card event log (lane.changed), so it only covers moves made since the log
+// existed; AI cost is what agent runs recorded, and the payload says when
+// nothing was recorded instead of showing a zero that reads as "free".
 
 import type { Db } from "../../lib/supabase";
 import { internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
@@ -34,6 +34,8 @@ const PERIODS = [30, 90, 365] as const;
 type DossierRow = { project_id: string; source: string | null; created_at: string; user_id: string | null };
 type TermsRow = { project_id: string; notice_deadline: string | null; extracted_at: string };
 type RunRow = { document_id: string | null; user_id: string; status: string; started_at: string; completed_at: string | null };
+type LaneEventRow = { project_id: string; at: string; before: unknown; after: unknown };
+type AgentRunRow = { project_id: string; agent: string; status: string; cost_usd: number | string | null; started_at: string };
 type ChangeRow = { status: string; impact: string; request_project_id: string | null; obligation_id: string | null; created_at: string };
 
 export type DashboardInputs = {
@@ -42,6 +44,8 @@ export type DashboardInputs = {
     terms: TermsRow[];
     runs: RunRow[];
     changes: ChangeRow[];
+    laneEvents: LaneEventRow[];
+    agentRuns: AgentRunRow[];
     /** document id → project id, for runs over contract documents */
     documentProject: Map<string, string>;
 };
@@ -130,6 +134,28 @@ export function computeDashboard(
         return { lane, open: here.length, median_days: ages.length ? round1(median(ages)!) : null };
     });
 
+    // Time spent in each stage, from every recorded lane move: a move out of
+    // a lane closes the stay that the previous move (or the card's creation)
+    // opened. Only stays that ended inside the period count.
+    const stayDays = new Map<string, number[]>();
+    const moves = [...input.laneEvents].sort((x, y) => x.at.localeCompare(y.at));
+    const enteredAt = new Map<string, string>();
+    const created = new Map(input.cards.map((c) => [c.id, String(c.created_at ?? "")]));
+    for (const e of moves) {
+        const from = typeof e.before === "string" ? e.before : null;
+        const start = enteredAt.get(e.project_id) ?? created.get(e.project_id);
+        if (from && from !== "arquivado" && start && inPeriod(e.at)) {
+            const d = daysBetween(start, e.at);
+            if (Number.isFinite(d) && d >= 0) stayDays.set(from, [...(stayDays.get(from) ?? []), d]);
+        }
+        enteredAt.set(e.project_id, e.at);
+    }
+    const perStage = LANES.filter((l) => l !== "arquivado").map((lane) => {
+        const stays = stayDays.get(lane) ?? [];
+        return { lane, moves: stays.length, median_days: stays.length ? round1(median(stays)!) : null };
+    });
+    const movesMeasured = perStage.reduce((n, s) => n + s.moves, 0);
+
     // ── SLA (the card's deadline) ───────────────────────────────────────────
     const withDeadline = closed.filter((c) => typeof c.deadline === "string");
     const onTime = withDeadline.filter((c) => String(c.completed_at ?? c.lane_updated_at).slice(0, 10) <= String(c.deadline));
@@ -154,6 +180,10 @@ export function computeDashboard(
     for (const r of runsDone) {
         const p = r.document_id ? input.documentProject.get(r.document_id) : undefined;
         if (p) agentReviewed.add(p);
+    }
+    const agentRunsInPeriod = input.agentRuns.filter((r) => inPeriod(r.started_at));
+    for (const r of agentRunsInPeriod) {
+        if (r.status === "succeeded" && /revis|risco|extrator/.test(r.agent)) agentReviewed.add(r.project_id);
     }
     const humanReviewed = new Set<string>(imported.map((d) => d.project_id));
     for (const p of agentReviewed) humanReviewed.delete(p);
@@ -196,9 +226,8 @@ export function computeDashboard(
             median_days_to_close: cycleDays.length ? round1(median(cycleDays)!) : null,
             closed_measured: cycleDays.length,
             stage_age: stageAge,
-            // Time spent per stage needs every lane change, not just the last.
-            per_stage_history: null as null,
-            per_stage_history_note: "O histórico por etapa chega com o registro de eventos do card.",
+            per_stage_history: perStage,
+            per_stage_moves: movesMeasured,
         },
         sla: {
             closed_with_deadline: withDeadline.length,
@@ -232,10 +261,29 @@ export function computeDashboard(
                 .sort((x, y) => y.closed + y.assigned_open - (x.closed + x.assigned_open)),
             reviews_by_user_id: [...runsByUser.entries()].map(([user_id, count]) => ({ user_id, count })),
         },
-        // The provider registry does not persist token usage; the agent run
-        // ledger will. Until then this stays null rather than a guess.
-        ai_cost: null as null,
-        ai_cost_note: "O custo de IA aparece quando o registro de execuções dos agentes estiver ativo.",
+        ai_cost: aiCost(agentRunsInPeriod),
+    };
+}
+
+/**
+ * What the agent runs recorded. Null when no run carries a cost: the
+ * provider registry does not report it for every model, and a zero would
+ * read as "free".
+ */
+function aiCost(runs: AgentRunRow[]) {
+    const costed = runs.filter((r) => r.cost_usd !== null && r.cost_usd !== undefined && Number.isFinite(Number(r.cost_usd)));
+    if (costed.length === 0) return null;
+    const byAgent = new Map<string, number>();
+    for (const r of costed) byAgent.set(r.agent, (byAgent.get(r.agent) ?? 0) + Number(r.cost_usd));
+    const total = [...byAgent.values()].reduce((a, b) => a + b, 0);
+    const contracts = new Set(costed.map((r) => r.project_id)).size;
+    return {
+        total_usd: Math.round(total * 100) / 100,
+        runs: costed.length,
+        per_contract_usd: Math.round((total / contracts) * 100) / 100,
+        by_agent: [...byAgent.entries()]
+            .map(([agent, usd]) => ({ agent, usd: Math.round(usd * 100) / 100 }))
+            .sort((a, b) => b.usd - a.usd),
     };
 }
 
@@ -311,6 +359,23 @@ export async function getDashboard(
             if (error) throw error;
             return (data ?? []) as RunRow[];
         });
+        const laneEvents = await inChunks(ids, async (slice) => {
+            const { data, error } = await db
+                .from("card_events")
+                .select("project_id, at, before, after")
+                .in("project_id", slice)
+                .eq("action", "lane.changed");
+            if (error) throw error;
+            return (data ?? []) as LaneEventRow[];
+        });
+        const agentRuns = await inChunks(ids, async (slice) => {
+            const { data, error } = await db
+                .from("agent_runs")
+                .select("project_id, agent, status, cost_usd, started_at")
+                .in("project_id", slice);
+            if (error) throw error;
+            return (data ?? []) as AgentRunRow[];
+        });
         const scanIds = await visibleScanIds(db, caller);
         const changes = await inChunks(scanIds, async (slice) => {
             const { data, error } = await db
@@ -323,7 +388,7 @@ export async function getDashboard(
 
         return ok(
             computeDashboard(
-                { cards, dossiers, terms, runs, changes, documentProject },
+                { cards, dossiers, terms, runs, changes, laneEvents, agentRuns, documentProject },
                 { now, periodDays: opts.periodDays, assumptions: opts.assumptions },
             ),
         );
