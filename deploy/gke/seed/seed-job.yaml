@@ -1,0 +1,66 @@
+# One-shot synthetic seed (never real data): creates the two demo users through
+# the GoTrue admin API, records their ids in public._seed_users, then loads
+# seed.sql (12 fictitious cards across the 6 lanes, terms, deadlines).
+# Idempotent: existing users are reused, rows use fixed ids + on conflict.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata: { labels: { app: seed } }
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      initContainers:
+        - name: users
+          image: curlimages/curl:8.10.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              until curl -sf http://auth:9999/health >/dev/null; do echo "waiting for auth"; sleep 3; done
+              for u in "legal.demo@avenia.io|Legal Demo" "solicitante.demo@avenia.io|Solicitante Demo"; do
+                email="${u%%|*}"; name="${u##*|}"
+                code=$(curl -s -o /tmp/out -w '%{http_code}' -X POST http://auth:9999/admin/users \
+                  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" -H "Content-Type: application/json" \
+                  -d "{\"email\":\"${email}\",\"password\":\"${DEMO_PASSWORD}\",\"email_confirm\":true,\"user_metadata\":{\"full_name\":\"${name}\"}}")
+                echo "${email}: ${code}"
+                case "$code" in 200|201|422) ;; *) cat /tmp/out; exit 1;; esac
+              done
+          env:
+            - name: SERVICE_ROLE_KEY
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: SERVICE_ROLE_KEY } }
+            - name: DEMO_PASSWORD
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: DEMO_PASSWORD } }
+          resources: { requests: { cpu: 50m, memory: 64Mi } }
+      containers:
+        - name: sql
+          image: supabase/postgres:17.6.1.136
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -e
+              DB="postgres://postgres:${PGPASSWORD}@db:5432/postgres"
+              until psql "$DB" -tAc "select 1 from public.schema_migrations limit 1" | grep -q 1; do
+                echo "waiting for db-init"; sleep 3;
+              done
+              psql "$DB" -v ON_ERROR_STOP=1 <<'SQL'
+              create table if not exists public._seed_users (email text primary key, id uuid not null, role text not null);
+              revoke all on public._seed_users from anon, authenticated;
+              insert into public._seed_users(email, id, role)
+              select email, id, case when email like 'legal.%' then 'legal' else 'solicitante' end
+              from auth.users where email in ('legal.demo@avenia.io', 'solicitante.demo@avenia.io')
+              on conflict (email) do update set id = excluded.id, role = excluded.role;
+              SQL
+              psql "$DB" -v ON_ERROR_STOP=1 -f /seed/seed.sql
+          env:
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: POSTGRES_PASSWORD } }
+          volumeMounts: [{ name: seed, mountPath: /seed }]
+          resources: { requests: { cpu: 100m, memory: 128Mi } }
+      volumes:
+        - name: seed
+          configMap: { name: seed-sql }

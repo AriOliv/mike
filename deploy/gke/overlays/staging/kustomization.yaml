@@ -1,0 +1,33 @@
+# staging.clm.avenia.tech — stable environment the Legal team tests on.
+# Synthetic data only. Until the Cloudflare record exists, the same deployment
+# also answers on <ip>.nip.io (both certificates are attached).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: staging
+resources:
+  - namespace.yaml
+  - ../../base
+components:
+  - ../../seed
+configMapGenerator:
+  - name: mike-env
+    literals:
+      - PUBLIC_URL=https://staging.clm.avenia.tech
+      # temporary second origin while the Cloudflare record does not exist
+      - ALLOWED_ORIGINS=https://34-120-191-197.nip.io
+images:
+  - name: mike-backend
+    newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend
+    newTag: e4ecce02
+  - name: mike-frontend
+    newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/frontend
+    newTag: e4ecce02
+patches:
+  - target: { kind: Gateway, name: mike-edge }
+    patch: |-
+      - op: replace
+        path: /spec/listeners/0/tls/options/networking.gke.io~1pre-shared-certs
+        value: mike-staging-clm,mike-staging-nip
+      - op: replace
+        path: /spec/addresses/0/value
+        value: mike-staging-ip

@@ -1,0 +1,61 @@
+# Mike backend (Express). Workers run in a worker_thread (WORKERS_MODE=thread)
+# on the Postgres job queue (no REDIS_URL). Files go to a PVC (STORAGE_DRIVER=fs):
+# signed upload/download URLs point at BACKEND_PUBLIC_URL=/api, i.e. the same
+# origin the browser is already on, so nothing else needs to be exposed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector: { app: backend }
+  ports: [{ name: http, port: 3001, targetPort: 3001 }]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-files
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard-rwo
+  resources: { requests: { storage: 10Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # RWO volume
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata: { labels: { app: backend } }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { fsGroup: 1000 }
+      containers:
+        - name: backend
+          image: mike-backend
+          ports: [{ containerPort: 3001 }]
+          envFrom:
+            - configMapRef: { name: mike-env }
+            - secretRef: { name: mike-backend-secrets }
+          env:
+            - { name: PORT, value: "3001" }
+            - { name: NODE_ENV, value: production }
+            - { name: FRONTEND_URL, value: "$(PUBLIC_URL)" }
+            - { name: API_PUBLIC_URL, value: "$(PUBLIC_URL)/api" }
+            - { name: BACKEND_PUBLIC_URL, value: /api }
+            - { name: SUPABASE_URL, value: "http://gateway:8080" }
+            - { name: STORAGE_DRIVER, value: fs }
+            - { name: STORAGE_FS_ROOT, value: /data/files }
+            - { name: WORKERS_MODE, value: thread }
+          volumeMounts: [{ name: files, mountPath: /data }]
+          readinessProbe:
+            httpGet: { path: /health, port: 3001 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: files
+          persistentVolumeClaim: { claimName: backend-files }
