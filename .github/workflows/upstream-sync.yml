@@ -19,6 +19,10 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # Dispatch the PR's checks: a PR or push made with GITHUB_TOKEN triggers no
+  # workflows, but a workflow_dispatch it sends does, and those runs report on
+  # the branch head, the PR's head SHA.
+  actions: write
 
 concurrency:
   group: upstream-sync
@@ -84,6 +88,7 @@ jobs:
           BRANCH: ${{ steps.merge.outputs.branch }}
         run: |
           git push origin "$BRANCH"
+          # shellcheck disable=SC2016 # the sed scripts write literal backticks
           {
             echo "Automated merge of \`upstream/main\` ($behind commits)."
             echo
@@ -99,11 +104,25 @@ jobs:
             --title "chore(sync): merge upstream/main ($(date -u +%Y-%m-%d))" \
             --body-file "$RUNNER_TEMP/body.md"
 
+      # No personal token: the gates that accept workflow_dispatch are started
+      # here. desktop, security, gitleaks and CodeQL listen to pull_request
+      # only; close and reopen the PR from the UI to run them.
+      - name: Run CI on the sync branch
+        if: steps.gate.outputs.skip == 'false' && steps.merge.outputs.conflicts == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          for wf in ci.yml schema-drift.yml docker-images.yml stack-tests.yml e2e.yml word-addin.yml; do
+            gh workflow run "$wf" --ref "$BRANCH"
+          done
+
       - name: Report conflicts
         if: steps.gate.outputs.skip == 'false' && steps.merge.outputs.conflicts == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # shellcheck disable=SC2016 # the sed script writes literal backticks
           {
             echo "The weekly merge of \`upstream/main\` ($behind commits) conflicts with main."
             echo "Resolve it locally following docs/upstream-sync.md."

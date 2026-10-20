@@ -7,7 +7,7 @@ top of `open-legal-products/mike`. All of that code lives in
 (`notion.ts`, `drive.ts`, `gcal.ts`, plus `google.ts`), the CLM pages under
 `frontend/src/app/(pages)/{pipeline,radar,acervo}` and the project
 `dossier`/`review` tabs, and migrations named `20260808_*` and
-`20261020_02_task_fields.sql`. Keeping it there is what keeps merges small.
+`20261020_9x_*`. Keeping it there is what keeps merges small.
 
 ## The weekly routine
 
@@ -17,10 +17,14 @@ top of `open-legal-products/mike`. All of that code lives in
   the new upstream migrations;
 - conflicting merge → opens an **issue** listing the conflicted files.
 
-A PR opened with the workflow's `GITHUB_TOKEN` does not trigger other
-workflows. Either close and reopen the PR to start CI, or give the workflow a
-fine-grained token (`contents`, `pull-requests`, `issues`: write) as the
-`SYNC_TOKEN` secret and pass it to `gh` and `actions/checkout`.
+A PR or push made with the workflow's `GITHUB_TOKEN` triggers no other
+workflow, but a `workflow_dispatch` it sends does (hence `actions: write`).
+So after opening the PR the routine dispatches, on the sync branch,
+`ci.yml`, `schema-drift.yml`, `docker-images.yml`, `stack-tests.yml`,
+`e2e.yml` and `word-addin.yml`; their checks land on the PR's head SHA.
+`desktop.yml`, `security.yml` (dependency audit), `gitleaks.yml` and CodeQL
+listen to `pull_request` only: close and reopen the PR in the UI to run them
+before marking it ready. No personal access token is used, by decision.
 
 ## Merging by hand
 
@@ -37,7 +41,13 @@ Resolution rules that held in the 2026-10 sync:
   them, rather than keeping a parallel copy.
 - `backend/schema.sql` must end with every migration file in the
   `schema_migrations` list; a new migration takes an unused `YYYYMMDD_NN`
-  slot (see `migrationLedger.test.ts`).
+  slot (see `migrationLedger.test.ts`). Fork migrations use sequence `90`–`99`
+  of their day: upstream numbers from `01` up and claimed a slot of ours
+  twice before this rule.
+- A fork migration is folded into `schema.sql` in the same commit, including
+  grants: a table created after the "Direct client grant hardening" section
+  needs its own `grant ... to service_role` in the migration (CI's
+  schema-drift job and the desktop upgrade test both compare the two paths).
 - New `app.ts` mounts need their path segments in the Sentry route
   vocabulary (`sentryPrivacy.ts`, identical in frontend and backend).
 
