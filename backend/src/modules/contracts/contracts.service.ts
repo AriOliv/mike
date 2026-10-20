@@ -1,7 +1,8 @@
 // Facade for the contracts module: the CLM surface on top of projects — the
 // pipeline board, the deadline radar, the AI analysis (dossier), commercial
-// terms, the corpus Q&A (acervo), the contract preview, and the Notion /
-// Drive / Calendar mirrors.
+// terms, the corpus Q&A (acervo), the contract preview, the activity log
+// shared by people and agents (card_events), and the Notion / Drive /
+// Calendar mirrors.
 
 export {
     LANES,
@@ -41,4 +42,18 @@ export {
     syncObligationsToCalendar,
     startContractMirrors,
 } from "./contracts.integrations";
+export {
+    ACTOR_TYPES,
+    EVENT_SOURCES,
+    recordCardEvent,
+    listCardEvents,
+    startAgentRun,
+    finishAgentRun,
+    type ActorType,
+    type EventSource,
+    type CardEvent,
+    type CardEventInput,
+    type AgentRunInput,
+    type AgentRunOutcome,
+} from "./contracts.events";
 export type { Caller } from "./contracts.shared";

@@ -88,17 +88,62 @@ describe("pipeline", () => {
 
     it("writes the lane and task fields an editor sends", async () => {
         access.checkProjectAccess.mockResolvedValue(role("editor"));
-        const fake = scriptedDb([{ table: "projects", op: "update", data: { id: "p1", lane: "revisao" } }]);
+        const fake = scriptedDb([
+            { table: "projects", data: { org_id: "o1", lane: "triagem", status: "bloqueado", assignee_email: null } },
+            { table: "projects", op: "update", data: { id: "p1", lane: "revisao" } },
+            { table: "card_events", op: "insert", data: { id: 1 } },
+            { table: "card_events", op: "insert", data: { id: 2 } },
+        ]);
         const result = await updatePipelineCard(fake.db, caller, "p1", {
             lane: "revisao",
             status: "bloqueado",
             assignee_email: "Duda@Example.com",
         });
         expect(result.ok).toBe(true);
-        expect(fake.calls[0].payload).toMatchObject({
+        expect(fake.calls[1].payload).toMatchObject({
             lane: "revisao",
             status: "bloqueado",
             assignee_email: "duda@example.com",
+        });
+        // Only what changed is logged: the status was already "bloqueado".
+        expect(fake.calls[2].payload).toMatchObject({
+            project_id: "p1",
+            org_id: "o1",
+            actor_type: "user",
+            actor_id: "u",
+            action: "lane.changed",
+            before: "triagem",
+            after: "revisao",
+            source: "ui",
+        });
+        expect(fake.calls[3].payload).toMatchObject({ action: "assignee.changed", after: "duda@example.com" });
+        fake.done();
+    });
+
+    it("does not read the card again for a field the feed ignores", async () => {
+        access.checkProjectAccess.mockResolvedValue(role("editor"));
+        const fake = scriptedDb([{ table: "projects", op: "update", data: { id: "p1" } }]);
+        expect((await updatePipelineCard(fake.db, caller, "p1", { priority: "alta" })).ok).toBe(true);
+        fake.done();
+    });
+
+    it("keeps the update when the activity log cannot be written", async () => {
+        access.checkProjectAccess.mockResolvedValue(role("editor"));
+        const fake = scriptedDb([
+            { table: "projects", data: { lane: "entrada" } },
+            { table: "projects", op: "update", data: { id: "p1", lane: "triagem" } },
+            { table: "card_events", op: "insert", error: { message: "boom" } },
+        ]);
+        expect((await updatePipelineCard(fake.db, caller, "p1", { lane: "triagem" })).ok).toBe(true);
+        fake.done();
+    });
+
+    it("fails without writing when the current card cannot be read", async () => {
+        access.checkProjectAccess.mockResolvedValue(role("editor"));
+        const fake = scriptedDb([{ table: "projects", error: { message: "down" } }]);
+        expect(await updatePipelineCard(fake.db, caller, "p1", { lane: "triagem" })).toMatchObject({
+            ok: false,
+            kind: "error",
         });
         fake.done();
     });

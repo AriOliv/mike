@@ -1,0 +1,173 @@
+import { describe, expect, it } from "vitest";
+import {
+    activitySentence,
+    actorLabel,
+    describeEvent,
+    relativeTime,
+    toActivityItems,
+    type CardEventRow,
+} from "./activityFeed";
+
+const NOW = Date.parse("2026-10-20T12:00:00Z");
+
+function event(overrides: Partial<CardEventRow>): CardEventRow {
+    return {
+        id: 1,
+        project_id: "p1",
+        at: "2026-10-20T11:00:00Z",
+        actor_type: "user",
+        actor_id: "u1",
+        actor_name: null,
+        action: "comment.added",
+        ...overrides,
+    };
+}
+
+describe("actorLabel", () => {
+    it("prefers the stored name", () => {
+        expect(actorLabel(event({ actor_name: "  Duda  " }))).toBe("Duda");
+    });
+
+    it("names agents in Portuguese from their id, with a generic fallback", () => {
+        expect(actorLabel(event({ actor_type: "agent", actor_id: "agent:revisor@1" }))).toBe("Agente de revisão");
+        expect(actorLabel(event({ actor_type: "agent", actor_id: "agent:novo" }))).toBe("Agente");
+    });
+
+    it("names the bot, the system, and a person by e-mail or not at all", () => {
+        expect(actorLabel(event({ actor_type: "hermes", actor_id: "hermes:docbot" }))).toBe("Assistente no Slack");
+        expect(actorLabel(event({ actor_type: "system", actor_id: "cron:vigia" }))).toBe("Mike");
+        expect(actorLabel(event({ actor_id: "ana@example.com" }))).toBe("ana");
+        expect(actorLabel(event({ actor_id: "b0b-uuid", actor_name: " " }))).toBe("Alguém");
+    });
+});
+
+describe("describeEvent", () => {
+    it("names pipeline lanes and unknown lanes", () => {
+        expect(describeEvent(event({ action: "lane.changed", after: "revisao" }))).toEqual({
+            verb: "moveu para",
+            object: "Revisão",
+        });
+        expect(describeEvent(event({ action: "lane.changed", after: "outra" })).object).toBe("outra");
+        expect(describeEvent(event({ action: "lane.changed", after: null })).object).toBe("fora da esteira");
+    });
+
+    it("describes assignment and its removal", () => {
+        expect(describeEvent(event({ action: "assignee.changed", after: "duda@example.com" }))).toEqual({
+            verb: "atribuiu a",
+            object: "duda",
+        });
+        expect(describeEvent(event({ action: "assignee.changed", after: null }))).toEqual({
+            verb: "removeu o responsável",
+        });
+    });
+
+    it("describes progress, known and unknown", () => {
+        expect(describeEvent(event({ action: "status.changed", after: "bloqueado" })).object).toBe("Bloqueado");
+        expect(describeEvent(event({ action: "status.changed", after: "x" })).object).toBe("x");
+        expect(describeEvent(event({ action: "status.changed", after: 3 })).object).toBe("vazio");
+    });
+
+    it("describes agent reviews with their document and sources", () => {
+        expect(
+            describeEvent(event({ action: "review.completed", after: { document: "NDA.docx", sources: 3 } })),
+        ).toEqual({ verb: "revisou", object: "NDA.docx", sources: 3 });
+        expect(describeEvent(event({ action: "review.started", after: { document: "A" } })).verb).toBe(
+            "começou a revisar",
+        );
+        expect(describeEvent(event({ action: "review.failed" }))).toEqual({
+            verb: "não conseguiu revisar",
+            object: undefined,
+        });
+    });
+
+    it("describes the remaining actions and falls back to the raw action", () => {
+        expect(describeEvent(event({ action: "document.added", after: { document: "B" } })).object).toBe("B");
+        expect(describeEvent(event({ action: "folder.watched", after: { folder: "Fornecedores" } })).object).toBe(
+            "Fornecedores",
+        );
+        expect(describeEvent(event({ action: "request.created", after: { request: "LEG-0142" } })).object).toBe(
+            "LEG-0142",
+        );
+        expect(describeEvent(event({ action: "comment.added" })).verb).toBe("comentou");
+        expect(describeEvent(event({ action: "review.accepted" })).verb).toBe("aceitou a revisão");
+        expect(describeEvent(event({ action: "field.updated", field: "prazo" })).object).toBe("prazo");
+        expect(describeEvent(event({ action: "field.updated" })).object).toBeUndefined();
+        expect(describeEvent(event({ action: "x.y" })).verb).toBe("x.y");
+    });
+});
+
+describe("toActivityItems", () => {
+    it("sorts newest first and links each line", () => {
+        const items = toActivityItems(
+            [event({ id: 1, at: "2026-10-20T10:00:00Z" }), event({ id: 2, at: "2026-10-20T11:00:00Z" })],
+            (e) => `/card/${e.id}`,
+        );
+        expect(items.map((i) => i.id)).toEqual(["2", "1"]);
+        expect(items[0].href).toBe("/card/2");
+    });
+
+    it("folds the same agent reviewing several contracts in a short window", () => {
+        const review = (id: number, project: string, at: string) =>
+            event({
+                id,
+                project_id: project,
+                at,
+                actor_type: "agent",
+                actor_id: "agent:revisor@1",
+                action: "review.completed",
+                after: { document: `${project}.docx` },
+            });
+        const items = toActivityItems([
+            review(1, "p1", "2026-10-20T11:00:00Z"),
+            review(2, "p2", "2026-10-20T11:05:00Z"),
+            review(3, "p3", "2026-10-20T11:08:00Z"),
+            review(4, "p4", "2026-10-20T08:00:00Z"),
+        ]);
+        expect(items).toHaveLength(2);
+        expect(items[0]).toMatchObject({ count: 3, object: undefined });
+        expect(activitySentence(items[0])).toBe("Agente de revisão revisou 3 contratos");
+        expect(items[1].count).toBeUndefined();
+    });
+
+    it("never folds events on the same card or actions that do not count", () => {
+        const items = toActivityItems([
+            event({ id: 1, action: "review.completed", at: "2026-10-20T11:00:00Z" }),
+            event({ id: 2, action: "review.completed", at: "2026-10-20T11:01:00Z" }),
+            event({ id: 3, project_id: "p2", action: "comment.added", at: "2026-10-20T11:02:00Z" }),
+            event({ id: 4, project_id: "p3", action: "comment.added", at: "2026-10-20T11:03:00Z" }),
+        ]);
+        expect(items).toHaveLength(4);
+    });
+});
+
+describe("activitySentence", () => {
+    it("reads with an object, sources in the singular and plural, and without", () => {
+        const base = { id: "1", actorType: "agent" as const, actorName: "Agente de revisão", at: "" };
+        expect(activitySentence({ ...base, verb: "revisou", object: "NDA.docx", sources: 1 })).toBe(
+            "Agente de revisão revisou NDA.docx com 1 fonte",
+        );
+        expect(activitySentence({ ...base, verb: "revisou", sources: 3 })).toBe(
+            "Agente de revisão revisou com 3 fontes",
+        );
+        expect(activitySentence({ ...base, verb: "comentou", sources: 0, count: 1 })).toBe(
+            "Agente de revisão comentou",
+        );
+    });
+});
+
+describe("relativeTime", () => {
+    it("speaks in minutes, hours, yesterday, days and then the date", () => {
+        expect(relativeTime("2026-10-20T11:59:40Z", NOW)).toBe("agora");
+        expect(relativeTime("2026-10-20T11:55:00Z", NOW)).toBe("há 5 min");
+        expect(relativeTime("2026-10-20T10:00:00Z", NOW)).toBe("há 2 h");
+        expect(relativeTime("2026-10-19T10:00:00Z", NOW)).toBe("ontem");
+        expect(relativeTime("2026-10-17T10:00:00Z", NOW)).toBe("há 3 d");
+        expect(relativeTime("2026-10-01T10:00:00Z", NOW)).toBe("01/10/2026");
+    });
+
+    it("treats a future time as now and an invalid one as blank, defaulting to the clock", () => {
+        expect(relativeTime("2026-10-20T13:00:00Z", NOW)).toBe("agora");
+        expect(relativeTime("nope")).toBe("");
+        expect(relativeTime(new Date().toISOString())).toBe("agora");
+    });
+});

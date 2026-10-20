@@ -18,6 +18,7 @@ import {
     requireProjectEdit,
     type Caller,
 } from "./contracts.shared";
+import { recordCardEvent } from "./contracts.events";
 
 export const LANES = [
     "entrada",
@@ -147,6 +148,19 @@ export async function updatePipelineCard(
     if (Object.keys(patch).length === 0) return failure("validation", "Nothing to update");
     patch.updated_at = new Date().toISOString();
 
+    // Read the fields the activity feed reports before overwriting them.
+    const logged = LOGGED_FIELDS.filter((field) => field in patch);
+    let before: Record<string, unknown> = {};
+    if (logged.length) {
+        const { data: current, error: currentError } = await db
+            .from("projects")
+            .select(`org_id, ${logged.join(", ")}`)
+            .eq("id", projectId)
+            .single();
+        if (currentError) return internalFailure(currentError);
+        before = (current ?? {}) as unknown as Record<string, unknown>;
+    }
+
     const { data, error } = await db
         .from("projects")
         .update(patch)
@@ -154,5 +168,28 @@ export async function updatePipelineCard(
         .select(CARD_COLUMNS)
         .single();
     if (error) return internalFailure(error);
+
+    for (const field of logged) {
+        if ((before[field] ?? null) === (patch[field] ?? null)) continue;
+        await recordCardEvent(db, {
+            projectId,
+            orgId: (before.org_id as string | null | undefined) ?? null,
+            actorType: "user",
+            actorId: caller.userId,
+            actorName: caller.userEmail ?? null,
+            action: `${FIELD_ACTIONS[field]}.changed`,
+            field,
+            before: before[field] ?? null,
+            after: patch[field] ?? null,
+        });
+    }
     return ok(data as unknown as PipelineCard);
 }
+
+// Card fields whose changes appear in the activity feed, and the event name.
+const FIELD_ACTIONS = {
+    lane: "lane",
+    assignee_email: "assignee",
+    status: "status",
+} as const;
+const LOGGED_FIELDS = Object.keys(FIELD_ACTIONS) as (keyof typeof FIELD_ACTIONS)[];

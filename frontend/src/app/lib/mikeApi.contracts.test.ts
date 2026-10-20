@@ -18,6 +18,7 @@ import {
     fetchAuthedObjectUrl,
     getContractTerms,
     getDocumentPreview,
+    getCardActivity,
     getDossier,
     getIntegrationStatus,
     getObligations,
@@ -91,6 +92,15 @@ describe("acervo and contract analysis", () => {
         await extractContractTerms("p1");
         expect(lastFetchCall().url).toMatch(/\/projects\/p1\/terms\/extract$/);
         expect(lastFetchCall().init.method).toBe("POST");
+    });
+
+    it("reads a card's activity with a limit", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        await expect(getCardActivity("p1")).resolves.toEqual([]);
+        expect(lastFetchCall().url).toMatch(/\/projects\/p1\/activity\?limit=50$/);
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        await getCardActivity("p1", 5);
+        expect(lastFetchCall().url).toMatch(/limit=5$/);
     });
 
     it("reads a project's dossier", async () => {

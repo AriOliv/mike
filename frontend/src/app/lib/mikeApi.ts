@@ -4558,6 +4558,13 @@ export async function updatePipelineCard(
     });
 }
 
+// ── Activity of a card: people and agents on one timeline ──────────────────
+export type CardEvent = import("./activityFeed").CardEventRow;
+
+export async function getCardActivity(projectId: string, limit = 50): Promise<CardEvent[]> {
+    return apiRequest(`/projects/${projectId}/activity?limit=${limit}`);
+}
+
 // ── Acervo: questions across the whole corpus ───────────────────────────────
 export interface AcervoSource {
     project_id: string | null;
