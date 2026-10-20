@@ -721,7 +721,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                             <div
                                 className={cn(
                                     "flex min-h-0 flex-col",
-                                    !historyCollapsed && "flex-1",
+                                    // Keep a few rows visible on a short window:
+                                    // the column above scrolls instead of
+                                    // squeezing History to nothing.
+                                    !historyCollapsed && "min-h-40 flex-1",
                                 )}
                             >
                                 <button
