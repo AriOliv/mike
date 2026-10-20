@@ -2,6 +2,7 @@
 
 import { TextCardUI } from "@/shared/ui/TextCardUI";
 import { useRef, useState } from "react";
+import type { WebSource } from "@mike/contracts";
 import { Check, Copy } from "lucide-react";
 import type {
     AssistantEvent,
@@ -16,9 +17,17 @@ import { PreResponseWrapper } from "./PreResponseWrapper";
 import { ResponseStatus, type StatusState } from "./message/ResponseStatus";
 import { DocSearchBlock } from "./message/DocSearchBlock";
 import {
+    WebReadBlock,
+    WebSearchBlock,
+    WebSourcesBlock,
+} from "./message/WebActivityBlock";
+import { DelegationBlock } from "./message/DelegationBlock";
+import {
     connectorToolLabel,
     eventErrorMessage,
+    isRenderableEvent,
     toolCallLabel,
+    withDelegationEvents,
 } from "./message/eventUtils";
 import { preprocessCitations, internalCaseHref } from "./message/citationUtils";
 import { useSmoothedReveal } from "./message/useSmoothedReveal";
@@ -186,12 +195,6 @@ export function AssistantMessage({
             ? "waiting"
             : null;
 
-    const isRenderableEvent = (event: AssistantEvent) =>
-        event.type !== "error" &&
-        event.type !== "ask_inputs_response" &&
-        event.type !== "case_citation" &&
-        event.type !== "case_opinions";
-
     // Find the last content event so its raw text can be smoothed before
     // citation preprocessing — slicing already-preprocessed text would risk
     // chopping a `§N§` citation token in half.
@@ -274,6 +277,20 @@ export function AssistantMessage({
     const canOpenCitationSource = (citation: Citation) =>
         !!onOpenCitationSource ||
         (citation.kind !== "case" && !!onOpenDocument);
+    const eventsWithDelegated = withDelegationEvents(events ?? []);
+    // The pages an answer cites follow the answer, not the steps before it.
+    // Several provider steps can cite the same page, so list each URL once.
+    const webSourcesByUrl = new Map<string, WebSource>();
+    for (const event of events ?? []) {
+        if (event.type !== "web_sources") continue;
+        for (const source of event.sources) {
+            const existing = webSourcesByUrl.get(source.url);
+            if (!existing || (!existing.title && source.title)) {
+                webSourcesByUrl.set(source.url, source);
+            }
+        }
+    }
+    const webSources = [...webSourcesByUrl.values()];
     const showCitationBlock =
         !!citationStatus || (!isStreaming && citations.length > 0);
     const handleCopy = async () => {
@@ -403,6 +420,7 @@ export function AssistantMessage({
         i: number,
         allEvents: AssistantEvent[],
         globalIdx: number,
+        timeline: AssistantEvent[] = events ?? [],
     ) => {
         const nextEvent = allEvents[i + 1];
         const showConnector =
@@ -503,6 +521,18 @@ export function AssistantMessage({
         if (event.type === "doc_search") {
             return <DocSearchBlock key={globalIdx} event={event}
                 isStreaming={event.isStreaming} showConnector={showConnector} />;
+        }
+        if (event.type === "web_search") {
+            return <WebSearchBlock key={globalIdx} event={event}
+                isStreaming={event.isStreaming} showConnector={showConnector} />;
+        }
+        if (event.type === "web_read") {
+            return <WebReadBlock key={globalIdx} event={event}
+                isStreaming={event.isStreaming} showConnector={showConnector} />;
+        }
+        if (event.type === "delegation") {
+            return <DelegationBlock key={globalIdx} event={event}
+                showConnector={showConnector} renderSteps={renderTimeline} />;
         }
         if (event.type === "doc_find") {
             return (
@@ -822,16 +852,14 @@ export function AssistantMessage({
             // and final verify_citations events (one per matched citation) —
             // collect them so the user can expand to see resolved cases.
             const items: CourtListenerBlockItem[] = [];
-            if (events) {
-                for (let j = globalIdx + 1; j < events.length; j++) {
-                    const e = events[j];
-                    if (e.type !== "case_citation") break;
-                    items.push({
-                        caseName: e.case_name,
-                        citation: e.citation,
-                        url: e.url || null,
-                    });
-                }
+            for (let j = globalIdx + 1; j < timeline.length; j++) {
+                const e = timeline[j];
+                if (e.type !== "case_citation") break;
+                items.push({
+                    caseName: e.case_name,
+                    citation: e.citation,
+                    url: e.url || null,
+                });
             }
             return (
                 <CourtListenerBlock
@@ -852,6 +880,14 @@ export function AssistantMessage({
             );
         }
         return null;
+    };
+
+    const renderTimeline = (steps: AssistantEvent[]) => {
+        const indices = steps.flatMap((step, i) => (isRenderableEvent(step) ? [i] : []));
+        const renderable = indices.map((i) => steps[i]);
+        return renderable.map((step, i) =>
+            renderEvent(step, i, renderable, indices[i], steps),
+        );
     };
 
     return (
@@ -931,7 +967,7 @@ export function AssistantMessage({
                             rendered above the download card. */}
                         {!isStreaming &&
                             (() => {
-                                const editedEvents = events.filter(
+                                const editedEvents = eventsWithDelegated.filter(
                                     (e) =>
                                         e.type === "doc_edited" &&
                                         !e.isStreaming,
@@ -1057,7 +1093,7 @@ export function AssistantMessage({
                 {events &&
                     !isStreaming &&
                     (() => {
-                        const edited = events.filter(
+                        const edited = eventsWithDelegated.filter(
                             (
                                 e,
                             ): e is Extract<
@@ -1120,12 +1156,12 @@ export function AssistantMessage({
                     them in the DocumentContent (like edited docs). */}
                 {events &&
                     !isStreaming &&
-                    events.some(
+                    eventsWithDelegated.some(
                         (e) => e.type === "doc_created" && e.download_url,
                     ) && (
                         <div className="flex flex-col gap-2 mt-2 mb-3">
                             {(
-                                events.filter(
+                                eventsWithDelegated.filter(
                                     (e) =>
                                         e.type === "doc_created" &&
                                         e.download_url,
@@ -1162,6 +1198,12 @@ export function AssistantMessage({
                             })}
                         </div>
                     )}
+
+                {webSources.length > 0 && (
+                    <div className="mt-2 mb-3">
+                        <WebSourcesBlock sources={webSources} />
+                    </div>
+                )}
 
                 {showCitationBlock && (
                     <CitationsBlock
