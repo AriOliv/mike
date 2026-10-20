@@ -6,6 +6,11 @@ const access = vi.hoisted(() => ({
     listAccessibleProjectIds: vi.fn(),
 }));
 vi.mock("../../../lib/access", () => access);
+const gcal = vi.hoisted(() => ({ removeCalendarEvent: vi.fn() }));
+vi.mock("../../../lib/gcal", async (actual) => ({
+    ...(await actual<typeof import("../../../lib/gcal")>()),
+    ...gcal,
+}));
 vi.mock("../../user/user.service", () => ({
     getUserModelSettings: vi.fn(async () => ({
         tabular_model: null,
@@ -17,17 +22,20 @@ vi.mock("../../user/user.service", () => ({
 import {
     askAcervo,
     createObligation,
+    deleteObligation,
     extractContractTerms,
     getDossier,
     listPipeline,
     updatePipelineCard,
 } from "../contracts.service";
 import { scoreCandidate } from "../contracts.acervo";
+import { eventId } from "../../../lib/gcal";
 
 const caller = { userId: "u", userEmail: "u@example.com" };
 const role = (projectRole: string) => ({ ok: true, isCreator: false, orgRole: null, projectRole, project: {} });
 
 beforeEach(() => {
+    gcal.removeCalendarEvent.mockReset();
     access.checkProjectAccess.mockReset();
     access.listAccessibleProjectIds.mockReset();
 });
@@ -125,6 +133,30 @@ describe("project-scoped reads and writes", () => {
             code: "model_required",
         });
         fake.done();
+    });
+});
+
+describe("obligation delete and the calendar mirror", () => {
+    const id = "6f1c2a0e-8b4d-4e2a-9c3f-1a2b3c4d5e6f";
+
+    it("removes the event of the row it deleted, by the stored id", async () => {
+        const fake = scriptedDb([{ table: "obligations", op: "delete", data: [{ id }] }]);
+        expect(await deleteObligation(fake.db, caller, id)).toEqual({ ok: true, data: null });
+        expect(fake.calls[0].filters).toContainEqual(["eq", "user_id", "u"]);
+        expect(gcal.removeCalendarEvent).toHaveBeenCalledWith(id);
+        fake.done();
+    });
+
+    it("leaves the calendar alone when nothing of the caller's was deleted", async () => {
+        const fake = scriptedDb([{ table: "obligations", op: "delete", data: [] }]);
+        await deleteObligation(fake.db, caller, "someone-elses/../../calendars");
+        expect(gcal.removeCalendarEvent).not.toHaveBeenCalled();
+        fake.done();
+    });
+
+    it("only turns a UUID into an event id", () => {
+        expect(eventId(id)).toBe("6f1c2a0e8b4d4e2a9c3f1a2b3c4d5e6f");
+        expect(() => eventId("x/../../calendars/primary")).toThrow("not a UUID");
     });
 });
 

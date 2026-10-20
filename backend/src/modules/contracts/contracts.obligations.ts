@@ -126,13 +126,15 @@ export async function deleteObligation(
     caller: Caller,
     id: string,
 ): Promise<ServiceResult<null>> {
-    const { error } = await db
+    const { data, error } = await db
         .from("obligations")
         .delete()
         .eq("id", id)
-        .eq("user_id", caller.userId);
+        .eq("user_id", caller.userId)
+        .select("id");
     if (error) return internalFailure(error);
     // Best-effort: the deadline is gone either way, the event should follow.
-    void removeCalendarEvent(id);
+    // Only for a row this caller really deleted, and by the stored id.
+    for (const row of (data ?? []) as { id: string }[]) void removeCalendarEvent(row.id);
     return ok(null);
 }

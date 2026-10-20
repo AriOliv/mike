@@ -19,9 +19,12 @@ function calendarId(): string {
 
 /** Google event ids allow a-v and 0-9 only, so a UUID's hex fits once the
  *  dashes are gone. Deterministic, so the same obligation always maps to the
- *  same event. */
-function eventId(obligationId: string): string {
-    return obligationId.replace(/-/g, "").toLowerCase();
+ *  same event. Anything that is not a UUID is refused rather than spliced
+ *  into the request path. */
+export function eventId(obligationId: string): string {
+    const hex = obligationId.replace(/-/g, "").toLowerCase();
+    if (!/^[0-9a-f]{32}$/.test(hex)) throw new Error("obligation id is not a UUID");
+    return hex;
 }
 
 function nextDay(date: string): string {
@@ -145,11 +148,10 @@ export async function syncObligationsToCalendar(limit = 500): Promise<CalendarSy
 export async function removeCalendarEvent(obligationId: string): Promise<void> {
     if (!calendarEnabled()) return;
     try {
-        await googleApi(
-            SCOPES.calendar,
-            `${BASE}/calendars/${calendarId()}/events/${eventId(obligationId)}`,
-            { method: "DELETE" },
-        );
+        const id = eventId(obligationId);
+        await googleApi(SCOPES.calendar, `${BASE}/calendars/${calendarId()}/events/${id}`, {
+            method: "DELETE",
+        });
     } catch (e) {
         // A missing event is the desired end state anyway.
         console.warn(`[calendar] delete ${obligationId}: ${(e as Error).message}`);
