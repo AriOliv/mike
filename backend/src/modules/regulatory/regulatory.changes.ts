@@ -451,6 +451,8 @@ export async function createRequestFromChange(
         onBehalfOf: caller.userEmail ?? null,
         action: "request.created",
         after: {
+            // The activity feed reads `request` as the object of "criou o pedido".
+            request: `Regulatório: ${title}`.slice(0, 200),
             origin: "regulatory",
             scan: scan.name,
             change_id: changeId,

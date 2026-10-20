@@ -385,7 +385,7 @@ describe("one-click actions", () => {
             actorName: "Agente regulatório",
             onBehalfOf: "ana@avenia.io",
             action: "request.created",
-            after: expect.objectContaining({ origin: "regulatory", url: "https://bcb/999", affected: 2 }),
+            after: expect.objectContaining({ request: "Regulatório: Resolução BCB nº 999", origin: "regulatory", url: "https://bcb/999", affected: 2 }),
         }));
         expect(fake.calls[2].payload).toMatchObject({ request_project_id: "pnew", status: "lida" });
         fake.done();
