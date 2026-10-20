@@ -31,6 +31,7 @@ import {
   userMemoryRouter,
 } from "./modules/memory/memory.routes";
 import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
+import { contractReviewRouter } from "./modules/contract-review/contractReview.routes";
 import {
   acervoRouter,
   integrationsRouter,
@@ -290,6 +291,10 @@ app.post("/tabular-review/:reviewId/generate", chatLimiter);
 // A playbook review is one large model call (or a tool loop when the playbook
 // has supplementary documents), so it shares the chat lane's budget.
 app.post("/playbooks/:playbookId/review", chatLimiter);
+app.post(
+  ["/projects/:projectId/contract-review/reviews", "/projects/:projectId/contract-review/ficha/extract"],
+  chatLimiter,
+);
 app.post("/chat/create", chatCreateLimiter);
 app.post("/workflow-addons/:addonId/import", workflowImportLimiter);
 app.post(
@@ -343,6 +348,7 @@ app.use("/chat", chatRouter);
 app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);
 app.use("/projects/:projectId/memory", projectMemoryRouter);
+app.use("/projects/:projectId/contract-review", contractReviewRouter);
 app.use("/projects/:projectId", projectContractRouter);
 app.use("/projects", projectsRouter);
 app.use("/orgs", orgsRouter);

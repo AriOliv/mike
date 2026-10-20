@@ -1,0 +1,757 @@
+# Regras de risco e alerta da Ficha do Contrato, v1.
+# Spec: docs/product/02-ficha-do-contrato.md (seção 6). Schema: contract-schema.v1.json.
+#
+# COMO LER
+# - Cada regra olha campos da ficha (caminhos com ponto, ex.: vigencia.renovacao.value.tipo)
+#   e gera um "achado" quando a condição `quando` é verdadeira.
+# - avaliacao: motor  -> avaliada pelo código, determinística, sem IA.
+#   avaliacao: ia     -> o avaliador de risco (LLM) responde `pergunta` só com as cláusulas
+#                        citadas nos `campos`; a condição `quando` é o pré-filtro.
+# - aplica_se restringe a regra a tipos de contrato e ao papel da Avenia.
+# - agravantes sobem a severidade quando a condição extra também vale.
+# - Achado que depende de campo ainda não validado por humano sai marcado
+#   (depende_de_campo_nao_validado = true) e aparece como "a confirmar".
+# - Referências normativas marcadas [CONFIRMAR] precisam de checagem do Legal antes de
+#   aparecerem para o usuário final.
+#
+# OPERADORES
+#   todos / algum / nenhum           combinam condições
+#   campo + igual | diferente | em | fora_de | menor_que | maior_que | contem | nao_contem
+#   campo + ausente: true            status in [nao_encontrado]  (só faz sentido no envelope)
+#   campo + presente: true           status in [encontrado, inferido, ambiguo]
+#   duracao_menor_que / duracao_maior_que  (dias corridos equivalentes; ver conversao_duracao)
+#   param: <nome>                    lê o valor em `parametros`
+# Nulo: `igual: null`, `em: [.., null]` e `diferente` tratam nulo como valor (null ≠ true é
+# verdadeiro, de propósito: "carve-out não previsto" = ausente ou false). Os demais operadores
+# com nulo dão falso. Toda regra que usa `diferente` exige antes que o campo exista
+# (status encontrado ou `existe: true`), para não disparar em contrato que nem trata do tema.
+# Exceção deliberada: REG-04, em que a ausência da cláusula é o próprio risco. A falta de dado em si é tratada pelas regras DOC-*.
+
+versao: "1.0"
+schema: contract-schema.v1.json
+
+severidades:
+  critica:
+    descricao: Pode causar perda relevante, sanção regulatória ou travar operação/captação.
+    efeito: >
+      Card fica com risco "critico". Não pode ir para "Pronto para assinar" sem decisão
+      registrada da head de Legal (risco_aceito com justificativa, ou mitigado).
+    risco_geral: critico
+  alta:
+    descricao: Desvio relevante do padrão da Avenia; exige decisão do revisor.
+    efeito: Entra em "Riscos" do dossiê; precisa de decisão (negociar / aceitar) antes de assinar.
+    risco_geral: atencao
+  media:
+    descricao: Ponto de atenção; negociar se houver espaço.
+    efeito: Entra em "Pontos de atenção" do dossiê.
+    risco_geral: atencao
+  baixa:
+    descricao: Informativo para quem vai operar o contrato.
+    efeito: Aparece na ficha; não muda o risco do card.
+    risco_geral: ok
+  info:
+    descricao: Qualidade do dado (falta, ambiguidade, OCR). Não é risco do contrato.
+    efeito: Vai para a fila de validação; não entra no risco geral.
+    risco_geral: null
+
+# risco_geral do card = pior risco_geral entre os achados com estado "aberto".
+
+conversao_duracao:
+  # Equivalente em dias corridos, conservador para cada uso.
+  horas: "ceil(n / 24)"
+  dias_corridos: "n"
+  dias_uteis: "floor(n * 7 / 5)"        # 10 dias úteis ~ 14 corridos
+  dias_nao_especificado: "n"            # tratado como corridos e sinalizado (DOC-05)
+  meses: "n * 30"
+  anos: "n * 365"
+  nota: >
+    Serve só para comparar com limiares. Datas reais (data limite de aviso) são calculadas
+    com calendário em `derivados`, nunca com esta aproximação.
+
+parametros:
+  # Editáveis pela head de Legal na tela de Playbook. Valores iniciais, a calibrar com o golden set.
+  aviso_minimo_dias: 60                      # REN-01
+  janela_aviso_urgente_dias: 30              # REN-02
+  rescisao_contraparte_minimo_dias: 90       # RES-03, parceiros críticos
+  multa_rescisoria_max_percentual: 20        # RES-02 (% do saldo/valor total)
+  multa_rescisoria_max_meses: 3              # RES-02 (meses de remuneração)
+  juros_mora_max_percentual_mes: 1           # PAG-03
+  multa_moratoria_max_percentual: 2          # PAG-03
+  cap_minimo_meses: 12                       # RSP-03
+  notificacao_incidente_max_horas: 48        # LGP-04 (a Avenia, como controladora, precisa de folga para avisar a ANPD)
+  prazo_vigencia_reajuste_meses: 12          # PAG-01
+  tipos_criticos:                            # serviços sem os quais a Avenia para de operar
+    - parceiro_bancario_baas
+    - arranjo_psp_adquirencia
+    - liquidez_otc_cambio
+    - custodia_cripto
+
+regras:
+
+  # ---------------------------------------------------------------- Renovação e prazos
+  - id: REN-01
+    titulo: Renovação automática com aviso prévio curto
+    severidade: alta
+    avaliacao: motor
+    campos: [vigencia.renovacao]
+    quando:
+      todos:
+        - campo: vigencia.renovacao.value.tipo
+          igual: automatica
+        - campo: vigencia.renovacao.value.aviso_nao_renovacao
+          duracao_menor_que: {param: aviso_minimo_dias}
+    justificativa: >
+      Com aviso menor que 60 dias, a decisão de não renovar precisa sair antes do ciclo
+      orçamentário e de aprovação interna. É o caminho mais comum para renovar sem querer.
+    acao_sugerida: Negociar aviso de 60 a 90 dias ou renovação mediante aditivo.
+
+  - id: REN-02
+    titulo: Janela de aviso de não renovação fechando ou já fechada
+    severidade: critica
+    avaliacao: motor
+    temporal: true                 # reavaliada diariamente, não só na extração
+    campos: [vigencia.renovacao, derivados.data_limite_aviso_efetiva]
+    quando:
+      todos:
+        - campo: vigencia.renovacao.value.tipo
+          igual: automatica
+        - campo: derivados.dias_ate_limite_aviso
+          menor_que: {param: janela_aviso_urgente_dias}
+        - campo: gestao.status_contrato.value
+          em: [vigente, null]
+    justificativa: >
+      Se ninguém decidir até a data limite efetiva, o contrato renova por mais um período,
+      com preço e multa rescisória do novo período.
+    acao_sugerida: Confirmar com o dono do contrato se renova; se não, enviar a notificação até a data de envio recomendada.
+
+  - id: REN-03
+    titulo: Prazo indeterminado sem saída imotivada para a Avenia
+    severidade: alta
+    avaliacao: motor
+    campos: [vigencia.prazo, rescisao.imotivada]
+    quando:
+      todos:
+        - campo: vigencia.prazo.value.tipo
+          igual: indeterminado
+        - campo: rescisao.imotivada.value.permitida_para
+          em: [somente_contraparte, nenhuma]
+    justificativa: A Avenia fica presa ao contrato sem data de término nem forma de sair.
+    acao_sugerida: Incluir rescisão imotivada para ambas as partes com aviso prévio.
+
+  - id: REN-04
+    titulo: Renovação automática ilimitada com reajuste sem teto
+    severidade: media
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratante]}
+    campos: [vigencia.renovacao, pagamento.reajuste]
+    quando:
+      todos:
+        - campo: vigencia.renovacao.value.tipo
+          igual: automatica
+        - campo: vigencia.renovacao.value.limite_renovacoes
+          igual: null
+        - campo: pagamento.reajuste.status
+          igual: encontrado
+        - campo: pagamento.reajuste.value.teto_percentual
+          igual: null
+    justificativa: O custo cresce a cada renovação sem ponto natural de renegociação.
+    acao_sugerida: Teto de reajuste ou renegociação obrigatória a cada N renovações.
+
+  # ---------------------------------------------------------------- Rescisão
+  - id: RES-01
+    titulo: Só a contraparte pode rescindir sem justa causa
+    severidade: alta
+    avaliacao: motor
+    campos: [rescisao.imotivada]
+    quando:
+      campo: rescisao.imotivada.value.permitida_para
+      igual: somente_contraparte
+    agravantes:
+      - quando: {campo: identificacao.tipo_contrato.value.categoria, em: {param: tipos_criticos}}
+        severidade: critica
+        nota: Parceiro crítico pode encerrar e a Avenia não pode sair; dependência unilateral.
+    justificativa: Assimetria de saída. A Avenia arca com o contrato enquanto a contraparte pode sair quando quiser.
+    acao_sugerida: Rescisão imotivada recíproca, com o mesmo aviso.
+
+  - id: RES-02
+    titulo: Multa rescisória devida pela Avenia acima do limite
+    severidade: alta
+    avaliacao: motor
+    campos: [rescisao.multa_rescisoria]
+    quando:
+      todos:
+        - campo: rescisao.multa_rescisoria.value.existe
+          igual: true
+        - campo: rescisao.multa_rescisoria.value.devida_por
+          em: [avenia, ambas]
+        - algum:
+            - campo: rescisao.multa_rescisoria.value.percentual
+              maior_que: {param: multa_rescisoria_max_percentual}
+            - campo: rescisao.multa_rescisoria.value.meses
+              maior_que: {param: multa_rescisoria_max_meses}
+            - campo: rescisao.multa_rescisoria.value.tipo
+              igual: percentual_valor_total
+    justificativa: >
+      Multa sobre o valor total (e não sobre o saldo) ou acima de 20% / 3 meses torna a saída
+      mais cara que continuar, mesmo com o serviço ruim.
+    acao_sugerida: Multa proporcional ao saldo remanescente, com teto.
+
+  - id: RES-03
+    titulo: Parceiro crítico pode encerrar com aviso curto
+    severidade: critica
+    avaliacao: motor
+    aplica_se: {tipos: {param: tipos_criticos}}
+    campos: [rescisao.imotivada]
+    quando:
+      campo: rescisao.imotivada.value.aviso_previo_contraparte
+      duracao_menor_que: {param: rescisao_contraparte_minimo_dias}
+    justificativa: >
+      Migrar conta, Pix, adquirência ou liquidez para outro parceiro leva meses. Aviso curto
+      significa operação parada e clientes sem serviço.
+    acao_sugerida: Aviso de no mínimo 90 a 180 dias e obrigação de cooperar na transição.
+
+  # ---------------------------------------------------------------- Cessão e mudança de controle
+  - id: ALT-01
+    titulo: Mudança de controle da Avenia depende de autorização ou permite rescisão
+    severidade: alta
+    avaliacao: motor
+    campos: [alteracao_parte.mudanca_controle]
+    quando:
+      todos:
+        - campo: alteracao_parte.mudanca_controle.value.aplica_a
+          em: [avenia, ambas]
+        - algum:
+            - campo: alteracao_parte.mudanca_controle.value.regime
+              em: [consentimento_previo, vedada]
+            - campo: alteracao_parte.mudanca_controle.value.direito_rescisao_contraparte
+              igual: true
+    agravantes:
+      - quando: {campo: identificacao.tipo_contrato.value.categoria, em: {param: tipos_criticos}}
+        severidade: critica
+        nota: Em captação ou M&A, o parceiro crítico ganha poder de veto ou de saída.
+    justificativa: >
+      Rodada de investimento, M&A ou reorganização societária pode exigir anuência da
+      contraparte ou dar a ela o direito de rescindir. Entra na due diligence de qualquer
+      transação.
+    acao_sugerida: >
+      Trocar consentimento por notificação; excluir reorganizações dentro do grupo e
+      investimentos que não alterem o controle; definir "controle".
+
+  - id: ALT-02
+    titulo: Gatilho de mudança de controle sem definição de controle
+    severidade: media
+    avaliacao: motor
+    campos: [alteracao_parte.mudanca_controle]
+    quando:
+      todos:
+        - campo: alteracao_parte.mudanca_controle.value.regime
+          em: [notificacao, consentimento_previo, vedada]
+        - campo: alteracao_parte.mudanca_controle.value.define_controle
+          diferente: true
+    justificativa: Sem definição, qualquer entrada de sócio pode ser lida como mudança de controle.
+    acao_sugerida: Definir controle (maioria do capital votante ou poder de eleger a maioria dos administradores).
+
+  - id: ALT-03
+    titulo: Avenia não pode ceder nem para empresas do grupo
+    severidade: media
+    avaliacao: motor
+    campos: [alteracao_parte.cessao]
+    quando:
+      todos:
+        - campo: alteracao_parte.cessao.value.aplica_a
+          em: [avenia, ambas]
+        - campo: alteracao_parte.cessao.value.regime
+          em: [consentimento_previo, vedada]
+        - campo: alteracao_parte.cessao.value.excecoes
+          nao_contem: afiliadas
+    justificativa: >
+      O grupo tem várias entidades (IP, SPSAV, LLC, holdings). Reorganizar onde o contrato
+      fica passa a depender da contraparte.
+    acao_sugerida: Exceção para cessão a afiliadas e sucessoras por reorganização societária.
+
+  - id: ALT-04
+    titulo: Contraparte pode ceder livremente
+    severidade: media
+    avaliacao: motor
+    campos: [alteracao_parte.cessao]
+    quando:
+      todos:
+        - campo: alteracao_parte.cessao.value.regime
+          igual: livre
+        - campo: alteracao_parte.cessao.value.aplica_a
+          em: [contraparte, ambas]
+    agravantes:
+      - quando: {campo: identificacao.tipo_contrato.value.categoria, em: {param: tipos_criticos}}
+        severidade: alta
+        nota: A nova contraparte não passou pelo KYB/due diligence de parceiro da Avenia.
+    justificativa: A Avenia pode passar a contratar com uma empresa que nunca avaliou.
+    acao_sugerida: Exigir notificação prévia e direito de rescindir sem multa se a cessionária não for aceitável.
+
+  # ---------------------------------------------------------------- Pagamento
+  - id: PAG-01
+    titulo: Contrato longo sem reajuste ou correção monetária
+    severidade: media
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratada]}
+    campos: [pagamento.reajuste, pagamento.correcao_monetaria, vigencia.prazo]
+    quando:
+      todos:
+        - campo: pagamento.reajuste.status
+          igual: nao_encontrado
+        - algum:
+            - campo: vigencia.prazo.value.tipo
+              igual: indeterminado
+            - campo: vigencia.prazo.value.duracao
+              duracao_maior_que: {param: prazo_vigencia_reajuste_meses, unidade: meses}
+            - campo: vigencia.renovacao.value.tipo
+              igual: automatica
+    justificativa: A receita da Avenia perde valor real a cada ano sem mecanismo de reajuste.
+    acao_sugerida: Reajuste anual por IPCA (ou IGP-M, se for o padrão da contraparte).
+
+  - id: PAG-02
+    titulo: Valores em atraso sem correção monetária
+    severidade: baixa
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratada]}
+    campos: [pagamento.correcao_monetaria]
+    quando:
+      campo: pagamento.correcao_monetaria.status
+      igual: nao_encontrado
+    justificativa: Atraso da contraparte fica sem atualização contratual; resta a regra legal.
+    acao_sugerida: Correção por IPCA pro rata die sobre valores em atraso.
+
+  - id: PAG-03
+    titulo: Encargos de mora acima do usual devidos pela Avenia
+    severidade: media
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratante]}
+    campos: [pagamento.juros_mora, pagamento.multa_moratoria]
+    quando:
+      algum:
+        - todos:
+            - campo: pagamento.juros_mora.value.periodo
+              igual: mes
+            - campo: pagamento.juros_mora.value.percentual
+              maior_que: {param: juros_mora_max_percentual_mes}
+        - campo: pagamento.multa_moratoria.value.percentual
+          maior_que: {param: multa_moratoria_max_percentual}
+    justificativa: >
+      Acima de 1% a.m. de juros ou 2% de multa foge do padrão de mercado. Verificar limites
+      legais (Lei de Usura, Decreto 22.626/1933; art. 406 do Código Civil na redação da
+      Lei 14.905/2024) [CONFIRMAR].
+    acao_sugerida: Juros de 1% a.m. pro rata die e multa de 2%.
+
+  - id: PAG-04
+    titulo: Contrato em moeda estrangeira ou cripto sem regra de conversão
+    severidade: media
+    avaliacao: motor
+    campos: [pagamento.moeda_conversao]
+    quando:
+      todos:
+        - campo: pagamento.moeda_conversao.status
+          igual: encontrado
+        - campo: pagamento.moeda_conversao.value.moeda
+          diferente: BRL
+        - campo: pagamento.moeda_conversao.value.regra_conversao
+          igual: null
+    justificativa: Sem taxa e data de referência, cada fatura vira discussão de câmbio.
+    acao_sugerida: "Definir taxa (ex.: PTAX venda do dia útil anterior) e quem arca com IOF/spread."
+
+  - id: PAG-05
+    titulo: Gross-up de tributos por conta da Avenia
+    severidade: media
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratante]}
+    campos: [pagamento.tributos]
+    quando:
+      campo: pagamento.tributos.value.regime
+      igual: gross_up
+    justificativa: O custo efetivo sobe pelo valor das retenções (comum em contratos cross-border).
+    acao_sugerida: Validar com o Financeiro o custo líquido antes de assinar.
+
+  - id: PAG-06
+    titulo: Contraparte pode alterar preço ou termos sozinha
+    severidade: alta
+    avaliacao: motor
+    campos: [regulatorio.alteracao_unilateral]
+    quando:
+      todos:
+        - campo: regulatorio.alteracao_unilateral.value.contraparte_pode_alterar
+          igual: true
+        - campo: regulatorio.alteracao_unilateral.value.direito_de_sair_sem_multa
+          diferente: true
+    agravantes:
+      - quando: {campo: identificacao.tipo_contrato.value.categoria, em: {param: tipos_criticos}}
+        severidade: critica
+        nota: O parceiro crítico muda o preço e a Avenia não tem como sair.
+    justificativa: A contraparte pode mudar preço ou regras sem aceite e sem dar saída à Avenia.
+    acao_sugerida: Exigir aviso prévio e direito de rescindir sem multa se não aceitar a alteração.
+
+  # ---------------------------------------------------------------- Responsabilidade
+  - id: RSP-01
+    titulo: Responsabilidade da Avenia sem limite
+    severidade: alta
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratada, mutuo]}
+    campos: [responsabilidade.limitacao]
+    quando:
+      algum:
+        - campo: responsabilidade.limitacao.status
+          igual: nao_encontrado
+        - campo: responsabilidade.limitacao.value.tipo
+          igual: ilimitada
+        - campo: responsabilidade.limitacao.value.protege
+          igual: contraparte
+    justificativa: Sem limitação, um incidente pode custar mais do que o contrato inteiro vale.
+    acao_sugerida: Limite de 12 meses de remuneração, com exclusão de danos indiretos.
+
+  - id: RSP-02
+    titulo: Limite de responsabilidade com exceções que o esvaziam
+    severidade: media
+    avaliacao: ia
+    campos: [responsabilidade.limitacao]
+    quando:
+      todos:
+        - campo: responsabilidade.limitacao.value.existe
+          igual: true
+        - algum:
+            - campo: responsabilidade.limitacao.value.excecoes
+              contem: dados_pessoais
+            - campo: responsabilidade.limitacao.value.excecoes
+              contem: regulatoria_multas
+            - campo: responsabilidade.limitacao.value.excecoes
+              contem: confidencialidade
+    pergunta: >
+      Considerando as exceções ao limite, a Avenia fica, na prática, sem teto para os
+      eventos mais prováveis deste contrato (incidente de dados, multa de regulador,
+      vazamento)? Responda sim/não e cite os trechos.
+    justificativa: Exceções amplas (dados, confidencialidade, multas) cobrem justamente os incidentes que acontecem.
+    acao_sugerida: "Supercap específico para as exceções (ex.: 2 a 3 vezes o limite geral)."
+
+  - id: RSP-03
+    titulo: Parceiro crítico com limite de responsabilidade baixo
+    severidade: alta
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratante], tipos: {param: tipos_criticos}}
+    campos: [responsabilidade.limitacao]
+    quando:
+      todos:
+        - campo: responsabilidade.limitacao.value.protege
+          em: [contraparte, ambas]
+        - campo: responsabilidade.limitacao.value.meses
+          menor_que: {param: cap_minimo_meses}
+    justificativa: Falha do parceiro afeta clientes da Avenia; o ressarcimento fica limitado a pouco.
+    acao_sugerida: Limite mínimo de 12 meses e exceção para falhas que gerem sanção regulatória à Avenia.
+
+  - id: RSP-04
+    titulo: Multa por descumprimento devida pela Avenia sem teto
+    severidade: media
+    avaliacao: motor
+    campos: [responsabilidade.multa_geral]
+    quando:
+      todos:
+        - campo: responsabilidade.multa_geral.value.existe
+          igual: true
+        - campo: responsabilidade.multa_geral.value.devida_por
+          em: [avenia, ambas]
+        - campo: responsabilidade.multa_geral.value.limitada
+          diferente: true
+    justificativa: Multa por evento sem limite acumula sem teto.
+    acao_sugerida: Teto agregado e natureza compensatória (abate de perdas e danos).
+
+  # ---------------------------------------------------------------- Dados pessoais (LGPD)
+  - id: LGP-01
+    titulo: Compartilhamento de dados sem papel LGPD definido
+    severidade: alta
+    avaliacao: motor
+    campos: [dados_pessoais.compartilhamento, dados_pessoais.papel_avenia]
+    quando:
+      todos:
+        - campo: dados_pessoais.compartilhamento.value
+          igual: true
+        - algum:
+            - campo: dados_pessoais.papel_avenia.status
+              igual: nao_encontrado
+            - campo: dados_pessoais.papel_avenia.value
+              igual: nao_definido
+    justificativa: >
+      Sem definir controlador e operador, não fica claro quem responde ao titular e à ANPD
+      nem quem notifica incidente (LGPD, arts. 37 a 42) [CONFIRMAR artigos].
+    acao_sugerida: Cláusula ou anexo de tratamento de dados com papéis, finalidade e obrigações.
+
+  - id: LGP-02
+    titulo: Termos de dados só por referência, fora do documento
+    severidade: media
+    avaliacao: motor
+    campos: [dados_pessoais.dpa]
+    quando:
+      campo: dados_pessoais.dpa.value
+      igual: por_referencia
+    justificativa: As regras reais de tratamento de dados estão num documento que não foi analisado e pode mudar.
+    acao_sugerida: Anexar a versão vigente do documento ao contrato e analisá-la.
+
+  - id: LGP-03
+    titulo: Transferência internacional de dados sem mecanismo
+    severidade: alta
+    avaliacao: motor
+    campos: [dados_pessoais.transferencia_internacional]
+    quando:
+      todos:
+        - campo: dados_pessoais.transferencia_internacional.value.ocorre
+          igual: true
+        - campo: dados_pessoais.transferencia_internacional.value.mecanismo
+          igual: null
+    justificativa: >
+      A LGPD (art. 33) só permite transferência internacional nas hipóteses previstas, como
+      cláusulas-padrão da ANPD.
+    acao_sugerida: Adotar as cláusulas-padrão contratuais da ANPD.
+
+  - id: LGP-04
+    titulo: Prazo de aviso de incidente longo ou ausente
+    severidade: media
+    avaliacao: motor
+    campos: [dados_pessoais.prazo_notificacao_incidente, dados_pessoais.papel_contraparte]
+    quando:
+      todos:
+        - campo: dados_pessoais.compartilhamento.value
+          igual: true
+        - campo: dados_pessoais.papel_contraparte.value
+          em: [operador, suboperador]
+        - algum:
+            - campo: dados_pessoais.prazo_notificacao_incidente.status
+              igual: nao_encontrado
+            - campo: dados_pessoais.prazo_notificacao_incidente.value
+              duracao_maior_que: {param: notificacao_incidente_max_horas, unidade: horas}
+    justificativa: >
+      Como controladora, a Avenia tem prazo curto para comunicar a ANPD (Regulamento de
+      Comunicação de Incidente, Res. CD/ANPD 15/2024) [CONFIRMAR]. O operador precisa avisar antes.
+    acao_sugerida: Aviso em até 24 a 48 horas da ciência do incidente.
+
+  - id: LGP-05
+    titulo: Dados sob sigilo financeiro sem confidencialidade adequada
+    severidade: alta
+    avaliacao: motor
+    campos: [dados_pessoais.sigilo_financeiro, regulatorio.confidencialidade]
+    quando:
+      todos:
+        - campo: dados_pessoais.sigilo_financeiro.value
+          igual: true
+        - algum:
+            - campo: regulatorio.confidencialidade.status
+              igual: nao_encontrado
+            - campo: regulatorio.confidencialidade.value.existe
+              igual: false
+    justificativa: Dados de clientes protegidos por sigilo (LC 105/2001) compartilhados sem dever contratual de sigilo.
+    acao_sugerida: Cláusula de confidencialidade específica para dados de clientes, sem prazo de término.
+
+  # ---------------------------------------------------------------- Regulatório (IP / SPSAV)
+  - id: REG-01
+    titulo: Confidencialidade impede informar reguladores e autoridades
+    severidade: alta
+    avaliacao: motor
+    campos: [regulatorio.confidencialidade]
+    quando:
+      todos:
+        - campo: regulatorio.confidencialidade.value.existe
+          igual: true
+        - campo: regulatorio.confidencialidade.value.carve_out_autoridades
+          diferente: true
+    justificativa: >
+      A Avenia precisa poder entregar informação ao BCB, ao COAF e a ordens judiciais sem
+      violar o contrato (eixo "carve-outs BCB/COAF/PLD" do playbook do Jurídico).
+    acao_sugerida: Exceção expressa para divulgação exigida por lei, regulador ou ordem judicial.
+
+  - id: REG-02
+    titulo: Contrato exige avisar a contraparte antes de informar autoridade
+    severidade: critica
+    avaliacao: motor
+    campos: [regulatorio.confidencialidade]
+    quando:
+      campo: regulatorio.confidencialidade.value.exige_aviso_previo_a_contraparte
+      igual: true
+    justificativa: >
+      Comunicações ao COAF não podem ser reveladas a quem elas se referem (Lei 9.613/1998,
+      art. 11) [CONFIRMAR inciso]. Aviso prévio obrigatório conflita com esse dever.
+    acao_sugerida: Ressalvar que o aviso não se aplica quando vedado por lei ou pela autoridade.
+
+  - id: REG-03
+    titulo: Parceiro crítico pode suspender o serviço sem aviso
+    severidade: critica
+    avaliacao: motor
+    aplica_se: {tipos: {param: tipos_criticos}}
+    campos: [regulatorio.suspensao_servico]
+    quando:
+      todos:
+        - campo: regulatorio.suspensao_servico.value.contraparte_pode_suspender
+          igual: true
+        - campo: regulatorio.suspensao_servico.value.aviso
+          igual: null
+    justificativa: Bloqueio de conta, Pix ou liquidez sem aviso para a operação e os clientes da Avenia.
+    acao_sugerida: Hipóteses fechadas de suspensão, aviso prévio (salvo ordem de autoridade) e prazo para sanar.
+
+  - id: REG-04
+    titulo: Serviço terceirizado relevante sem acesso do regulador ou plano de saída
+    severidade: alta
+    avaliacao: motor
+    aplica_se: {papel_avenia: [contratante], tipos: [parceiro_bancario_baas, arranjo_psp_adquirencia, custodia_cripto, licenca_saas, prestacao_servicos]}
+    campos: [regulatorio.acesso_regulador_auditoria]
+    quando:
+      algum:
+        - campo: regulatorio.acesso_regulador_auditoria.value.acesso_regulador
+          diferente: true
+        - campo: regulatorio.acesso_regulador_auditoria.value.plano_saida
+          diferente: true
+    justificativa: >
+      Contratação de processamento, armazenamento de dados e nuvem por instituição autorizada
+      exige acesso do BCB e continuidade (Res. BCB 85/2021) [CONFIRMAR enquadramento e artigos].
+      Aplicar só a serviço relevante; o Legal confirma no achado.
+    acao_sugerida: Cláusulas de acesso do BCB, auditoria e transição na saída.
+
+  - id: REG-05
+    titulo: Custódia ou liquidez de cripto sem segregação dos ativos de clientes
+    severidade: critica
+    avaliacao: motor
+    aplica_se: {tipos: [custodia_cripto, liquidez_otc_cambio]}
+    campos: [regulatorio.segregacao_ativos_clientes]
+    quando:
+      todos:
+        - campo: regulatorio.segregacao_ativos_clientes.value.aplicavel
+          igual: true
+        - campo: regulatorio.segregacao_ativos_clientes.value.prevista
+          diferente: true
+    justificativa: >
+      Ativos de clientes sem segregação ficam expostos à insolvência do parceiro
+      (Lei 14.478/2022 e regulamentação do BCB para prestadoras de serviços de ativos
+      virtuais) [CONFIRMAR dispositivos].
+    acao_sugerida: Segregação patrimonial expressa e conciliação periódica.
+
+  - id: REG-06
+    titulo: Parceiro que movimenta recursos sem cláusula de PLD/FT
+    severidade: alta
+    avaliacao: motor
+    aplica_se: {tipos: [parceiro_bancario_baas, arranjo_psp_adquirencia, liquidez_otc_cambio, custodia_cripto, cliente_api_plataforma, indicacao_rebate]}
+    campos: [regulatorio.pld_ft]
+    quando:
+      algum:
+        - campo: regulatorio.pld_ft.status
+          igual: nao_encontrado
+        - campo: regulatorio.pld_ft.value
+          igual: false
+    justificativa: A Avenia responde pelo seu programa de PLD/FT, inclusive sobre clientes e parceiros que trazem fluxo.
+    acao_sugerida: Declarações de PLD/FT, dever de cooperação e de compartilhar informação de KYC.
+
+  - id: REG-07
+    titulo: Sem cláusula anticorrupção
+    severidade: baixa
+    avaliacao: motor
+    campos: [regulatorio.anticorrupcao]
+    quando:
+      campo: regulatorio.anticorrupcao.status
+      igual: nao_encontrado
+    justificativa: Padrão de mercado e mitigador de responsabilidade (Lei 12.846/2013).
+    acao_sugerida: Incluir declarações anticorrupção recíprocas.
+
+  - id: REG-08
+    titulo: Exclusividade ou não concorrência que obriga a Avenia
+    severidade: alta
+    avaliacao: ia
+    campos: [regulatorio.exclusividade]
+    quando:
+      todos:
+        - campo: regulatorio.exclusividade.value.existe
+          igual: true
+        - campo: regulatorio.exclusividade.value.obriga
+          em: [avenia, ambas]
+    pergunta: >
+      A exclusividade impede a Avenia de contratar outro fornecedor ou parceiro para o mesmo
+      serviço, ou de atuar em alguma linha de negócio? Qual o escopo e o prazo? Cite os trechos.
+    justificativa: Exclusividade limita redundância de parceiros e a estratégia comercial.
+    acao_sugerida: Restringir escopo e prazo, ou trocar por metas de volume.
+
+  # ---------------------------------------------------------------- Foro
+  - id: FOR-01
+    titulo: Lei estrangeira ou foro fora do Brasil
+    severidade: media
+    avaliacao: motor
+    campos: [foro.lei_aplicavel, foro.solucao_disputas]
+    quando:
+      todos:
+        - campo: foro.lei_aplicavel.status
+          igual: encontrado
+        - campo: foro.lei_aplicavel.value.jurisdicao
+          diferente: BR
+    justificativa: Disputa cara e lenta; contrato precisa de revisão por advogado da jurisdição.
+    acao_sugerida: Avaliar arbitragem internacional ou lei brasileira para a entidade brasileira.
+
+  # ---------------------------------------------------------------- Qualidade do dado
+  - id: DOC-01
+    titulo: Anexo referenciado não está no documento
+    severidade: info
+    avaliacao: motor
+    campos: [identificacao.anexos_referenciados]
+    quando:
+      campo: identificacao.anexos_referenciados.value
+      contem: {presente_no_documento: false}
+    justificativa: Parte dos termos (preço, SLA, dados) pode estar no anexo ausente.
+    acao_sugerida: Subir o anexo no card e reprocessar.
+
+  - id: DOC-02
+    titulo: Campo núcleo não encontrado ou com baixa confiança
+    severidade: info
+    avaliacao: motor
+    campos: ["*nucleo"]
+    quando:
+      algum:
+        - campo: "*nucleo.status"
+          igual: nao_encontrado
+        - campo: "*nucleo.confidence"
+          igual: baixa
+    justificativa: Campo núcleo vazio ou duvidoso precisa de olho humano antes de alimentar alertas.
+    acao_sugerida: Validar na ficha.
+
+  - id: DOC-03
+    titulo: Cláusulas conflitantes
+    severidade: media
+    avaliacao: motor
+    campos: ["*"]
+    quando:
+      campo: "*.status"
+      igual: ambiguo
+    justificativa: Duas cláusulas dizem coisas diferentes sobre o mesmo ponto (comum depois de aditivos).
+    acao_sugerida: Decidir qual prevalece e, se preciso, corrigir por aditivo.
+
+  - id: DOC-04
+    titulo: Citação não localizada no texto
+    severidade: info
+    avaliacao: motor
+    campos: ["*"]
+    quando:
+      campo: "*.citations.match"
+      igual: nao_encontrado
+    justificativa: O verificador não achou o trecho no documento; o valor pode ter sido inventado.
+    acao_sugerida: Conferir o valor no documento antes de usar.
+
+  - id: DOC-05
+    titulo: Prazo sem dizer se os dias são úteis ou corridos
+    severidade: info
+    avaliacao: motor
+    campos: [vigencia.renovacao, rescisao.imotivada]
+    quando:
+      algum:
+        - campo: vigencia.renovacao.value.aviso_nao_renovacao.day_count
+          igual: nao_especificado
+        - campo: rescisao.imotivada.value.aviso_previo_avenia.day_count
+          igual: nao_especificado
+    justificativa: O cálculo assume dias corridos. Se o Legal entender que são úteis, a data limite muda.
+    acao_sugerida: Confirmar a contagem na validação da ficha.
+
+  - id: DOC-06
+    titulo: Texto extraído por OCR
+    severidade: info
+    avaliacao: motor
+    campos: [documento.ocr]
+    quando:
+      campo: documento.ocr
+      igual: true
+    justificativa: OCR erra números e datas; a confiança máxima dos campos fica em "media".
+    acao_sugerida: Validar datas e valores contra o PDF.

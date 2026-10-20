@@ -31,6 +31,7 @@ export {
   startPlaybookReview,
   INTERRUPTED_RUN_ERROR,
   listPlaybookRuns,
+  getPlaybookRunById,
   listAllPlaybookRuns,
   listPlaybookRunHistory,
   playbookRunStatuses,
