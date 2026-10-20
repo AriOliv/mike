@@ -21,9 +21,10 @@ export interface ToastAction {
 export function retryToastAction(
     onRetry: () => void | Promise<void>,
     onFailure: (error: unknown) => void,
+    label = "Retry",
 ): ToastAction {
     return {
-        label: "Retry",
+        label,
         onClick: async () => {
             try {
                 await onRetry();
