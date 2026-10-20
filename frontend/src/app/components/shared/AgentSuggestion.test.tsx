@@ -139,3 +139,50 @@ describe("AgentSuggestion", () => {
         expect(line).toHaveTextContent(/Aceito por Duda$/);
     });
 });
+
+describe("AgentSuggestion editor slot", () => {
+    it("shows the caller's form in place of the preview, and closes it on cancel", () => {
+        const onEditingChange = vi.fn();
+        render(
+            <AgentSuggestion
+                agent="Agente de intake"
+                title="Triagem"
+                preview="NDA · Polaris"
+                editor={<select aria-label="Tipo"><option>NDA</option></select>}
+                onEditingChange={onEditingChange}
+                onAccept={vi.fn()}
+            />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: /Editar/ }));
+        expect(onEditingChange).toHaveBeenLastCalledWith(true);
+        expect(screen.getByRole("combobox", { name: "Tipo" })).toBeInTheDocument();
+        expect(screen.queryByText("NDA · Polaris")).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+        expect(onEditingChange).toHaveBeenLastCalledWith(false);
+        expect(screen.getByText("NDA · Polaris")).toBeInTheDocument();
+    });
+
+    it("lets the caller close the editor after saving", () => {
+        const { rerender } = render(
+            <AgentSuggestion agent="A" title="T" editor={<p>form</p>} editing onAccept={vi.fn()} />,
+        );
+        expect(screen.getByText("form")).toBeInTheDocument();
+        rerender(<AgentSuggestion agent="A" title="T" editor={<p>form</p>} editing={false} onAccept={vi.fn()} />);
+        expect(screen.queryByText("form")).toBeNull();
+    });
+
+    it("never answers a shortcut from a select or an editable region inside the card", () => {
+        const onAccept = vi.fn();
+        render(
+            <AgentSuggestion agent="A" title="T" onAccept={onAccept}>
+                <select aria-label="Responsável"><option>Duda</option></select>
+                <div data-testid="rich" contentEditable suppressContentEditableWarning>texto</div>
+            </AgentSuggestion>,
+        );
+        fireEvent.keyDown(screen.getByRole("combobox", { name: "Responsável" }), { key: "a" });
+        const rich = screen.getByTestId("rich");
+        Object.defineProperty(rich, "isContentEditable", { value: true });
+        fireEvent.keyDown(rich, { key: "a" });
+        expect(onAccept).not.toHaveBeenCalled();
+    });
+});
