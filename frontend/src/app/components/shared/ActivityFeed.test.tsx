@@ -31,6 +31,29 @@ describe("ActivityFeed", () => {
         expect(screen.getByText(/há 5 min/)).toBeInTheDocument();
     });
 
+    it("lists an agent's steps when there is no link, and who confirmed it", () => {
+        render(
+            <ActivityFeed
+                now={NOW}
+                items={[
+                    {
+                        id: "9",
+                        actorType: "agent",
+                        actorName: "Agente de atribuição",
+                        verb: "atribuiu a",
+                        object: "duda",
+                        at: "2026-10-20T10:00:00Z",
+                        steps: ["leu a carga do time", "sugeriu Duda"],
+                        confirmedBy: "Fernanda",
+                    },
+                ]}
+            />,
+        );
+        expect(screen.getByText(/confirmado por Fernanda/)).toBeInTheDocument();
+        expect(screen.getByText("ver o que fez ▸").tagName).toBe("SUMMARY");
+        expect(screen.getByText("sugeriu Duda")).toBeInTheDocument();
+    });
+
     it("limits the lines and offers the rest", () => {
         render(<ActivityFeed items={items} limit={2} seeAllHref="/inicio" now={NOW} />);
         expect(screen.getAllByRole("listitem")).toHaveLength(2);

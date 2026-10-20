@@ -129,6 +129,22 @@ describe("toActivityItems", () => {
         expect(items[1].count).toBeUndefined();
     });
 
+    it("carries an agent's steps and who confirmed its suggestion", () => {
+        const [item] = toActivityItems([
+            event({
+                actor_type: "agent",
+                actor_id: "agent:atribuicao",
+                action: "assignee.changed",
+                after: { steps: ["leu a carga do time", 3, "sugeriu Duda"], confirmed_by: "Fernanda" },
+            }),
+        ]);
+        expect(item.steps).toEqual(["leu a carga do time", "sugeriu Duda"]);
+        expect(item.confirmedBy).toBe("Fernanda");
+        const [plain] = toActivityItems([event({ after: { steps: "x" } })]);
+        expect(plain).not.toHaveProperty("steps");
+        expect(plain).not.toHaveProperty("confirmedBy");
+    });
+
     it("never folds events on the same card or actions that do not count", () => {
         const items = toActivityItems([
             event({ id: 1, action: "review.completed", at: "2026-10-20T11:00:00Z" }),

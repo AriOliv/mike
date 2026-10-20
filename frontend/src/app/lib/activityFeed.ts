@@ -34,6 +34,10 @@ export type ActivityItem = {
     href?: string;
     /** How many events this line stands for, when several were folded. */
     count?: number;
+    /** What an agent did, step by step, shown under "ver o que fez" when there is no link. */
+    steps?: string[];
+    /** Who accepted an agent's suggestion: "confirmado por Fernanda". */
+    confirmedBy?: string;
 };
 
 /** Fixed Portuguese names for the agents; the id prefix picks one. */
@@ -153,6 +157,8 @@ export function toActivityItems(
             continue;
         }
         const { verb, object, sources } = describeEvent(event);
+        const after = record(event.after);
+        const steps = Array.isArray(after.steps) ? after.steps.filter((x): x is string => typeof x === "string") : [];
         const item: ActivityItem = {
             id: String(event.id),
             actorType: event.actor_type,
@@ -162,6 +168,8 @@ export function toActivityItems(
             sources,
             at: event.at,
             href: hrefFor?.(event),
+            ...(steps.length ? { steps } : {}),
+            ...(text(after.confirmed_by) ? { confirmedBy: text(after.confirmed_by) } : {}),
         };
         items.push(item);
         last = { item, event };

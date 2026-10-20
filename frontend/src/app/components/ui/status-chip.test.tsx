@@ -13,6 +13,11 @@ describe("StatusChip", () => {
         }
     });
 
+    it("draws waiting on someone outside the team in amber, not as a block", () => {
+        render(<StatusChip status="aguardando" />);
+        expect(screen.getByText("Aguardando")).toHaveClass("bg-amber-50", "text-amber-700");
+    });
+
     it("shows the agent's current step instead of the standard word", () => {
         render(<StatusChip status="rodando" label="Lendo o contrato…" size="md" />);
         expect(screen.getByText("Lendo o contrato…")).toHaveClass("h-6");

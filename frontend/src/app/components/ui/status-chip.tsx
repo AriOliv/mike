@@ -1,19 +1,22 @@
 "use client";
 
-import { Check, Circle, Loader2, OctagonX, Square } from "lucide-react";
+import { Check, Circle, Loader2, OctagonX, Pause, Square } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 
 /**
  * Where a piece of work stands. "rodando" and "pronto" are an agent's states
  * (working, finished and waiting for a person); the other four are the task
- * axis people move a card through. Colour never stands alone: every state
- * carries an icon and a word.
+ * axis people move a card through, plus "aguardando": waiting on someone
+ * outside the legal team (the requester, the counterparty), which is amber
+ * because it is not the team's problem; "bloqueado" is a real block. Colour
+ * never stands alone: every state carries an icon and a word.
  */
 export type ChipStatus =
     | "rodando"
     | "pronto"
     | "em_andamento"
     | "bloqueado"
+    | "aguardando"
     | "concluido"
     | "a_fazer"
     | "erro";
@@ -23,6 +26,7 @@ export const STATUS_LABEL: Record<ChipStatus, string> = {
     pronto: "Pronto p/ revisão",
     em_andamento: "Em andamento",
     bloqueado: "Bloqueado",
+    aguardando: "Aguardando",
     concluido: "Concluído",
     a_fazer: "A fazer",
     erro: "Falhou",
@@ -33,6 +37,7 @@ const TONE: Record<ChipStatus, string> = {
     pronto: "bg-app-surface-active text-gray-900",
     em_andamento: "bg-blue-50 text-blue-700",
     bloqueado: "bg-red-50 text-red-700",
+    aguardando: "bg-amber-50 text-amber-700",
     concluido: "text-gray-500",
     a_fazer: "bg-gray-100 text-gray-600",
     erro: "bg-red-50 text-red-700",
@@ -49,6 +54,8 @@ function StatusIcon({ status }: { status: ChipStatus }) {
             return <Circle aria-hidden="true" className={cn(base, "fill-blue-500 text-blue-500")} />;
         case "bloqueado":
             return <Square aria-hidden="true" className={cn(base, "fill-red-500 text-red-500")} />;
+        case "aguardando":
+            return <Pause aria-hidden="true" className={base} />;
         case "concluido":
             return <Check aria-hidden="true" className={base} />;
         case "erro":

@@ -91,6 +91,9 @@ export function ActivityFeed({
                         <span className="min-w-0 flex-1 break-words text-gray-700">
                             {activitySentence(item)}
                             <span className="text-gray-400"> · {relativeTime(item.at, now)}</span>
+                            {item.confirmedBy ? (
+                                <span className="text-gray-500"> · confirmado por {item.confirmedBy}</span>
+                            ) : null}
                             {item.href ? (
                                 <>
                                     {" "}
@@ -101,6 +104,17 @@ export function ActivityFeed({
                                         ver o que fez ▸
                                     </Link>
                                 </>
+                            ) : item.steps?.length ? (
+                                <details className="mt-1 [&_summary::-webkit-details-marker]:hidden">
+                                    <summary className="inline cursor-pointer text-gray-500 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40">
+                                        ver o que fez ▸
+                                    </summary>
+                                    <ol className="mt-1 list-decimal space-y-0.5 pl-4 text-gray-500">
+                                        {item.steps.map((step, index) => (
+                                            <li key={index}>{step}</li>
+                                        ))}
+                                    </ol>
+                                </details>
                             ) : null}
                         </span>
                     </li>

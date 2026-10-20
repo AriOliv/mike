@@ -10,6 +10,7 @@ export const AllStates = () => (
         <StatusChip status="pronto" />
         <StatusChip status="em_andamento" />
         <StatusChip status="bloqueado" />
+        <StatusChip status="aguardando" label="Aguardando o solicitante" />
         <StatusChip status="concluido" />
         <StatusChip status="a_fazer" />
         <StatusChip status="erro" />
