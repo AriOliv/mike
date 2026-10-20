@@ -24,6 +24,7 @@ import { enqueueDbJob } from "./lib/dbq/enqueue";
 import { runStaleWorkSweep } from "./jobs/maintenance";
 import { startUploadProcessingWorkers } from "./modules/uploads/uploads.service";
 import { startContractMirrors } from "./modules/contracts/contracts.service";
+import { enqueueDueRegulatoryScans } from "./modules/regulatory/regulatory.service";
 import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
 import { createServerSupabase } from "./lib/supabase";
 import { reportError } from "./lib/observability/sentry";
@@ -48,6 +49,10 @@ const MCP_REFRESH_MAX_EXPIRED_AGE_MS = 24 * 60 * 60 * 1000;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let initialSweep: ReturnType<typeof setTimeout> | null = null;
 let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let regulatoryTimer: ReturnType<typeof setInterval> | null = null;
+
+/** How often to look for regulatory scans due a run (each job dedupes per scan). */
+const REGULATORY_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 let stopUploadWorker: (() => void) | null = null;
 
 /**
@@ -136,6 +141,17 @@ export function startAllWorkers(): void {
     mcpRefreshTimer = setInterval(runMcpRefresh, MCP_REFRESH_SWEEP_INTERVAL_MS);
     mcpRefreshTimer.unref();
 
+    // Regulatory radar: queue each scan whose last run is older than its
+    // interval. The job is deduped per scan, so overlapping sweeps and
+    // several replicas collapse into one run.
+    const runRegulatorySweep = () =>
+        void enqueueDueRegulatoryScans(createServerSupabase()).catch((err) => {
+            reportError(err, { tags: { component: "regulatory-sweep" } });
+            console.error("[regulatory-sweep] failed", err);
+        });
+    regulatoryTimer = setInterval(runRegulatorySweep, REGULATORY_SWEEP_INTERVAL_MS);
+    regulatoryTimer.unref();
+
     // Notion / Drive / Calendar mirrors of the contract pipeline. Each is
     // inert unless its credentials are set.
     startContractMirrors();
@@ -146,6 +162,8 @@ export async function stopAllWorkers(): Promise<void> {
     if (initialSweep) clearTimeout(initialSweep);
     if (sweepTimer) clearInterval(sweepTimer);
     if (mcpRefreshTimer) clearInterval(mcpRefreshTimer);
+    if (regulatoryTimer) clearInterval(regulatoryTimer);
+    regulatoryTimer = null;
     initialSweep = null;
     sweepTimer = null;
     mcpRefreshTimer = null;

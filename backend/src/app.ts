@@ -38,6 +38,8 @@ import {
   pipelineRouter,
   projectContractRouter,
 } from "./modules/contracts/contracts.routes";
+import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
+import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
@@ -364,6 +366,8 @@ app.use("/pipeline", pipelineRouter);
 app.use("/obligations", obligationsRouter);
 app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
+app.use("/regulatory", regulatoryRouter);
+app.use("/dashboard", dashboardRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
