@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mike Legal · protótipo</title>
+<style>
+:root{
+  --paper:#F5F0E6; --paper-2:#FBF8F1; --paper-3:#EFE9DB; --card:#FFFFFF;
+  --ink:#121212; --ink-soft:#3B3A36; --muted:#8B887D; --muted-2:#B6B2A6;
+  --violet:#6E5BF2; --violet-deep:#4B38C9; --violet-soft:#E7E3FD;
+  --lime:#E4F06A; --ok:#3FA56A; --ok-soft:#E3F3E9; --warn:#C98E22; --warn-soft:#FBF0D9;
+  --err:#D5604C; --err-soft:#FBE5E0;
+  --line:rgba(18,18,18,.10); --line-strong:rgba(18,18,18,.22);
+  --shadow:0 2px 8px rgba(18,18,18,.05),0 8px 24px rgba(18,18,18,.05);
+  --r-sm:8px; --r-md:12px; --r-lg:18px;
+  --sans:'Geist',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#161614; --paper-2:#1D1D1B; --paper-3:#262623; --card:#1F1F1D;
+  --ink:#F1ECE0; --ink-soft:#D6D1C4; --muted:#9A968A; --muted-2:#6B685F;
+  --violet:#8B7DF5; --violet-deep:#B3A8FA; --violet-soft:#2C2650;
+  --ok-soft:#1E3326; --warn-soft:#3A2E14; --err-soft:#3D221D;
+  --line:rgba(241,236,224,.10); --line-strong:rgba(241,236,224,.22);
+  --shadow:0 2px 8px rgba(0,0,0,.3);
+}}
+:root[data-theme="dark"]{
+  --paper:#161614; --paper-2:#1D1D1B; --paper-3:#262623; --card:#1F1F1D;
+  --ink:#F1ECE0; --ink-soft:#D6D1C4; --muted:#9A968A; --muted-2:#6B685F;
+  --violet:#8B7DF5; --violet-deep:#B3A8FA; --violet-soft:#2C2650;
+  --ok-soft:#1E3326; --warn-soft:#3A2E14; --err-soft:#3D221D;
+  --line:rgba(241,236,224,.10); --line-strong:rgba(241,236,224,.22);
+  --shadow:0 2px 8px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.45 var(--sans)}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--violet-deep)}
+.mono{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+/* layout */
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--paper-2);border-bottom:1px solid var(--line)}
+.brand{font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.brand i{display:inline-block;width:18px;height:18px;border-radius:5px;background:var(--violet)}
+nav.main{display:flex;gap:2px;overflow-x:auto}
+nav.main a{padding:7px 12px;border-radius:999px;text-decoration:none;color:var(--ink-soft);white-space:nowrap}
+nav.main a.on{background:var(--ink);color:var(--paper)}
+nav.main a .n{font-family:var(--mono);font-size:11px;margin-left:4px;opacity:.7}
+.spacer{flex:1}
+.persona{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.persona select{padding:5px 8px;border-radius:999px;border:1px solid var(--line-strong);background:var(--card)}
+.ask-btn{padding:6px 12px;border-radius:999px;border:1px solid var(--violet);background:var(--violet-soft);color:var(--violet-deep);cursor:pointer;white-space:nowrap}
+main{max-width:1320px;margin:0 auto;padding:24px 20px 80px}
+h1{font-size:26px;letter-spacing:-.02em;margin:0 0 4px}
+h2{font-size:15px;margin:0}
+.sub{color:var(--muted);margin:0 0 20px}
+.grid{display:grid;gap:16px}
+.g-home{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
+.grid>*{min-width:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;box-shadow:var(--shadow)}
+.card-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+.briefing{background:var(--ink);color:var(--paper);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:16px}
+.briefing .mono{color:var(--muted-2)}
+.briefing p{margin:6px 0 0;font-size:16px;max-width:80ch}
+.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .grow{flex:1;min-width:0}
+.row .t{font-weight:600}
+.row .s{color:var(--muted);font-size:12.5px}
+.clickable{cursor:pointer}
+.clickable:hover .t{color:var(--violet-deep)}
+.btn{padding:6px 11px;border-radius:999px;border:1px solid var(--line-strong);background:var(--card);cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--ink)}
+.btn.pri{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn.vio{background:var(--violet);color:#fff;border-color:var(--violet)}
+.btn.sm{padding:3px 9px;font-size:12.5px}
+.btn.ghost{border-color:transparent;background:transparent}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--paper-3);color:var(--ink-soft);white-space:nowrap}
+.pill.red{background:var(--err-soft);color:var(--err)} .pill.amb{background:var(--warn-soft);color:var(--warn)}
+.pill.grn{background:var(--ok-soft);color:var(--ok)} .pill.vio{background:var(--violet-soft);color:var(--violet-deep)}
+.dbadge{font-family:var(--mono);font-size:12px;font-weight:600;padding:3px 7px;border-radius:6px;min-width:52px;text-align:center}
+.d30{background:var(--err);color:#fff}.d60{background:var(--warn);color:#fff}.d90{background:var(--paper-3);color:var(--ink-soft)}.dpast{background:var(--ink);color:var(--paper)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px}
+.kpi b{display:block;font-size:24px;letter-spacing:-.02em}
+.bar{height:6px;border-radius:99px;background:var(--paper-3);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ok)}
+.bar.warn i{background:var(--warn)} .bar.err i{background:var(--err)}
+/* table */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px}
+.tabs button{border:1px solid var(--line);background:transparent;padding:5px 11px;border-radius:999px;cursor:pointer;color:var(--ink-soft)}
+.tabs button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.search{flex:1;min-width:240px;display:flex;align-items:center;gap:6px;border:1px solid var(--line-strong);border-radius:999px;padding:6px 12px;background:var(--card)}
+.search input{border:0;outline:0;background:transparent;flex:1;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 10px;border-radius:999px;background:var(--violet-soft);color:var(--violet-deep);font-size:12.5px}
+.chip button{border:0;background:transparent;cursor:pointer;color:inherit;padding:0 4px}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--card);max-height:68vh}
+table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;font-size:13px}
+thead th{position:sticky;top:0;background:var(--paper-2);z-index:2;font-weight:600}
+thead tr.grp th{top:0;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:0}
+thead tr.cols th{top:28px}
+th.sticky,td.sticky{position:sticky;left:0;background:var(--card);z-index:1;border-right:1px solid var(--line)}
+thead th.sticky{z-index:3;background:var(--paper-2)}
+tbody tr:hover td{background:var(--paper-2)}
+td.unv{text-decoration:underline dotted var(--violet);text-underline-offset:3px}
+td.edit input{width:130px;padding:2px 4px}
+td .lnk{font-weight:600;cursor:pointer}
+td .lnk:hover{color:var(--violet-deep)}
+/* contract page */
+.cp-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.cp-head h1{margin:0}
+.cp{display:grid;grid-template-columns:58fr 42fr;gap:16px;align-items:start}
+.doc{position:relative;background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:28px 34px;height:74vh;overflow:auto;font-family:Georgia,'Times New Roman',serif;font-size:14.5px;line-height:1.65}
+.doc h3{font-family:var(--sans);font-size:13px;letter-spacing:.04em;text-transform:uppercase;margin:22px 0 6px;color:var(--ink-soft)}
+.doc p{margin:0 0 8px}
+.doc mark{background:var(--lime);color:#121212;border-radius:3px;padding:0 2px;box-shadow:0 0 0 3px var(--lime)}
+.side{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);height:74vh;display:flex;flex-direction:column;overflow:hidden}
+.side .tabs{padding:12px 14px 0;margin:0}
+.side-body{overflow:auto;padding:8px 14px 16px;flex:1}
+.fgrp{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:16px 0 4px}
+.field{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:7px 8px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.field:hover{background:var(--paper-2)}
+.field.sel{border-color:var(--violet);background:var(--violet-soft)}
+.field .lbl{color:var(--muted);font-size:12.5px}
+.field .val{font-weight:600;grid-column:1}
+.field .prov{grid-column:2;grid-row:1/3;display:flex;flex-direction:column;align-items:flex-end;gap:4px;justify-content:center}
+.prov-ia{color:var(--violet-deep);font-size:11.5px}
+.prov-ok{color:var(--ok);font-size:11.5px}
+.prov-ed{color:var(--warn);font-size:11.5px}
+.field .acts{display:none;gap:4px}
+.field:hover .acts,.field.sel .acts{display:flex}
+.field input{width:100%;padding:3px 6px;border:1px solid var(--violet);border-radius:6px;background:var(--card)}
+.progress{position:sticky;top:0;background:var(--card);padding:10px 0 8px;z-index:1;border-bottom:1px solid var(--line)}
+.risk{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:10px;padding:10px 12px;margin:10px 0}
+.risk.alto{border-left-color:var(--err)} .risk.fav{border-left-color:var(--ok)}
+.risk .sug{background:var(--paper-2);border-radius:8px;padding:8px 10px;margin-top:6px;font-size:13px}
+.act{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.act .av{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--paper-3);flex:none}
+.act.cm .bubble{background:var(--paper-2);border-radius:10px;padding:6px 10px}
+.mention{color:var(--violet-deep);font-weight:600}
+textarea{width:100%;border:1px solid var(--line-strong);border-radius:10px;padding:8px 10px;background:var(--card);resize:vertical}
+/* inbox */
+.inbox{display:grid;grid-template-columns:1fr;gap:16px}
+.inbox.open{grid-template-columns:1.25fr 1fr}
+.kanban{display:grid;grid-template-columns:repeat(5,minmax(200px,1fr));gap:10px;overflow-x:auto}
+.lane{background:var(--paper-3);border-radius:var(--r-md);padding:10px;min-height:200px}
+.kcard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 10px;margin-top:8px;cursor:pointer}
+.panel{position:sticky;top:70px}
+.stepper{display:flex;gap:4px;margin:8px 0}
+.stepper div{flex:1;text-align:center;font-size:11.5px;padding:6px 2px;border-radius:6px;background:var(--paper-3);color:var(--muted)}
+.stepper div.done{background:var(--ok-soft);color:var(--ok)}
+.stepper div.cur{background:var(--ink);color:var(--paper)}
+/* drawer + modal */
+.scrim{position:fixed;inset:0;background:rgba(18,18,18,.35);z-index:40;display:none}
+.scrim.on{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,100%);background:var(--paper-2);z-index:41;transform:translateX(100%);transition:transform .25s cubic-bezier(.22,1,.36,1);display:flex;flex-direction:column;border-left:1px solid var(--line)}
+.drawer.on{transform:none}
+.drawer-h{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.drawer-b{flex:1;overflow:auto;padding:14px 18px}
+.drawer-f{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px}
+.drawer-f input{flex:1;border:1px solid var(--line-strong);border-radius:999px;padding:8px 14px;background:var(--card)}
+.msg-q{background:var(--ink);color:var(--paper);border-radius:14px 14px 4px 14px;padding:8px 12px;margin:10px 0 10px auto;max-width:85%;width:fit-content}
+.msg-a{background:var(--card);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:10px 12px;margin:10px 0}
+.src{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:8px;background:var(--paper-2);margin-top:6px;font-size:12.5px;cursor:pointer}
+.src:hover{background:var(--violet-soft)}
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100% - 32px));max-height:90vh;overflow:auto;background:var(--paper-2);border-radius:var(--r-lg);z-index:42;padding:22px;display:none;box-shadow:0 24px 60px rgba(0,0,0,.25)}
+.modal.on{display:block}
+.opt{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
+.opt button{border:1px solid var(--line-strong);background:var(--card);padding:6px 12px;border-radius:999px;cursor:pointer}
+.opt button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.in{width:100%;border:1px solid var(--line-strong);border-radius:10px;padding:8px 10px;background:var(--card);margin:6px 0 14px}
+label.mono{display:block}
+.ai-box{background:var(--violet-soft);border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:999px;z-index:60;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
+.toast.on{opacity:1}
+.cta{display:flex;align-items:center;justify-content:space-between;gap:16px;background:var(--lime);color:#121212;border-radius:var(--r-lg);padding:22px 24px;margin-bottom:16px}
+.cta h2{font-size:20px}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.cal div{min-width:0;min-height:64px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font-size:11.5px}
+.cal .ev{display:block;margin-top:3px;border-radius:4px;padding:1px 4px;background:var(--err);color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal .ev.rec{background:transparent;border:1px solid var(--violet);color:var(--violet-deep)}
+.cal .dim{opacity:.4}
+.empty{color:var(--muted);padding:12px 0}
+@media (max-width:900px){
+  .g-home,.cp,.inbox.open{grid-template-columns:1fr}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .doc,.side{height:auto;max-height:70vh}
+  .top{flex-wrap:wrap;padding:10px 16px}
+  main{padding:16px 16px 80px}
+  .persona span{display:none}
+  .row{flex-wrap:wrap}
+  .row .grow{flex-basis:60%}
+  .kpi b{font-size:20px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><i></i>Mike <span class="mono" style="text-transform:none">Legal</span></div>
+  <nav class="main" id="nav"></nav>
+  <div class="spacer"></div>
+  <button class="ask-btn" id="askOpen" title="Atalho: ?">Perguntar à base</button>
+  <label class="persona"><span class="mono">Ver como</span>
+    <select id="persona">
+      <option value="head">Fernanda · Head de Legal</option>
+      <option value="analista">Duda · Analista</option>
+      <option value="solicitante">Rafael · Comercial</option>
+      <option value="founder">Bruno · CFO</option>
+    </select>
+  </label>
+</header>
+<main id="app"></main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Perguntar à base">
+  <div class="drawer-h"><b>Perguntar à base</b><span class="mono" id="askCount"></span><div class="spacer"></div><button class="btn ghost" id="askClose">fechar ✕</button></div>
+  <div class="drawer-b" id="askBody"></div>
+  <form class="drawer-f" id="askForm"><input id="askIn" placeholder="ex.: quais contratos têm mudança de controle?" autocomplete="off"><button class="btn vio">⏎</button></form>
+</aside>
+<div class="modal" id="modal"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------- dados fictícios ----------
+const TODAY = new Date('2026-10-20T12:00:00');
+const PEOPLE = {
+  head:{name:'Fernanda',full:'Fernanda Lima',role:'Head de Legal',ini:'FL'},
+  analista:{name:'Duda',full:'Duda Prado',role:'Analista de Legal',ini:'DP'},
+  teo:{name:'Téo',full:'Téo Martins',role:'Analista de Legal',ini:'TM'},
+  solicitante:{name:'Rafael',full:'Rafael Souza',role:'Comercial',ini:'RS'},
+  founder:{name:'Bruno',full:'Bruno Andrade',role:'CFO',ini:'BA'},
+};
+const byName = n => Object.values(PEOPLE).find(p=>p.name===n);
+
+// schema = a planilha do Legal (grupo › campo), cada campo aponta para uma cláusula
+const SCHEMA = [
+  {g:'Identificação',k:'tipo',l:'Tipo de contrato',cl:'1'},
+  {g:'Identificação',k:'contraparte',l:'Contraparte',cl:'0'},
+  {g:'Identificação',k:'area',l:'Área responsável',cl:null},
+  {g:'Identificação',k:'ativo',l:'Ativo?',cl:null},
+  {g:'Vigência',k:'assinatura',l:'Data de assinatura',cl:'sig'},
+  {g:'Vigência',k:'vigencia',l:'Prazo de vigência',cl:'3'},
+  {g:'Vigência',k:'vencimento',l:'Data de vencimento',cl:'3'},
+  {g:'Vigência',k:'renovAuto',l:'Renovação automática',cl:'3'},
+  {g:'Pagamento',k:'valor',l:'Valor',cl:'4'},
+  {g:'Pagamento',k:'prazoPag',l:'Prazo de pagamento',cl:'4'},
+  {g:'Pagamento',k:'multa',l:'Multa (atraso)',cl:'4'},
+  {g:'Pagamento',k:'juros',l:'Juros',cl:'4'},
+  {g:'Pagamento',k:'correcao',l:'Correção monetária',cl:'4'},
+  {g:'Rescisão',k:'rescAntecipada',l:'Rescisão antecipada',cl:'5'},
+  {g:'Rescisão',k:'aviso',l:'Prazo do aviso prévio',cl:'5'},
+  {g:'Rescisão',k:'multaResc',l:'Multa rescisória',cl:'5'},
+  {g:'Cessão',k:'cessao',l:'Cessão',cl:'6'},
+  {g:'Cessão',k:'cessaoNotif',l:'Notificação/autorização',cl:'6'},
+  {g:'Alteração de controle',k:'controle',l:'Alteração de controle',cl:'7'},
+  {g:'Alteração de controle',k:'controleNotif',l:'Notificação/autorização',cl:'7'},
+  {g:'Alteração de controle',k:'controlePen',l:'Penalidade por não informar',cl:'7'},
+  {g:'Dados',k:'dados',l:'Compartilhamento de dados',cl:'8'},
+  {g:'Dados',k:'agente',l:'Agente (LGPD)',cl:'8'},
+  {g:'Obrigações',k:'obrig',l:'Obrigações periódicas',cl:'2'},
+];
+
+const C = [
+ {id:'austral',nome:'Correspondente cambial',tipo:'Parceiro',contraparte:'Banco Austral S.A.',area:'Tesouraria',resp:'Duda',risco:'médio',assinatura:'02/03/2025',vigencia:'24 meses',vencimento:'02/03/2027',renovAuto:'Sim',valor:'R$ 18.000/mês',prazoPag:'dia 10',multa:'2%',juros:'1% a.m.',correcao:'IPCA',rescAntecipada:'Sim, imotivada',aviso:'90 dias',multaResc:'3 mensalidades',cessao:'Não, sem anuência',cessaoNotif:'Autorização prévia',controle:'Sim',controleNotif:'Notificação em 30 dias',controlePen:'Rescisão motivada',dados:'Sim',agente:'Operador',obrig:'Reporte mensal de volume (dia 5)',valid:20},
+ {id:'nimbus',nome:'SaaS de infraestrutura',tipo:'Fornecedor',contraparte:'Nimbus Cloud Ltda.',area:'Tecnologia',resp:'Téo',risco:'baixo',assinatura:'15/12/2025',vigencia:'12 meses',vencimento:'15/12/2026',renovAuto:'Sim',valor:'US$ 4.200/mês',prazoPag:'30 dias',multa:'2%',juros:'1% a.m.',correcao:'IGP-M',rescAntecipada:'Sim',aviso:'30 dias',multaResc:'Não',cessao:'Sim, livre',cessaoNotif:'Notificação',controle:'Não',controleNotif:'—',controlePen:'—',dados:'Sim',agente:'Operador',obrig:'Revisão anual de SLA',valid:24},
+ {id:'tropico',nome:'MSA · API de pagamentos',tipo:'Cliente',contraparte:'Trópico Payments S.A.',area:'Comercial',resp:'Duda',risco:'alto',assinatura:'10/01/2025',vigencia:'24 meses',vencimento:'10/01/2027',renovAuto:'Sim',valor:'R$ 0,35/transação',prazoPag:'dia 15',multa:'10%',juros:'1% a.m.',correcao:'IPCA',rescAntecipada:'Sim, motivada',aviso:'60 dias',multaResc:'R$ 250.000',cessao:'Não',cessaoNotif:'Autorização prévia',controle:'Sim',controleNotif:'Autorização prévia',controlePen:'Multa de R$ 500.000',dados:'Sim',agente:'Controlador',obrig:'Relatório trimestral de SLA',valid:14},
+ {id:'orla',nome:'Seguro de responsabilidade civil',tipo:'Fornecedor',contraparte:'Orla Seguros S.A.',area:'Financeiro',resp:'Téo',risco:'baixo',assinatura:'01/12/2025',vigencia:'12 meses',vencimento:'01/12/2026',renovAuto:'Não',valor:'R$ 96.000/ano',prazoPag:'à vista',multa:'—',juros:'—',correcao:'—',rescAntecipada:'Sim',aviso:'30 dias',multaResc:'Não',cessao:'Não',cessaoNotif:'—',controle:'Não',controleNotif:'—',controlePen:'—',dados:'Não',agente:'—',obrig:'Manter apólice vigente',valid:24},
+ {id:'mercadosul',nome:'Order form · payout',tipo:'Cliente',contraparte:'Mercado Sul Digital Ltda.',area:'Comercial',resp:'Duda',risco:'médio',assinatura:'20/08/2025',vigencia:'24 meses',vencimento:'20/08/2027',renovAuto:'Não',valor:'R$ 42.000/mês mín.',prazoPag:'dia 5',multa:'2%',juros:'1% a.m.',correcao:'IPCA',rescAntecipada:'Sim',aviso:'90 dias',multaResc:'Saldo do mínimo',cessao:'Não',cessaoNotif:'Autorização prévia',controle:'Sim',controleNotif:'Notificação em 15 dias',controlePen:'—',dados:'Sim',agente:'Operador',obrig:'Volume mínimo mensal',valid:18},
+ {id:'atlas',nome:'Locação · escritório SP',tipo:'Locação',contraparte:'Atlas Escritórios S.A.',area:'Administrativo',resp:'Téo',risco:'baixo',assinatura:'01/02/2024',vigencia:'36 meses',vencimento:'31/01/2027',renovAuto:'Não',valor:'R$ 38.500/mês',prazoPag:'dia 1',multa:'10%',juros:'1% a.m.',correcao:'IGP-M',rescAntecipada:'Sim',aviso:'90 dias',multaResc:'3 aluguéis proporcionais',cessao:'Não',cessaoNotif:'Autorização prévia',controle:'Não',controleNotif:'—',controlePen:'—',dados:'Não',agente:'—',obrig:'Reajuste anual em fevereiro',valid:22},
+ {id:'lumen',nome:'Plataforma de KYC',tipo:'Fornecedor',contraparte:'Lumen Identidade Ltda.',area:'Compliance',resp:'Duda',risco:'médio',assinatura:'05/11/2024',vigencia:'24 meses',vencimento:'05/11/2026',renovAuto:'Sim',valor:'R$ 2,10/verificação',prazoPag:'30 dias',multa:'2%',juros:'1% a.m.',correcao:'IPCA',rescAntecipada:'Sim',aviso:'60 dias',multaResc:'Não',cessao:'Sim',cessaoNotif:'Notificação',controle:'Sim',controleNotif:'Notificação',controlePen:'—',dados:'Sim',agente:'Operador',obrig:'Auditoria anual de segurança',valid:12},
+ {id:'kappa',nome:'Custódia de ativos digitais',tipo:'Parceiro',contraparte:'Kappa Custódia S.A.',area:'Operações',resp:'Téo',risco:'alto',assinatura:'12/06/2025',vigencia:'36 meses',vencimento:'12/06/2028',renovAuto:'Sim',valor:'0,15% a.a. sob custódia',prazoPag:'mensal',multa:'2%',juros:'1% a.m.',correcao:'—',rescAntecipada:'Só motivada',aviso:'180 dias',multaResc:'12 meses de fees',cessao:'Não',cessaoNotif:'Autorização prévia',controle:'Sim',controleNotif:'Autorização prévia',controlePen:'Rescisão + multa',dados:'Sim',agente:'Controlador conjunto',obrig:'Prova de reservas trimestral',valid:9},
+ {id:'vertice',nome:'Auditoria independente',tipo:'Fornecedor',contraparte:'Vértice Auditores',area:'Financeiro',resp:'Téo',risco:'baixo',assinatura:'01/03/2026',vigencia:'12 meses',vencimento:'28/02/2027',renovAuto:'Não',valor:'R$ 210.000',prazoPag:'3 parcelas',multa:'2%',juros:'1% a.m.',correcao:'—',rescAntecipada:'Sim',aviso:'30 dias',multaResc:'Não',cessao:'Não',cessaoNotif:'—',controle:'Não',controleNotif:'—',controlePen:'—',dados:'Sim',agente:'Operador',obrig:'Entrega do parecer até 31/03',valid:24},
+ {id:'delta',nome:'NDA · parceria de liquidez',tipo:'NDA',contraparte:'Delta Liquidez Ltd.',area:'Comercial',resp:'Duda',risco:'baixo',assinatura:'18/09/2026',vigencia:'24 meses',vencimento:'18/09/2028',renovAuto:'Não',valor:'—',prazoPag:'—',multa:'—',juros:'—',correcao:'—',rescAntecipada:'Sim',aviso:'15 dias',multaResc:'Não',cessao:'Não',cessaoNotif:'—',controle:'Não',controleNotif:'—',controlePen:'—',dados:'Sim',agente:'Controlador',obrig:'Sigilo por 5 anos',valid:24},
+ {id:'icaro',nome:'Agência de marketing',tipo:'Fornecedor',contraparte:'Ícaro Comunicação Ltda.',area:'Marketing',resp:'Téo',risco:'baixo',assinatura:'10/04/2026',vigencia:'12 meses',vencimento:'10/04/2027',renovAuto:'Sim',valor:'R$ 25.000/mês',prazoPag:'15 dias',multa:'2%',juros:'1% a.m.',correcao:'IPCA',rescAntecipada:'Sim',aviso:'30 dias',multaResc:'1 mensalidade',cessao:'Não',cessaoNotif:'—',controle:'Não',controleNotif:'—',controlePen:'—',dados:'Não',agente:'—',obrig:'Relatório mensal de campanhas',valid:24},
+ {id:'ferrovia',nome:'Licença de dados de crédito',tipo:'Fornecedor',contraparte:'Ferrovia Dados S.A.',area:'Risco',resp:'Duda',risco:'médio',assinatura:'25/11/2025',vigencia:'12 meses',vencimento:'25/11/2026',renovAuto:'Sim',valor:'R$ 15.000/mês',prazoPag:'30 dias',multa:'2%',juros:'1% a.m.',correcao:'IGP-M',rescAntecipada:'Sim',aviso:'30 dias',multaResc:'Não',cessao:'Não',cessaoNotif:'Autorização prévia',controle:'Sim',controleNotif:'Notificação',controlePen:'—',dados:'Sim',agente:'Controlador',obrig:'Uso restrito à análise de crédito',valid:16},
+];
+C.forEach(c=>{
+  c.ativo='Sim';
+  // procedência por campo: os primeiros `valid` campos já foram validados
+  c.prov={};
+  SCHEMA.forEach((f,i)=>{ c.prov[f.k] = i<c.valid ? {s:'ok',by: i%3? c.resp:'Fernanda', at: (10+i%9)+'/10'} : {s:'ia'}; });
+  c.activity=[
+    {t:'ev',who:'Mike',txt:'leu o contrato e preencheu a ficha (24 campos)',at:'12/10 09:14'},
+    {t:'ev',who:c.resp,txt:`validou ${c.valid} campos`,at:'14/10 16:02'},
+  ];
+});
+C.find(c=>c.id==='tropico').activity.push({t:'cm',who:'Fernanda',txt:'@Duda a multa de mudança de controle está fora do playbook, vale renegociar na renovação.',at:'15/10 11:20'});
+
+const parseBR = s => { const m=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s||''); return m? new Date(+m[3],+m[2]-1,+m[1],12):null; };
+const fmt = d => d.toLocaleDateString('pt-BR');
+const days = d => Math.round((d-TODAY)/864e5);
+function noticeDeadline(c){ const v=parseBR(c.vencimento); const a=parseInt(c.aviso)||0; if(!v) return null; const d=new Date(v); d.setDate(d.getDate()-a); return d; }
+function dBadge(n){ if(n==null) return ''; const cls = n<0?'dpast': n<=30?'d30': n<=60?'d60':'d90'; return `<span class="dbadge ${cls}">${n<0?'vencido':'D-'+n}</span>`; }
+const validCount = c => SCHEMA.filter(f=>c.prov[f.k].s==='ok'||c.prov[f.k].s==='ed').length;
+const riskPill = r => `<span class="pill ${r==='alto'?'red':r==='médio'?'amb':'grn'}">${r}</span>`;
+const esc = s => String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+
+// ---------- esteira: o card é a unidade (pedido e contrato são o mesmo card) ----------
+// Etapa = fase do contrato (PIPELINE_LANES do fork). Progresso = eixo da task, independente.
+const LANES=[['entrada','Entrada'],['triagem','Triagem'],['revisao','Revisão'],['negociacao','Negociação'],['assinatura','Assinatura'],['arquivado','Arquivado']];
+const LANE=Object.fromEntries(LANES);
+const PROG=['A fazer','Em andamento','Bloqueado','Concluído'];
+const PRIO=['Baixa','Média','Alta'];
+const LEGAL=['Fernanda','Duda','Téo'];
+const thread=(...m)=>m.map(([who,txt,at])=>({who,txt,at}));
+const R = [
+ {id:'P-128',titulo:'NDA · Polaris Exchange',tipo:'NDA',contraparte:'Polaris Exchange Ltd.',sol:'Rafael',areaSol:'Comercial',canal:'Slack #doc-agent',criado:'20/10 08:40',slaH:24,usadoH:3,resp:null,etapa:'entrada',prog:'A fazer',prio:'Média',prazo:'2026-10-21',ctx:'Vamos abrir conversa de parceria de liquidez com a Polaris. Eles mandaram o NDA deles, mas pode ser o nosso padrão.',
+  triagem:{tipo:'NDA mútuo',risco:'baixo',playbook:'NDA padrão Avenia v3',nota:'Contraparte aceita o NDA padrão. Sem desvio: dá para aprovar direto.'},
+  thread:thread(['Rafael','@Mike preciso de um NDA com a Polaris Exchange pra parceria de liquidez','08:40'],['Mike','Recebi, virou o card P-128 na Entrada. Só falta saber: é mútuo? Tem o registro da Polaris?','08:40'],['Rafael','mútuo. registro em anexo','08:52'],['Mike','Valeu. Triagem: NDA padrão v3, sem desvio. Prazo do Legal: 1 dia útil. Te aviso aqui.','08:53'])},
+ {id:'P-127',titulo:'MSA cliente · Vela Pay',tipo:'Cliente',contraparte:'Vela Pay IP S.A.',sol:'Rafael',areaSol:'Comercial',canal:'Formulário',criado:'19/10 17:10',slaH:120,usadoH:16,resp:null,etapa:'triagem',prog:'A fazer',prio:'Alta',prazo:'2026-10-30',ctx:'Cliente novo de payout, volume estimado 8M/mês. Querem assinar até o fim do mês.',
+  triagem:{tipo:'MSA cliente + order form',risco:'médio',playbook:'Cliente API v4',nota:'Volume alto: aplicar cláusula de mínimo e cap de responsabilidade de 12 meses de fees.'},thread:[]},
+ {id:'P-126',titulo:'Aditivo de preço · Nimbus Cloud',tipo:'Fornecedor',contraparte:'Nimbus Cloud Ltda.',sol:'Carla',areaSol:'Tecnologia',canal:'Slack #doc-agent',criado:'17/10 10:05',slaH:72,usadoH:70,resp:'Téo',etapa:'revisao',prog:'Em andamento',prio:'Média',prazo:'2026-10-23',ctx:'Aumento de 18% no preço com nova região. Precisa do ok até sexta.',contractId:'nimbus',
+  triagem:{tipo:'Aditivo de preço',risco:'baixo',playbook:'Fornecedor SaaS v2',nota:'Reajuste acima do IGP-M; o contrato vigente permite renegociar com 30 dias.'},thread:thread(['Carla','@Mike a Nimbus mandou aditivo com +18%, consegue olhar até sexta?','10:05'],['Mike','Card P-126 criado. Liguei ao contrato vigente da Nimbus. Téo pegou.','10:20'])},
+ {id:'P-125',titulo:'Parecer · cessão do contrato Trópico',tipo:'Parecer',contraparte:'Trópico Payments S.A.',sol:'Bruno',areaSol:'Financeiro',canal:'E-mail',criado:'16/10 14:30',slaH:48,usadoH:60,resp:'Duda',etapa:'revisao',prog:'Em andamento',prio:'Alta',prazo:'2026-10-18',ctx:'Se fizermos a reorganização societária, o contrato da Trópico cai?',contractId:'tropico',
+  triagem:{tipo:'Parecer',risco:'alto',playbook:'—',nota:'Cl. 7.1 exige autorização prévia em mudança de controle, sob multa de R$ 500 mil.'},thread:[]},
+ {id:'P-124',titulo:'Renovação · Lumen Identidade',tipo:'Fornecedor',contraparte:'Lumen Identidade Ltda.',sol:'Marina',areaSol:'Compliance',canal:'Formulário',criado:'14/10 09:00',slaH:72,usadoH:30,resp:'Duda',etapa:'negociacao',prog:'Bloqueado',bloqueio:'Aguardando a Marina: faixas de volume',prio:'Alta',prazo:'2026-11-04',ctx:'Queremos renovar, mas com preço por faixa de volume.',contractId:'lumen',
+  triagem:{tipo:'Renovação',risco:'médio',playbook:'Fornecedor SaaS v2',nota:'A janela de aviso fechou em 06/09; a renovação automática ocorre em 05/11. Dá para renegociar preço.'},thread:[]},
+ {id:'P-122',titulo:'NDA · Orion Labs',tipo:'NDA',contraparte:'Orion Labs Inc.',sol:'Pedro',areaSol:'Produto',canal:'Slack #doc-agent',criado:'13/10 15:00',slaH:24,usadoH:12,resp:'Téo',etapa:'assinatura',prog:'Em andamento',prio:'Baixa',prazo:'2026-10-22',ctx:'NDA para integração de API.',
+  triagem:{tipo:'NDA mútuo',risco:'baixo',playbook:'NDA padrão Avenia v3',nota:'Aprovado sem desvio. DocuSign: 1 de 2 assinaturas.'},thread:[]},
+ {id:'P-121',titulo:'NDA · Sigma Analytics',tipo:'NDA',contraparte:'Sigma Analytics',sol:'Rafael',areaSol:'Comercial',canal:'Slack #doc-agent',criado:'09/10 11:00',slaH:24,usadoH:20,resp:'Téo',etapa:'arquivado',prog:'Concluído',prio:'Baixa',prazo:'2026-10-10',ctx:'NDA para piloto de dados.',
+  triagem:{tipo:'NDA mútuo',risco:'baixo',playbook:'NDA padrão Avenia v3',nota:'Aprovado automaticamente (sem desvio).'},thread:[]},
+];
+R.forEach(r=>{ r.activity=[{t:'ev',who:'Mike',txt:`criou o card a partir de ${r.canal}`,at:r.criado}]; if(r.resp) r.activity.push({t:'ev',who:'Fernanda',txt:`atribuiu a ${r.resp}`,at:r.criado}); });
+// contratos vigentes também são cards da esteira, na etapa Arquivado
+C.forEach(c=>{ c.etapa='arquivado'; c.prog='Concluído'; c.prio=c.risco==='alto'?'Alta':'Média'; c.prazo=''; });
+const INBOX = r => r.etapa==='entrada'||r.etapa==='triagem';
+const openCard = r => r.prog!=='Concluído';
+
+// ---------- estado ----------
+const S = { persona:'head', view:'Todos', chips:[], q:'', editing:null, selField:null, cpTab:'Ficha', esteiraView:'Esteira', inboxFilter:'todos', asks:[], done:new Set() };
+try{ const p=localStorage.getItem('mike-proto-persona'); if(p) S.persona=p; }catch(e){}
+const me = () => PEOPLE[S.persona];
+
+// ---------- util ----------
+const $ = s => document.querySelector(s);
+function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('on'); clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove('on'),2800); }
+function go(h){ location.hash=h; }
+function slaInfo(r){ const left=r.slaH-r.usadoH; const pct=Math.min(100,Math.round(r.usadoH/r.slaH*100)); const cls= left<0?'err': pct>=75?'warn':''; const txt = r.prog==='Concluído'?'concluído': r.prog==='Bloqueado'?'pausado': left<0?`estourou ${-left}h`: left<24?`${left}h restantes`:`${Math.round(left/24)}d restantes`; return {left,pct,cls,txt}; }
+const progPill = p => `<span class="pill ${p==='Bloqueado'?'red':p==='Concluído'?'grn':p==='Em andamento'?'vio':''}">${p}</span>`;
+const prioPill = p => p? `<span class="pill ${p==='Alta'?'amb':''}">${p==='Alta'?'↑ ':''}${p}</span>`:'';
+const isoBR = s => s? s.split('-').reverse().join('/') : '—';
+// "vou fazer X, ok?": toda ação que sai do Mike (Slack, e-mail, contraparte) pede confirmação
+function confirmAct(title, items, onOk){
+  const m=$('#modal');
+  m.innerHTML=`<div class="card-h"><h2 style="font-size:18px">${title}</h2><button class="btn ghost" data-close>✕</button></div>
+  <div class="ai-box"><div class="mono" style="color:var(--violet-deep)">o Mike vai fazer</div><ol style="margin:6px 0 0 18px;padding:0">${items.map(i=>`<li>${i}</li>`).join('')}</ol></div>
+  <label style="display:flex;gap:8px;align-items:center;margin-bottom:14px;font-size:13px"><input type="checkbox"> Não perguntar de novo para este tipo de ação</label>
+  <div class="toolbar"><div class="spacer"></div><button class="btn" data-close>Cancelar</button><button class="btn pri" id="cOk">Pode fazer</button></div>`;
+  open('modal'); $('#cOk').onclick=()=>{ close(); onOk(); };
+}
+
+// ---------- nav ----------
+function renderNav(route){
+  const items = S.persona==='solicitante'
+    ? [['inicio','Início'],['pedidos','Meus pedidos']]
+    : [['inicio','Início'],['esteira','Esteira',R.filter(r=>INBOX(r)&&openCard(r)).length],['contratos','Contratos',C.length],['prazos','Prazos']];
+  const cur = route==='card' ? (C.find(c=>c.id===location.hash.split('/')[2])?'contratos':'esteira') : route;
+  $('#nav').innerHTML = items.map(([k,l,n])=>`<a href="#/${k}" class="${cur===k?'on':''}">${l}${n!=null?`<span class="n" title="${k==='esteira'?'na Entrada e Triagem':''}">${n}</span>`:''}</a>`).join('');
+}
+
+// ---------- Início ----------
+function exigeVoce(){
+  const out=[];
+  C.forEach(c=>{ const n=days(noticeDeadline(c)); const v=days(parseBR(c.vencimento)); if(n<=45 && v>=0 && c.renovAuto==='Sim') out.push({k:'renov-'+c.id,ord:n,html:`${dBadge(n)}<div class="grow"><div class="t">Decidir renovação · ${esc(c.contraparte)}</div><div class="s">${n<0?`<b>A janela de aviso passou.</b> Renova sozinho em ${esc(c.vencimento)}; dá para renegociar.`:`Renova sozinho em ${esc(c.vencimento)}. O aviso de ${esc(c.aviso)} precisa sair até ${fmt(noticeDeadline(c))}.`} ${esc(c.valor)}.</div></div>${renewBtns('renov-'+c.id,n<0)}`,go:'#/card/'+c.id}); });
+  R.filter(r=>!r.resp && openCard(r)).forEach(r=>out.push({k:'atr-'+r.id,ord:5,html:`<span class="pill vio">${LANE[r.etapa]}</span><div class="grow"><div class="t">Atribuir: ${esc(r.titulo)}</div><div class="s">${esc(r.sol)} · ${esc(r.areaSol)} · via ${esc(r.canal)} · SLA ${slaInfo(r).txt}</div></div><button class="btn sm" data-act="atribuir" data-k="atr-${r.id}" data-r="${r.id}">Atribuir a Duda</button>`,go:'#/card/'+r.id}));
+  R.filter(r=>r.prog==='Bloqueado').forEach(r=>out.push({k:'blk-'+r.id,ord:8,html:`<span class="pill red">bloqueado</span><div class="grow"><div class="t">${esc(r.titulo)}</div><div class="s">${esc(r.bloqueio||'')} · com ${esc(r.resp)}</div></div><button class="btn sm">abrir</button>`,go:'#/card/'+r.id}));
+  C.filter(c=>c.risco==='alto').forEach(c=>out.push({k:'risk-'+c.id,ord:20,html:`<span class="pill red">risco alto</span><div class="grow"><div class="t">Revisar risco · ${esc(c.contraparte)}</div><div class="s">${SCHEMA.length-validCount(c)} campos a conferir, ${c.controle==='Sim'?'mudança de controle com penalidade: '+esc(c.controlePen.toLowerCase()):'cláusulas fora do playbook'}.</div></div><button class="btn sm">abrir</button>`,go:'#/card/'+c.id}));
+  return out.filter(x=>!S.done.has(x.k)).sort((a,b)=>a.ord-b.ord);
+}
+function renewBtns(k,late){ return `${late?'':`<button class="btn sm" data-act="renovar" data-k="${k}">Renovar</button><button class="btn sm" data-act="encerrar" data-k="${k}">Não renovar</button>`}<button class="btn sm" data-act="renegociar" data-k="${k}">Renegociar</button><button class="btn sm ghost" data-act="adiar" data-k="${k}">Adiar 7d</button>`; }
+function prazosList(limit=90, who){
+  return C.map(c=>({c,d:noticeDeadline(c)})).filter(x=>x.d && (!who||x.c.resp===who)).map(x=>({...x,n:days(x.d)})).filter(x=>x.n<=limit && x.n>=-30).sort((a,b)=>a.n-b.n);
+}
+function prazoRows(list){
+  return list.length? list.map(({c,n,d})=>`<div class="row clickable" data-go="#/card/${c.id}">${dBadge(n)}<div class="grow"><div class="t">${esc(c.contraparte)}</div><div class="s">${esc(c.nome)} · aviso até ${fmt(d)} · ${c.renovAuto==='Sim'?'renova sozinho':'vence'} em ${esc(c.vencimento)}</div></div><span class="pill">${esc(c.resp)}</span></div>`).join('') : '<div class="empty">Nada nos próximos 90 dias.</div>';
+}
+function reqRows(list){
+  return list.length? list.map(r=>{const s=slaInfo(r);return `<div class="row clickable" data-go="#/card/${r.id}"><div class="grow"><div class="t">${esc(r.titulo)}</div><div class="s">${LANE[r.etapa]} · ${esc(r.sol)} · ${esc(r.canal)} · ${r.resp?'com '+esc(r.resp):'<b>sem responsável</b>'}</div><div class="bar ${s.cls}" style="margin-top:6px"><i style="width:${s.pct}%"></i></div></div><span class="mono">${s.txt}</span></div>`}).join('') : '<div class="empty">Fila vazia.</div>';
+}
+function miniEsteira(){
+  return `<div style="display:grid;grid-template-columns:repeat(6,minmax(64px,1fr));gap:6px;overflow-x:auto">${LANES.map(([k,l])=>{const n=k==='arquivado'?C.length+R.filter(r=>r.etapa===k).length:R.filter(r=>r.etapa===k).length;return `<a href="#/esteira" style="text-decoration:none;color:inherit;background:var(--paper-2);border-radius:8px;padding:8px"><div class="mono" style="font-size:10px">${l}</div><b style="font-size:20px">${n}</b></a>`}).join('')}</div>`;
+}
+function renderInicio(){
+  const p=me();
+  if(S.persona==='solicitante') return renderInicioSolicitante();
+  if(S.persona==='founder') return renderInicioFounder();
+  const ex = exigeVoce();
+  const mine = S.persona==='analista';
+  const brief = mine
+    ? `Você tem <b>${R.filter(r=>r.resp==='Duda'&&openCard(r)).length} cards</b> na esteira. O parecer da Trópico passou do prazo. ${C.filter(c=>c.resp==='Duda').reduce((a,c)=>a+SCHEMA.length-validCount(c),0)} campos extraídos esperam sua conferência.`
+    : `Desde ontem: <b>2 cards novos</b> na Entrada e Triagem sem responsável, e a janela de aviso da <b>Lumen</b> já passou (renova sozinho em 05/11). A Ferrovia Dados entra na janela de 30 dias esta semana.`;
+  const exList = (mine? ex.filter(x=>!x.k.startsWith('atr-')) : ex);
+  return `
+  <div class="briefing"><div class="mono">${mine?'Analista':'Legal'} · terça, 20 de outubro</div><p>Bom dia, ${p.name}. ${brief}</p></div>
+  ${mine?'':`<div class="kpis">
+    <div class="kpi"><span class="mono">contratos vigentes</span><b>${C.length}</b></div>
+    <div class="kpi"><span class="mono">cards em andamento</span><b>${R.filter(openCard).length}</b></div>
+    <div class="kpi"><span class="mono">SLA estourado</span><b style="color:var(--err)">${R.filter(r=>slaInfo(r).left<0&&openCard(r)&&r.prog!=='Bloqueado').length}</b></div>
+    <div class="kpi"><span class="mono">campos verificados</span><b>${Math.round(C.reduce((a,c)=>a+validCount(c),0)/(C.length*SCHEMA.length)*100)}%</b></div>
+  </div>
+  <section class="card" style="margin-bottom:16px"><div class="card-h"><h2>Esteira</h2><a href="#/esteira" class="mono">abrir →</a></div>${miniEsteira()}</section>`}
+  <div class="grid g-home">
+    <div class="grid">
+      <section class="card"><div class="card-h"><h2>Exige você</h2><span class="mono">${exList.length}</span></div>
+        ${exList.slice(0,5).map(x=>`<div class="row clickable" data-go="${x.go}">${x.html}</div>`).join('') || '<div class="empty">Nada pendente. Bom trabalho.</div>'}
+      </section>
+      ${mine?`<section class="card"><div class="card-h"><h2>Meus cards</h2><span class="mono">por SLA</span></div>${reqRows(R.filter(r=>r.resp==='Duda'&&openCard(r)).sort((a,b)=>slaInfo(a).left-slaInfo(b).left))}</section>
+      <section class="card"><div class="card-h"><h2>Campos para conferir</h2><span class="mono">extraídos pela IA</span></div>${C.filter(c=>c.resp==='Duda'&&validCount(c)<SCHEMA.length).map(c=>`<div class="row clickable" data-go="#/card/${c.id}"><div class="grow"><div class="t">${esc(c.contraparte)}</div><div class="bar" style="margin-top:6px"><i style="width:${Math.round(validCount(c)/SCHEMA.length*100)}%"></i></div></div><span class="mono">${SCHEMA.length-validCount(c)} a conferir</span></div>`).join('')}</section>`
+      :`<section class="card"><div class="card-h"><h2>Entrada e Triagem</h2><a href="#/esteira" class="mono">ver inbox →</a></div>${reqRows(R.filter(r=>INBOX(r)&&openCard(r)))}</section>`}
+    </div>
+    <div class="grid">
+      <section class="card"><div class="card-h"><h2>${mine?'Meus prazos de aviso':'Prazos de aviso · 90 dias'}</h2><a href="#/prazos" class="mono">radar →</a></div>${prazoRows(prazosList(90, mine?'Duda':null))}</section>
+      ${mine?'':`<section class="card"><div class="card-h"><h2>Carga do time</h2></div>${['Duda','Téo'].map(n=>{const open=R.filter(r=>r.resp===n&&openCard(r));const late=open.filter(r=>slaInfo(r).left<0&&r.prog!=='Bloqueado').length;return `<div class="row"><div class="act" style="border:0;padding:0"><span class="av">${byName(n).ini}</span></div><div class="grow"><div class="t">${n}</div><div class="s">${open.length} cards em andamento · ${C.filter(c=>c.resp===n).length} contratos vigentes</div></div>${late?`<span class="pill red">${late} SLA estourado</span>`:'<span class="pill grn">em dia</span>'}</div>`}).join('')}</section>`}
+    </div>
+  </div>`;
+}
+function renderInicioSolicitante(){
+  const mine=R.filter(r=>r.sol==='Rafael');
+  return `
+  <h1>Oi, Rafael</h1><p class="sub">Precisa de algo do Legal? Leva uns 30 segundos. Ou mencione <b>@Mike</b> no <b>#doc-agent</b> do Slack, e ele pergunta na própria thread o que faltar.</p>
+  <div class="cta"><div><h2>Pedir ao Legal</h2><div>NDA, contrato de cliente, fornecedor ou uma dúvida jurídica.</div></div><button class="btn pri" data-act="novo">Novo pedido</button></div>
+  <section class="card"><div class="card-h"><h2>Meus pedidos</h2><span class="mono">${mine.length}</span></div>
+  ${mine.map(r=>stepperRow(r)).join('')}</section>`;
+}
+// o solicitante vê a esteira simplificada: as 6 etapas viram 4 passos
+function stepperRow(r){
+  const steps=['Recebido','Em análise','Assinatura','Concluído'];
+  const idx = INBOX(r)?0: (r.etapa==='revisao'||r.etapa==='negociacao')?1: r.etapa==='assinatura'?2:3;
+  const waiting = r.prog==='Bloqueado'&&/Aguardando/.test(r.bloqueio||'');
+  return `<div class="row" style="display:block"><div style="display:flex;gap:8px;align-items:baseline"><div class="t grow">${esc(r.titulo)}</div><span class="mono">${esc(r.id)} · ${esc(r.criado)}</span></div>
+  <div class="stepper">${steps.map((s,i)=>`<div class="${i<idx?'done':i===idx?'cur':''}">${s}</div>`).join('')}</div>
+  <div class="s">${r.resp?`Com ${esc(r.resp)} no Legal.`:'Na fila do Legal.'} ${waiting?'<b>O Legal precisa de uma resposta sua.</b>':''} ${idx<3?`Previsão: ${slaInfo(r).txt}.`:''} Atualizações chegam no seu Slack.</div></div>`;
+}
+function renderInicioFounder(){
+  const byTipo={}; C.forEach(c=>{ byTipo[c.tipo]=(byTipo[c.tipo]||0)+1; });
+  return `
+  <h1>Oi, Bruno</h1><p class="sub">Pergunte qualquer coisa sobre os ${C.length} contratos vigentes. Toda resposta vem com a cláusula de origem.</p>
+  <form class="search" id="founderAsk" style="padding:12px 16px;margin-bottom:10px"><input id="founderIn" placeholder="temos contrato com a Kappa? quando vence?"><button class="btn vio">Perguntar</button></form>
+  <div class="toolbar">${['Temos contrato com a Kappa Custódia?','O que vence nos próximos 90 dias?','Quais contratos têm mudança de controle?','Quais contratos compartilham dados pessoais?'].map(q=>`<button class="btn sm" data-ask="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+  <div class="grid g-home" style="margin-top:16px">
+    <section class="card"><div class="card-h"><h2>Vence ou renova neste trimestre</h2></div>${prazoRows(prazosList(90))}</section>
+    <section class="card"><div class="card-h"><h2>Contratos por tipo</h2></div>${Object.entries(byTipo).map(([t,n])=>`<div class="row"><div class="grow">${t}</div><div style="width:45%" class="bar"><i style="width:${n/C.length*100}%;background:var(--violet)"></i></div><span class="mono">${n}</span></div>`).join('')}</section>
+  </div>`;
+}
+
+// ---------- Esteira (Inbox = Entrada + Triagem) ----------
+function kcard(r){ const s=slaInfo(r); return `<div class="kcard" draggable="true" data-drag="${r.id}" data-go="#/card/${r.id}"><div style="font-weight:600">${esc(r.titulo)}</div><div style="color:var(--muted);font-size:12px;margin:2px 0 6px">${esc(r.sol)} · ${esc(r.canal)}</div><div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${progPill(r.prog)}${prioPill(r.prio)}${r.resp?`<span class="pill">${esc(r.resp)}</span>`:'<span class="pill vio">sem dono</span>'}${r.prog!=='Concluído'?`<span class="mono" style="margin-left:auto;${s.left<0&&r.prog!=='Bloqueado'?'color:var(--err)':''}">${s.txt}</span>`:''}</div></div>`; }
+function renderEsteira(){
+  if(S.persona==='solicitante') return `<h1>Meus pedidos</h1><p class="sub">Tudo o que você pediu ao Legal e em que pé está.</p><div class="toolbar"><button class="btn pri" data-act="novo">+ Novo pedido</button></div><section class="card">${R.filter(r=>r.sol==='Rafael').map(stepperRow).join('')}</section>`;
+  const views=[['Esteira','Esteira (6 etapas)'],['Inbox','Inbox · Entrada + Triagem']];
+  let body='';
+  if(S.esteiraView==='Esteira'){
+    body=`<div class="kanban" style="grid-template-columns:repeat(6,minmax(190px,1fr))">${LANES.map(([k,l])=>{const cards=R.filter(r=>r.etapa===k);const extra=k==='arquivado'?C.length:0;return `<div class="lane" data-lane="${k}"><div class="mono">${l} · ${cards.length+extra}</div>${(k==='arquivado'?cards.slice(0,2):cards).map(kcard).join('')}${k==='arquivado'?`<a href="#/contratos" class="kcard" style="display:block;text-decoration:none;color:var(--violet-deep)">+ ${C.length} contratos vigentes · ver em Contratos →</a>`:''}</div>`}).join('')}</div>
+    <p class="mono" style="margin-top:10px;text-transform:none;letter-spacing:0">Arraste um card para mudar a etapa. Etapa, Progresso, Responsável, Prioridade e Prazo espelham no board "Pipeline · Mike" do Notion.</p>`;
+  } else {
+    const f=S.inboxFilter; let list=R.filter(INBOX);
+    if(f==='todos') list=list.filter(openCard);
+    if(f==='sem') list=list.filter(r=>!r.resp&&openCard(r));
+    if(f==='meus') list=list.filter(r=>r.resp===me().name);
+    if(f==='sla') list=list.filter(r=>openCard(r)&&r.prog!=='Bloqueado'&&slaInfo(r).pct>=75);
+    const filters=[['todos','abertos'],['sem','sem responsável'],['meus','meus'],['sla','SLA estourando']];
+    body=`<div class="tabs">${filters.map(([k,l])=>`<button class="${f===k?'on':''}" data-filter="${k}">${l}</button>`).join('')}</div>
+    <div class="tablewrap" style="max-height:none"><table style="width:100%"><thead><tr class="cols" style="position:static"><th>Card</th><th>Solicitante</th><th>Canal</th><th>Etapa</th><th>SLA</th><th>Responsável</th><th>Progresso</th><th></th></tr></thead><tbody>
+    ${list.map(r=>{const s=slaInfo(r);return `<tr class="clickable" data-go="#/card/${r.id}"><td><span class="lnk">${esc(r.titulo)}</span><div class="s mono">${r.id} · ${esc(r.triagem.tipo)} · risco ${esc(r.triagem.risco)}</div></td><td>${esc(r.sol)}<div class="s">${esc(r.areaSol)}</div></td><td>${esc(r.canal)}</td><td>${LANE[r.etapa]}</td><td style="min-width:140px"><div class="bar ${s.cls}"><i style="width:${s.pct}%"></i></div><span class="mono">${s.txt}</span></td><td>${r.resp?esc(r.resp):'<span class="pill vio">sem dono</span>'}</td><td>${progPill(r.prog)}</td><td>${r.resp?'':`<button class="btn sm" data-act="assumir" data-r="${r.id}">Assumir</button>`}</td></tr>`}).join('')||'<tr><td colspan="8" class="empty">Nada aqui.</td></tr>'}
+    </tbody></table></div>`;
+  }
+  return `<h1>Esteira</h1><p class="sub">Todo pedido entra como card na Entrada (Slack #doc-agent, formulário ou e-mail) e anda pelas 6 etapas até Arquivado, quando vira contrato vigente.</p>
+  <div class="toolbar"><div class="tabs" style="margin:0">${views.map(([k,l])=>`<button class="${S.esteiraView===k?'on':''}" data-eview="${k}">${l}</button>`).join('')}</div><div class="spacer"></div><button class="btn pri" data-act="novo">+ Novo pedido</button></div>
+  ${body}`;
+}
+
+// cabeçalho comum a todo card: etapa (stepper das 6 lanes) + eixo da task
+function cardHeader(r, isContract){
+  const canEdit = S.persona==='head'||S.persona==='analista';
+  const idx=LANES.findIndex(([k])=>k===r.etapa);
+  return `<div class="cp-head"><a href="${isContract?'#/contratos':'#/esteira'}" class="mono">← ${isContract?'contratos':'esteira'}</a><div class="spacer"></div><a class="mono" href="#" data-act="notion">espelhado no Notion ↗</a></div>
+  <div class="stepper" style="margin:0 0 12px">${LANES.map(([k,l],i)=>`<div class="${i<idx?'done':i===idx?'cur':''}" ${canEdit&&!isContract?`data-etapa="${k}" style="cursor:pointer"`:''}>${i<idx?'✓ ':''}${l}${k==='arquivado'&&isContract?' · vigente':''}</div>`).join('')}</div>
+  <div class="toolbar" style="background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px">
+    <span class="mono">progresso</span><select class="btn sm" data-task="prog" ${canEdit?'':'disabled'}>${PROG.map(p=>`<option ${p===r.prog?'selected':''}>${p}</option>`).join('')}</select>
+    <span class="mono">responsável</span><select class="btn sm" data-task="resp" ${canEdit?'':'disabled'}><option value="">—</option>${LEGAL.map(n=>`<option ${n===r.resp?'selected':''}>${n}</option>`).join('')}</select>
+    <span class="mono">prioridade</span><select class="btn sm" data-task="prio" ${canEdit?'':'disabled'}>${PRIO.map(p=>`<option ${p===r.prio?'selected':''}>${p}</option>`).join('')}</select>
+    <span class="mono">prazo</span><input type="date" class="btn sm" data-task="prazo" value="${esc(r.prazo||'')}" ${canEdit?'':'disabled'}>
+    ${r.prog==='Bloqueado'&&r.bloqueio?`<span class="pill red">${esc(r.bloqueio)}</span>`:''}
+  </div>`;
+}
+function renderCardFlow(r){
+  const s=slaInfo(r); const c=r.contractId&&C.find(x=>x.id===r.contractId);
+  const canEdit = S.persona==='head'||S.persona==='analista';
+  const tab = ['Triagem','Atividade'].includes(S.cpTab)?S.cpTab:'Triagem';
+  const side = tab==='Triagem' ? `<div class="ai-box"><div class="mono" style="color:var(--violet-deep)">triagem da IA</div><div><b>${esc(r.triagem.tipo)}</b> · risco ${esc(r.triagem.risco)} · playbook: ${esc(r.triagem.playbook)}</div><div>${esc(r.triagem.nota)}</div></div>
+    <div class="mono">SLA</div><div class="bar ${s.cls}" style="margin:4px 0"><i style="width:${s.pct}%"></i></div><div class="s" style="margin-bottom:14px">${s.txt}</div>
+    ${canEdit?`<div class="toolbar">
+      ${r.resp?'':`<button class="btn pri" data-act="assumir" data-r="${r.id}">Assumir</button>`}
+      <button class="btn" data-act="pedirinfo" data-r="${r.id}">Pedir informação ao solicitante</button>
+      ${r.etapa==='triagem'||r.etapa==='entrada'?`<button class="btn" data-act="avancar" data-r="${r.id}">Mandar para Revisão →</button>`:''}
+      ${r.tipo==='NDA'&&INBOX(r)?`<button class="btn vio" data-act="aprovar" data-r="${r.id}">Aprovar NDA padrão</button>`:''}
+    </div>`:''}
+    ${c?`<div class="row clickable" data-go="#/card/${c.id}" style="margin-top:10px"><span class="pill grn">vigente</span><div class="grow"><div class="t">Contrato ligado: ${esc(c.contraparte)}</div><div class="s">${esc(c.nome)} · vence ${esc(c.vencimento)}</div></div><span class="mono">abrir →</span></div>`:''}`
+   : activityHtml(r);
+  return cardHeader(r,false)+`
+  <div class="cp-head" style="margin-top:14px"><h1>${esc(r.titulo)}</h1><span class="pill">${esc(r.tipo)}</span><span class="mono">${r.id}</span></div>
+  <p class="sub" style="margin-top:-6px">Pedido de ${esc(r.sol)} (${esc(r.areaSol)}) via ${esc(r.canal)} · ${esc(r.criado)} · contraparte ${esc(r.contraparte)}</p>
+  <div class="cp"><article class="card" style="height:auto;min-height:40vh">
+    <div class="mono">o pedido</div><p style="background:var(--paper-2);border-radius:10px;padding:10px 12px">"${esc(r.ctx)}"</p>
+    ${r.thread.length?`<div class="mono" style="margin-top:14px">thread no Slack · espelhada</div>${r.thread.map(m=>`<div class="act"><span class="av">${m.who==='Mike'?'AI':esc((byName(m.who)||{ini:m.who.slice(0,2)}).ini)}</span><div><b>${esc(m.who)}</b> <span class="mono">${esc(m.at)}</span><div>${esc(m.txt)}</div></div></div>`).join('')}`:''}
+    <div class="mono" style="margin-top:14px">documentos</div><div class="row"><span class="pill">${r.etapa==='entrada'?'minuta da contraparte':'minuta v2'}.docx</span><div class="spacer"></div><button class="btn sm" data-act="drive">abrir</button></div>
+    ${INBOX(r)?'':`<p class="s" style="color:var(--muted)">Quando a minuta final for assinada, o card vai para Arquivado e ganha a Ficha completa, como um contrato vigente.</p>`}
+  </article>
+  <aside class="side" style="height:auto;min-height:40vh"><div class="tabs">${['Triagem','Atividade'].map(t=>`<button class="${tab===t?'on':''}" data-cptab="${t}">${t}${t==='Atividade'?' · '+r.activity.length:''}</button>`).join('')}</div><div class="side-body">${side}</div></aside></div>`;
+}
+function activityHtml(c){
+  return c.activity.map(a=>a.t==='cm'?`<div class="act cm"><span class="av">${esc((byName(a.who)||{ini:a.who.slice(0,2)}).ini)}</span><div><b>${esc(a.who)}</b> <span class="mono">${esc(a.at)}</span><div class="bubble">${esc(a.txt).replace(/@(\p{L}+)/gu,'<span class="mention">@$1</span>')}</div></div></div>`:`<div class="act"><span class="av">${a.who==='Mike'?'AI':esc((byName(a.who)||{ini:'?'}).ini)}</span><div><b>${esc(a.who)}</b> ${esc(a.txt)} <span class="mono">${esc(a.at)}</span></div></div>`).join('')+
+  `<form id="cmForm" style="margin-top:12px"><textarea id="cmIn" rows="2" placeholder="Comente. Use @Duda, @Téo ou @Fernanda para avisar alguém."></textarea><div class="toolbar" style="margin-top:6px"><span class="mono">quem é mencionado recebe no Slack e por e-mail</span><div class="spacer"></div><button class="btn pri sm">Comentar</button></div></form>`;
+}
+function openNovoPedido(){
+  const m=$('#modal'); const st={tipo:'NDA',quando:'Esta semana'};
+  m.innerHTML=`<div class="card-h"><h2 style="font-size:18px">Pedir ao Legal</h2><button class="btn ghost" data-close>✕</button></div>
+  <p class="s" style="color:var(--muted);margin-top:0">Escreva como falaria. Vira um card na Entrada da esteira do Legal. (No Slack: mencione @Mike no #doc-agent.)</p>
+  <label class="mono">O que você precisa?</label><div class="opt" id="oTipo">${['NDA','Contrato de cliente','Fornecedor','Parecer','Outro'].map(t=>`<button type="button" class="${t===st.tipo?'on':''}">${t}</button>`).join('')}</div>
+  <label class="mono">Contraparte</label><input class="in" id="nCp" placeholder="ex.: Polaris Exchange">
+  <label class="mono">Contexto</label><textarea id="nCtx" rows="3" placeholder="O que está acontecendo, o que você precisa e qualquer prazo que importe."></textarea>
+  <label class="mono" style="margin-top:14px">Quando precisa?</label><div class="opt" id="oQuando">${['Esta semana','Até uma data','Sem pressa'].map(t=>`<button type="button" class="${t===st.quando?'on':''}">${t}</button>`).join('')}</div>
+  <label class="mono">Anexo (opcional)</label><input class="in" type="file">
+  <div class="ai-box" id="nAi">A IA classifica o pedido assim que você digitar a contraparte.</div>
+  <div class="toolbar"><div class="spacer"></div><button class="btn" data-close>Cancelar</button><button class="btn pri" id="nSend">Enviar ao Legal</button></div>`;
+  open('modal');
+  const pick=(id,key)=>m.querySelector(id).addEventListener('click',e=>{ if(e.target.tagName!=='BUTTON')return; st[key]=e.target.textContent; m.querySelectorAll(id+' button').forEach(b=>b.classList.toggle('on',b===e.target)); upd(); });
+  const upd=()=>{ const cp=$('#nCp').value.trim(); $('#nAi').innerHTML = cp? (st.tipo==='NDA'?`<b>NDA padrão Avenia v3.</b> Se ${esc(cp)} aceitar sem alterações, o Legal só confirma com 1 clique.`:`Entra na esteira com <b>SLA de ${st.tipo==='Contrato de cliente'?'5':st.tipo==='Fornecedor'?'3':'2'} dias úteis</b>. Checagem de sanções e KYB de ${esc(cp)} roda na Triagem.`) : 'A IA classifica o pedido assim que você digitar a contraparte.'; };
+  pick('#oTipo','tipo'); pick('#oQuando','quando'); $('#nCp').addEventListener('input',upd);
+  $('#nSend').onclick=()=>{
+    const cp=$('#nCp').value.trim()||'Contraparte a definir';
+    const id='P-'+(129+R.length-7);
+    const sol=S.persona==='solicitante'?'Rafael':me().name;
+    R.unshift({id,titulo:`${st.tipo} · ${cp}`,tipo:st.tipo,contraparte:cp,sol,areaSol:S.persona==='solicitante'?'Comercial':'Legal',canal:'Formulário',criado:'20/10 agora',slaH:st.tipo==='NDA'?24:st.tipo==='Contrato de cliente'?120:72,usadoH:0,resp:null,etapa:'entrada',prog:'A fazer',prio:'Média',prazo:'',ctx:$('#nCtx').value.trim()||'(sem contexto)',triagem:{tipo:st.tipo,risco:'a definir',playbook:st.tipo==='NDA'?'NDA padrão Avenia v3':'a definir',nota:'Triagem automática em andamento.'},thread:[],activity:[{t:'ev',who:sol,txt:'abriu o pedido pelo formulário',at:'20/10 agora'}]});
+    close(); toast(`Pedido ${id} entrou na Entrada da esteira. Você acompanha aqui e no Slack.`); render();
+  };
+}
+
+// ---------- Contratos (portfólio) ----------
+const BASECOLS=[
+  ['Identificação','tipo','Tipo'],['Identificação','contraparte','Contraparte'],['Identificação','area','Área'],['Identificação','resp','Responsável'],
+  ['Vigência','assinatura','Assinatura'],['Vigência','vencimento','Vencimento'],['Vigência','renovAuto','Renov. auto'],['Vigência','_d','Aviso (D-)'],
+  ['Pagamento','valor','Valor'],['Rescisão','aviso','Aviso prévio'],['Rescisão','multaResc','Multa rescisória'],
+  ['Cessão','cessao','Cessão'],['Alteração de controle','controle','Alt. controle'],['Alteração de controle','controleNotif','Notificação'],
+  ['Dados','dados','Compart. dados'],['Dados','agente','Agente'],['Análise','risco','Risco'],['Análise','_v','Verificados'],
+];
+const VIEWS={
+  'Todos':[], 'Vencendo em 90 dias':[{k:'_d90',l:'aviso em até 90 dias'}], 'Mudança de controle':[{k:'controle',v:'Sim',l:'alteração de controle: sim'}],
+  'Compartilham dados':[{k:'dados',v:'Sim',l:'compartilha dados: sim'}], 'Não verificados':[{k:'_unv',l:'com campos a conferir'}], 'Minhas':[{k:'resp',v:'@me',l:'responsável: eu'}],
+};
+function applyChips(list,chips){
+  return list.filter(c=>chips.every(ch=>{
+    if(ch.k==='_d90'){const n=days(noticeDeadline(c));return n<=90;}
+    if(ch.k==='_unv') return validCount(c)<SCHEMA.length;
+    if(ch.k==='_ano') return (c.vencimento||'').endsWith(ch.v);
+    if(ch.k==='resp' && ch.v==='@me') return c.resp===me().name;
+    if(ch.k==='_txt') return JSON.stringify(c).toLowerCase().includes(ch.v.toLowerCase());
+    return (c[ch.k]||'').toLowerCase().startsWith(ch.v.toLowerCase());
+  }));
+}
+function nlToChips(q){
+  const t=q.toLowerCase(); const out=[];
+  if(/controle/.test(t)) out.push({k:'controle',v:'Sim',l:'alteração de controle: sim'});
+  if(/renova/.test(t)) out.push({k:'renovAuto',v:'Sim',l:'renovação automática: sim'});
+  if(/dados|lgpd/.test(t)) out.push({k:'dados',v:'Sim',l:'compartilha dados: sim'});
+  if(/cess[ãa]o/.test(t)) out.push({k:'cessao',v:'Não',l:'cessão: só com anuência'});
+  const y=/20\d\d/.exec(t); if(y) out.push({k:'_ano',v:y[0],l:'vence em '+y[0]});
+  if(/90 dias|vencendo|vence logo|pr[óo]xim/.test(t)) out.push({k:'_d90',l:'aviso em até 90 dias'});
+  [['cliente','Cliente'],['fornecedor','Fornecedor'],['parceiro','Parceiro'],['nda','NDA'],['loca','Locação']].forEach(([w,v])=>{ if(t.includes(w)) out.push({k:'tipo',v,l:'tipo: '+v.toLowerCase()}); });
+  if(/risco alto|alto risco/.test(t)) out.push({k:'risco',v:'alto',l:'risco: alto'});
+  if(/n[ãa]o validad|pendente/.test(t)) out.push({k:'_unv',l:'com campos não validados'});
+  if(!out.length && t.trim()) out.push({k:'_txt',v:q.trim(),l:'contém: '+q.trim()});
+  return out;
+}
+// colunas criadas por pergunta ("+ Coluna" / "Transformar em coluna"): rodam no acervo todo
+let S_extra = [];
+function answerCol(q,c){
+  const t=q.toLowerCase();
+  if(/foro/.test(t)) return 'São Paulo/SP';
+  if(/exclusiv/.test(t)) return c.id==='mercadosul'?'Sim, 12 meses':'Não';
+  if(/cap|limita/.test(t)) return {tropico:'Sem cap',kappa:'12 meses de fees',austral:'R$ 2.000.000',lumen:'6 meses de fees'}[c.id]||'Valor do contrato';
+  if(/controle/.test(t)) return c.controle==='Sim'?`Sim · ${c.controleNotif}`:'Não';
+  if(/dados|lgpd/.test(t)) return c.dados==='Sim'?c.agente:'Não';
+  if(/renova/.test(t)) return c.renovAuto;
+  return 'a conferir';
+}
+function addCol(q,tipo){ S_extra.push({k:'_x'+S_extra.length,l:q,tipo}); }
+function cellVal(c,k){
+  if(k.startsWith('_x')){ const col=S_extra.find(x=>x.k===k); return esc(answerCol(col.l,c)); }
+  if(k==='_d'){ const n=days(noticeDeadline(c)); return dBadge(n); }
+  if(k==='_v'){ const v=validCount(c); return `<span class="mono" style="color:${v===SCHEMA.length?'var(--ok)':'var(--muted)'}">${v}/${SCHEMA.length}</span>`; }
+  if(k==='risco') return riskPill(c.risco);
+  return esc(c[k]??'');
+}
+function renderContratos(){
+  const list=applyChips(C,S.chips);
+  const PCOLS = BASECOLS.concat(S_extra.map(x=>['Perguntas',x.k,x.l.length>28?x.l.slice(0,27)+'…':x.l]));
+  const groups=[]; PCOLS.forEach(([g])=>{ const l=groups[groups.length-1]; if(l&&l.g===g) l.n++; else groups.push({g,n:1}); });
+  const canEdit = S.persona==='head'||S.persona==='analista';
+  return `<h1>Contratos</h1><p class="sub">A planilha do Legal, viva. Cada valor vem do contrato, e o sublinhado roxo indica o que ainda não foi validado. ${canEdit?'Dê dois cliques numa célula para editar.':'Você tem acesso de leitura.'}</p>
+  <div class="tabs">${Object.keys(VIEWS).map(v=>`<button class="${S.view===v?'on':''}" data-view="${v}">${v}</button>`).join('')}</div>
+  <div class="toolbar">
+    <form class="search" id="nlForm"><span class="mono">filtrar ou perguntar</span><input id="nlIn" value="${esc(S.q)}" placeholder="ex.: clientes com mudança de controle que vencem em 2027"><button class="btn sm vio">IA ⏎</button></form>
+    ${canEdit?'<button class="btn" data-act="addcol">+ Coluna</button>':''}
+    <button class="btn" data-act="export">Exportar (.csv no protótipo, .xlsx no produto)</button>
+  </div>
+  <div class="toolbar">${S.chips.map((ch,i)=>`<span class="chip">${esc(ch.l)}<button data-rmchip="${i}" aria-label="remover">✕</button></span>`).join('')}${S.chips.length?`<button class="btn sm ghost" data-act="clearchips">limpar</button><button class="btn sm ghost" data-act="saveview">salvar como visão</button>`:''}<span class="mono" style="margin-left:auto">${list.length} de ${C.length} contratos</span></div>
+  <div class="tablewrap"><table>
+   <thead><tr class="grp"><th class="sticky"></th>${groups.map(g=>`<th colspan="${g.n}">${g.g}</th>`).join('')}</tr>
+   <tr class="cols"><th class="sticky">Contrato</th>${PCOLS.map(c=>`<th>${c[2]}</th>`).join('')}</tr></thead>
+   <tbody>${list.map(c=>`<tr><td class="sticky"><span class="lnk" data-go="#/card/${c.id}">${esc(c.nome)}</span></td>${PCOLS.map(([,k])=>{
+      const isEd=S.editing&&S.editing.id===c.id&&S.editing.k===k;
+      const unv=(c.prov[k]&&c.prov[k].s==='ia')||k.startsWith('_x');
+      const f=SCHEMA.find(f=>f.k===k);
+      return isEd?`<td class="edit"><input data-editcell="${c.id}|${k}" value="${esc(c[k])}"></td>`:`<td class="${unv?'unv':''}" ${canEdit&&!k.startsWith('_')&&k!=='resp'?`data-dbl="${c.id}|${k}"`:''} title="${k.startsWith('_x')?'Resposta da IA a partir do contrato. A conferir.':unv?'Extraído pela IA da cl. '+(f&&f.cl)+'. A conferir.':c.prov[k]&&c.prov[k].s==='ok'?'Validado por '+c.prov[k].by:''}">${cellVal(c,k)}</td>`;}).join('')}</tr>`).join('')}</tbody>
+  </table></div>
+  <p class="mono" style="margin-top:10px">Fonte: campos extraídos pela IA · ${C.reduce((a,c)=>a+SCHEMA.length-validCount(c),0)} a conferir</p>`;
+}
+function exportCSV(){
+  const list=applyChips(C,S.chips); const cols=SCHEMA;
+  const rows=[['Contrato',...cols.map(f=>f.g+' › '+f.l),'Responsável','Risco',...S_extra.map(x=>x.l)]].concat(list.map(c=>[c.nome,...cols.map(f=>c[f.k]),c.resp,c.risco,...S_extra.map(x=>answerCol(x.l,c))]));
+  const csv='﻿'+rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(';')).join('\n');
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='contratos-mike.csv'; a.click();
+  toast(`${list.length} contratos exportados no layout da planilha do Legal.`);
+}
+
+// ---------- Página do contrato ----------
+function clauses(c){
+  const sigd=c.assinatura;
+  return [
+    {n:'0',t:'Partes',p:[`De um lado, <b>Avenia Pagamentos S.A.</b> ("Avenia"), e de outro, <span data-q="contraparte">${esc(c.contraparte)}</span> ("Contraparte"), celebram o presente instrumento.`]},
+    {n:'1',t:'1. Objeto',p:[`1.1 O presente contrato tem por objeto a relação de natureza <span data-q="tipo">${esc(c.tipo.toLowerCase())}</span> referente a ${esc(c.nome.toLowerCase())}, nos termos dos anexos.`]},
+    {n:'2',t:'2. Obrigações das partes',p:[`2.1 As partes cumprirão as obrigações descritas nos anexos, em especial: <span data-q="obrig">${esc(c.obrig)}</span>.`,`2.2 O descumprimento de obrigação recorrente sujeita a parte inadimplente às penalidades da cláusula 4.`]},
+    {n:'3',t:'3. Vigência',p:[`3.1 Este contrato vigorará pelo prazo de <span data-q="vigencia">${esc(c.vigencia)}</span> contados da assinatura, encerrando-se em <span data-q="vencimento">${esc(c.vencimento)}</span>.`,`3.2 <span data-q="renovAuto">${c.renovAuto==='Sim'?'Findo o prazo, o contrato será renovado automaticamente por iguais períodos, salvo manifestação contrária de qualquer das partes':'O contrato não será renovado automaticamente, dependendo de novo instrumento'}</span>.`]},
+    {n:'4',t:'4. Preço e pagamento',p:[`4.1 Pelos serviços, será devido o valor de <span data-q="valor">${esc(c.valor)}</span>, com vencimento em <span data-q="prazoPag">${esc(c.prazoPag)}</span>.`,`4.2 O atraso implicará multa de <span data-q="multa">${esc(c.multa)}</span>, juros de <span data-q="juros">${esc(c.juros)}</span> e correção monetária pelo <span data-q="correcao">${esc(c.correcao)}</span>.`]},
+    {n:'5',t:'5. Rescisão',p:[`5.1 <span data-q="rescAntecipada">Rescisão antecipada: ${esc(c.rescAntecipada)}</span>, mediante aviso prévio por escrito de <span data-q="aviso">${esc(c.aviso)}</span>.`,`5.2 Multa rescisória: <span data-q="multaResc">${esc(c.multaResc)}</span>.`]},
+    {n:'6',t:'6. Cessão',p:[`6.1 <span data-q="cessao">Cessão: ${esc(c.cessao)}</span>. <span data-q="cessaoNotif">Exigência: ${esc(c.cessaoNotif)}</span>.`]},
+    {n:'7',t:'7. Alteração de controle',p:[`7.1 <span data-q="controle">${c.controle==='Sim'?'A alteração do controle societário de qualquer das partes':'Não há disposição específica sobre alteração de controle'}</span>${c.controle==='Sim'?`, dependerá de <span data-q="controleNotif">${esc(c.controleNotif.toLowerCase())}</span>, sob pena de <span data-q="controlePen">${esc(c.controlePen.charAt(0).toLowerCase()+c.controlePen.slice(1))}</span>`:''}.`]},
+    {n:'8',t:'8. Proteção de dados',p:[`8.1 <span data-q="dados">${c.dados==='Sim'?'As partes compartilharão dados pessoais para a execução deste contrato':'Não haverá compartilhamento de dados pessoais'}</span>${c.dados==='Sim'?`, atuando a Contraparte como <span data-q="agente">${esc(c.agente.toLowerCase())}</span> nos termos da LGPD`:''}.`]},
+    {n:'9',t:'9. Foro',p:['9.1 Fica eleito o foro da Comarca de São Paulo/SP.']},
+    {n:'sig',t:'Assinaturas',p:[`São Paulo, <span data-q="assinatura">${esc(sigd)}</span>. Assinado eletronicamente pelas partes.`]},
+  ];
+}
+function risksOf(c){
+  const r=[];
+  if(c.controle==='Sim'&&/multa|rescis/i.test(c.controlePen)) r.push({lvl:'alto',cl:'7.1',t:`Mudança de controle exige ${c.controleNotif.toLowerCase()}, sob pena de ${c.controlePen.toLowerCase()}.`,sug:'Trocar autorização prévia por notificação em até 30 dias, sem penalidade quando o adquirente for do mesmo grupo econômico.'});
+  if(parseInt(c.aviso)>=90&&c.renovAuto==='Sim') r.push({lvl:'medio',cl:'3.2 / 5.1',t:`Renovação automática com aviso longo (${c.aviso}). Se ninguém agir até ${fmt(noticeDeadline(c))}, o contrato renova.`,sug:'Alerta D-90/60/30 já criado para o responsável.'});
+  if(/R\$|meses de fees/.test(c.multaResc)) r.push({lvl:'medio',cl:'5.2',t:`Multa rescisória relevante: ${c.multaResc}.`,sug:'Playbook: limitar a 3 mensalidades.'});
+  if(c.dados==='Sim'&&/Controlador/.test(c.agente)) r.push({lvl:'medio',cl:'8.1',t:`Contraparte como ${c.agente.toLowerCase()}: exige base legal e DPA próprios.`,sug:'Anexar DPA com sub-processadores e prazo de notificação de incidente de 48h.'});
+  r.push({lvl:'fav',cl:'4.2',t:`Encargos de atraso dentro do padrão (${c.multa} + ${c.juros}).`});
+  return r;
+}
+function renderCard(id){
+  const r=R.find(x=>x.id===id); if(r) return renderCardFlow(r);
+  const c=C.find(x=>x.id===id); if(!c) return '<p>Card não encontrado.</p>';
+  const canEdit = S.persona==='head'||S.persona==='analista';
+  const v=validCount(c), tot=SCHEMA.length;
+  const docHtml=clauses(c).map(cl=>`<section id="cl-${cl.n}"><h3>${cl.t}</h3>${cl.p.map(p=>`<p>${p}</p>`).join('')}</section>`).join('');
+  if(!['Ficha','Riscos','Prazos','Atividade'].includes(S.cpTab)) S.cpTab='Ficha';
+  let side='';
+  if(S.cpTab==='Ficha'){
+    let lastG='';
+    side=`<div class="progress"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span><b>${v} de ${tot}</b> campos verificados</span>${canEdit&&v<tot?`<button class="btn sm vio" data-act="validall" data-c="${c.id}">Verificar os ${tot-v} a conferir</button>`:''}</div><div class="bar" style="margin-top:6px"><i style="width:${v/tot*100}%"></i></div><div class="mono" style="margin-top:6px;text-transform:none;letter-spacing:0">Clique num campo para ver o trecho no documento. Reprocessar o contrato nunca sobrescreve um campo verificado.</div></div>`+
+    SCHEMA.map(f=>{
+      const p=c.prov[f.k]; const g = f.g!==lastG ? `<div class="fgrp">${f.g}</div>`:''; lastG=f.g;
+      const isEd=S.editing&&S.editing.id===c.id&&S.editing.k===f.k;
+      const prov = p.s==='ia'?`<span class="prov-ia">● IA · a conferir${f.cl?' · cl. '+(f.cl==='sig'?'assinaturas':f.cl):''}</span>`: p.s==='ok'?`<span class="prov-ok">✓ verificado · ${esc(p.by)} · ${esc(p.at)}</span>`: p.s==='flag'?`<span style="color:var(--err);font-size:11.5px">⚑ sinalizado · ${esc(p.by)}</span>`:`<span class="prov-ed" title="antes: ${esc(p.old)}">✎ editado · ${esc(p.by)} · ${esc(p.at)}</span>`;
+      return g+`<div class="field ${S.selField===f.k?'sel':''}" data-field="${f.k}"><span class="lbl">${f.l}</span><span class="val">${isEd?`<input data-editfield="${c.id}|${f.k}" value="${esc(c[f.k])}">`:esc(c[f.k]||'—')}</span><span class="prov">${prov}${canEdit?`<span class="acts">${p.s==='ia'||p.s==='flag'?`<button class="btn sm" data-validate="${f.k}">Verificar</button>`:''}${p.s!=='flag'?`<button class="btn sm ghost" data-flag="${f.k}" title="Algo está errado e precisa de outra pessoa">Sinalizar</button>`:''}<button class="btn sm ghost" data-editf="${f.k}">Editar</button></span>`:''}</span></div>`;
+    }).join('');
+  } else if(S.cpTab==='Riscos'){
+    side=risksOf(c).map(r=>`<div class="risk ${r.lvl==='alto'?'alto':r.lvl==='fav'?'fav':''}"><div style="display:flex;gap:6px;align-items:center"><span class="pill ${r.lvl==='alto'?'red':r.lvl==='fav'?'grn':'amb'}">${r.lvl==='alto'?'risco alto':r.lvl==='fav'?'favorável':'atenção'}</span><span class="mono">cl. ${r.cl}</span><div class="spacer"></div><button class="btn sm ghost" data-gocl="${r.cl.split(/[ .]/)[0]}">ver no documento</button></div><div style="margin-top:6px">${r.t}</div>${r.sug?`<div class="sug"><span class="mono">sugestão</span><br>${r.sug}</div>`:''}</div>`).join('');
+  } else if(S.cpTab==='Prazos'){
+    const nd=noticeDeadline(c);
+    const items=[{t:'Data limite do aviso prévio',d:nd,crit:true,alert:'D-90, D-60 (e-mail) · D-30, D-7 (e-mail + Slack)'},{t:(c.renovAuto==='Sim'?'Renovação automática':'Vencimento'),d:parseBR(c.vencimento),crit:true,alert:'no dia'},{t:c.obrig,d:new Date(2026,10,5),crit:false,alert:'recorrente · D-3'}];
+    side=items.map(i=>`<div class="row">${dBadge(days(i.d))}<div class="grow"><div class="t">${esc(i.t)}</div><div class="s">${fmt(i.d)} · alerta: ${i.alert} · para ${esc(c.resp)}</div></div><span class="pill ${i.crit?'red':'vio'}">${i.crit?'crítico':'recorrente'}</span></div>`).join('')+
+    `<div class="toolbar" style="margin-top:12px"><button class="btn sm" data-act="addprazo">+ prazo</button><button class="btn sm ghost" data-act="gcal">sincronizar Google Calendar</button></div>`;
+  } else {
+    side=activityHtml(c);
+  }
+  return cardHeader(c,true)+`
+  <div class="cp-head" style="margin-top:14px"><h1>${esc(c.contraparte)}</h1><span class="pill">${esc(c.tipo)}</span><span class="pill grn">vigente</span>${riskPill(c.risco)}${c.id==='kappa'?'<span class="pill vio">🔒 confidencial</span>':''}<div class="spacer"></div>
+    <button class="btn" data-act="share">Compartilhar</button><button class="btn" data-act="drive">Abrir no Drive</button></div>
+  <p class="sub" style="margin-top:-6px">${esc(c.nome)} · assinado em ${esc(c.assinatura)} · aviso até <b>${fmt(noticeDeadline(c))}</b> ${dBadge(days(noticeDeadline(c)))}</p>
+  <div class="cp"><article class="doc" id="doc">${docHtml}</article>
+  <aside class="side"><div class="tabs">${['Ficha','Riscos','Prazos','Atividade'].map(t=>`<button class="${S.cpTab===t?'on':''}" data-cptab="${t}">${t}${t==='Riscos'?` · ${risksOf(c).filter(r=>r.lvl!=='fav').length}`:t==='Atividade'?` · ${c.activity.length}`:''}</button>`).join('')}</div><div class="side-body">${side}</div></aside></div>`;
+}
+function highlight(k){
+  const doc=$('#doc'); if(!doc) return;
+  doc.querySelectorAll('mark').forEach(m=>{ m.replaceWith(...m.childNodes); });
+  const el=doc.querySelector(`[data-q="${k}"]`);
+  if(el){ const m=document.createElement('mark'); el.parentNode.insertBefore(m,el); m.appendChild(el); doc.scrollTo({top:m.offsetTop-doc.offsetTop-doc.clientHeight/3,behavior:'smooth'}); }
+  else { toast('Campo preenchido pelo Legal, sem cláusula de origem no documento.'); }
+}
+
+// ---------- Prazos ----------
+function renderPrazos(){
+  const list=prazosList(400);
+  const y=2026,m=10; const first=new Date(y,m,1); const start=(first.getDay()+6)%7; const dim=new Date(y,m+1,0).getDate();
+  const evs={}; C.forEach(c=>{ const d=noticeDeadline(c); if(d.getFullYear()===y&&d.getMonth()===m)(evs[d.getDate()]=evs[d.getDate()]||[]).push({t:'Aviso · '+c.contraparte.split(' ')[0],id:c.id,crit:true}); const v=parseBR(c.vencimento); if(v.getFullYear()===y&&v.getMonth()===m)(evs[v.getDate()]=evs[v.getDate()]||[]).push({t:(c.renovAuto==='Sim'?'Renova · ':'Vence · ')+c.contraparte.split(' ')[0],id:c.id,crit:false}); });
+  [5].forEach(d=>(evs[d]=evs[d]||[]).push({t:'Reporte mensal Austral',id:'austral',crit:false}));
+  let cells=''; for(let i=0;i<start;i++) cells+='<div class="dim"></div>'; for(let d=1;d<=dim;d++) cells+=`<div><span class="mono">${d}</span>${(evs[d]||[]).map(e=>`<span class="ev ${e.crit?'':'rec'}" data-go="#/card/${e.id}" style="cursor:pointer">${esc(e.t)}</span>`).join('')}</div>`;
+  return `<h1>Prazos</h1><p class="sub">Ordenado pela <b>data limite do aviso prévio</b> (vencimento menos o aviso), que é quando a decisão precisa ser tomada. Alertas: D-90 e D-60 por e-mail, D-30 e D-7 por e-mail e Slack, para o responsável.</p>
+  <div class="grid g-home"><section class="card"><div class="card-h"><h2>Exige decisão</h2><span class="mono">${list.length} contratos</span></div>${prazoRows(list)}</section>
+  <section class="card"><div class="card-h"><h2>Novembro 2026</h2><span class="mono">cheio = crítico · contorno = recorrente</span></div><div class="cal">${['seg','ter','qua','qui','sex','sáb','dom'].map(d=>`<span class="mono" style="text-align:center">${d}</span>`).join('')}${cells}</div>
+  <div class="toolbar" style="margin-top:10px"><button class="btn sm" data-act="gcal">sincronizar Google Calendar</button><button class="btn sm ghost" data-act="weekly">resumo semanal: segundas, 9h</button></div></section></div>`;
+}
+
+// ---------- Perguntar ----------
+function answer(q){
+  const t=q.toLowerCase();
+  const src=(c,cl,txt)=>({c,cl,txt});
+  let r;
+  const named=C.find(c=>t.includes(c.contraparte.split(' ')[0].toLowerCase()));
+  if(/controle/.test(t)){ const l=C.filter(c=>c.controle==='Sim'); r={a:`<b>${l.length} contratos</b> têm cláusula de alteração de controle. Os mais sensíveis são Trópico (autorização prévia + multa de R$ 500 mil) e Kappa (rescisão + multa).`,src:l.map(c=>src(c,'7.1',`dependerá de ${c.controleNotif.toLowerCase()}`)),chips:[{k:'controle',v:'Sim',l:'alteração de controle: sim'}]}; }
+  else if(/venc|90 dias|renova/.test(t)){ const l=prazosList(90); r={a:`<b>${l.length} contratos</b> têm a data limite do aviso nos próximos 90 dias. O primeiro é ${esc(l[0].c.contraparte)} (${fmt(l[0].d)}).`,src:l.map(x=>src(x.c,'3.1 / 5.1',`encerrando-se em ${x.c.vencimento} · aviso de ${x.c.aviso}`)),chips:[{k:'_d90',l:'aviso em até 90 dias'}]}; }
+  else if(/dados|lgpd/.test(t)){ const l=C.filter(c=>c.dados==='Sim'); r={a:`<b>${l.length} contratos</b> envolvem compartilhamento de dados pessoais. Em ${l.filter(c=>/Controlador/.test(c.agente)).length} a contraparte atua como controladora.`,src:l.map(c=>src(c,'8.1',`atuando a Contraparte como ${c.agente.toLowerCase()}`)),chips:[{k:'dados',v:'Sim',l:'compartilha dados: sim'}]}; }
+  else if(named){ const c=named; r={a:`Sim. Temos <b>${esc(c.nome)}</b> com ${esc(c.contraparte)}, assinado em ${esc(c.assinatura)}. Vence em <b>${esc(c.vencimento)}</b>${c.renovAuto==='Sim'?' com renovação automática':''}. O aviso prévio é de ${esc(c.aviso)}, então a decisão precisa sair até <b>${fmt(noticeDeadline(c))}</b>. Valor: ${esc(c.valor)}.`,src:[src(c,'3.1',`vigorará pelo prazo de ${c.vigencia}… encerrando-se em ${c.vencimento}`),src(c,'4.1',`será devido o valor de ${c.valor}`)],chips:null}; }
+  else r={a:'Não achei isso com citação nos contratos. Sem citação, eu não respondo. Tente reformular ou peça ao Legal pelo <b>Novo pedido</b>.',src:[],chips:null};
+  return r;
+}
+function renderAsk(){
+  const b=$('#askBody');
+  $('#askCount').textContent=`${C.length} contratos indexados`;
+  if(!S.asks.length){ b.innerHTML=`<div class="tabs" style="margin-bottom:6px">${['Todos os contratos','Visão atual','Cliente','Fornecedor'].map(sc=>`<button class="${(S.scope||'Todos os contratos')===sc?'on':''}" data-scope="${sc}">${sc}</button>`).join('')}</div><p class="s" style="color:var(--muted)">Pergunte em português. Toda resposta mostra o contrato e a cláusula de onde saiu.</p>${['Quais contratos têm mudança de controle?','O que vence nos próximos 90 dias?','Temos contrato com a Kappa? Quando vence?','Quais contratos compartilham dados pessoais?'].map(q=>`<button class="btn sm" style="margin:4px 4px 0 0" data-ask="${esc(q)}">${esc(q)}</button>`).join('')}`; return; }
+  const scopes=['Todos os contratos','Visão atual','Cliente','Fornecedor'];
+  b.innerHTML=`<div class="tabs" style="margin-bottom:6px">${scopes.map(sc=>`<button class="${(S.scope||scopes[0])===sc?'on':''}" data-scope="${sc}">${sc}</button>`).join('')}</div>`+S.asks.map((x,i)=>`<div class="msg-q">${esc(x.q)}</div><div class="msg-a">${x.r.a}${x.r.src.length?`<div class="mono" style="margin-top:8px">${x.r.src.length} fontes</div>${x.r.src.map(s=>`<div class="src" data-gosrc="${s.c.id}|${s.cl.split(/[ .]/)[0]}"><span class="mono">cl. ${esc(s.cl)}</span><div><b>${esc(s.c.contraparte)}</b><br><i>"…${esc(s.txt)}…"</i></div></div>`).join('')}`:''}${x.r.chips?`<div class="toolbar" style="margin-top:10px"><button class="btn sm vio" data-astable="${i}">Ver como tabela</button><button class="btn sm" data-ascol="${i}">Transformar em coluna</button><button class="btn sm" data-asexport="${i}">Exportar</button><button class="btn sm ghost" data-act="alerta">Criar alerta disso</button></div>`:''}</div>`).join('');
+  b.scrollTop=b.scrollHeight;
+}
+function ask(q){ S.asks.push({q,r:answer(q)}); open('drawer'); renderAsk(); }
+
+// ---------- open/close ----------
+function open(which){ $('#scrim').classList.add('on'); $('#'+which).classList.add('on'); if(which==='drawer'){ renderAsk(); setTimeout(()=>$('#askIn').focus(),50);} }
+function close(){ ['#scrim','#drawer','#modal'].forEach(s=>$(s).classList.remove('on')); }
+
+// ---------- router ----------
+function render(){
+  const [ , route='inicio', arg] = (location.hash||'#/inicio').split('/');
+  if(S.persona==='solicitante' && !['inicio','pedidos'].includes(route)) { go('#/inicio'); return; }
+  if(S.persona!=='solicitante' && route==='pedidos') { go('#/esteira'); return; }
+  renderNav(route);
+  const app=$('#app');
+  app.innerHTML = route==='pedidos'||route==='esteira'?renderEsteira(): route==='contratos'?renderContratos(): route==='card'?renderCard(arg): route==='prazos'?renderPrazos(): renderInicio();
+  const inp=app.querySelector('[data-editcell],[data-editfield]'); if(inp){ inp.focus(); inp.select(); }
+  if(route==='card' && S.selField) highlight(S.selField);
+}
+window.addEventListener('hashchange',()=>{ S.editing=null; const r=location.hash.split('/')[1]; if(r!=='card'){S.selField=null; S.cpTab='Ficha';} render(); window.scrollTo(0,0); });
+
+// ---------- eventos ----------
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-act],[data-go],[data-view],[data-rmchip],[data-filter],[data-eview],[data-etapa],[data-cptab],[data-field],[data-validate],[data-flag],[data-editf],[data-scope],[data-ascol],[data-ask],[data-gosrc],[data-astable],[data-asexport],[data-gocl],[data-close]');
+  if(!t) return;
+  const d=t.dataset;
+  if(d.close!==undefined){ close(); return; }
+  if(d.act){ e.stopPropagation(); return act(d.act,t); }
+  if(d.validate){ e.stopPropagation(); const c=curC(); c.prov[d.validate]={s:'ok',by:me().name,at:'20/10'}; c.activity.push({t:'ev',who:me().name,txt:`verificou "${SCHEMA.find(f=>f.k===d.validate).l}"`,at:'20/10 agora'}); render(); return; }
+  if(d.flag){ e.stopPropagation(); const c=curC(); c.prov[d.flag]={s:'flag',by:me().name,at:'20/10'}; c.activity.push({t:'cm',who:me().name,txt:`sinalizou "${SCHEMA.find(f=>f.k===d.flag).l}": @Fernanda confere este valor?`,at:'20/10 agora'}); toast('Campo sinalizado. Fica fora do "verificado" até alguém resolver.'); render(); return; }
+  if(d.editf){ e.stopPropagation(); S.editing={id:curC().id,k:d.editf}; render(); return; }
+  if(d.field){ if(e.target.tagName==='INPUT') return; S.selField=d.field; render(); return; }
+  if(d.view){ S.view=d.view; S.chips=[...VIEWS[d.view]]; S.q=''; render(); return; }
+  if(d.rmchip){ S.chips.splice(+d.rmchip,1); render(); return; }
+  if(d.filter){ S.inboxFilter=d.filter; render(); return; }
+  if(d.eview){ S.esteiraView=d.eview; render(); return; }
+  if(d.etapa){ const r=curCard(); moveEtapa(r,d.etapa); return; }
+  if(d.scope){ S.scope=d.scope; renderAsk(); return; }
+  if(d.ascol){ const x=S.asks[+d.ascol]; addCol(x.q,'texto'); close(); S.chips=[]; S.view='Todos'; go('#/contratos'); render(); toast('Coluna criada. A IA respondeu para cada contrato; as células ficam "a conferir".'); return; }
+  if(d.cptab){ S.cpTab=d.cptab; S.editing=null; render(); return; }
+  if(d.ask){ ask(d.ask); return; }
+  if(d.gosrc){ const [id,cl]=d.gosrc.split('|'); close(); S.cpTab='Ficha'; const f=SCHEMA.find(f=>f.cl===cl); S.selField=f?f.k:null; go('#/card/'+id); return; }
+  if(d.gocl){ const f=SCHEMA.find(f=>f.cl===d.gocl); S.cpTab='Ficha'; S.selField=f?f.k:null; render(); return; }
+  if(d.astable){ const x=S.asks[+d.astable]; S.chips=[...x.r.chips]; S.view=''; close(); go('#/contratos'); render(); return; }
+  if(d.asexport){ const x=S.asks[+d.asexport]; S.chips=[...x.r.chips]; exportCSV(); return; }
+  if(d.go){ if(e.target.closest('button,select,input')&&!t.matches('button')) return; go(d.go); return; }
+});
+document.addEventListener('dblclick',e=>{ const t=e.target.closest('[data-dbl]'); if(!t) return; const [id,k]=t.dataset.dbl.split('|'); S.editing={id,k}; render(); });
+document.addEventListener('keydown',e=>{
+  const inp=e.target.closest('[data-editcell],[data-editfield]');
+  if(inp){ if(e.key==='Enter'){ const [id,k]=(inp.dataset.editcell||inp.dataset.editfield).split('|'); const c=C.find(x=>x.id===id); const old=c[k]; if(inp.value!==old){ c[k]=inp.value; c.prov[k]={s:'ed',by:me().name,at:'20/10',old}; c.activity.push({t:'ev',who:me().name,txt:`editou "${(SCHEMA.find(f=>f.k===k)||{l:k}).l}": ${old} → ${inp.value}`,at:'20/10 agora'}); toast('Salvo. A mudança fica na atividade do contrato.'); } S.editing=null; render(); } if(e.key==='Escape'){ S.editing=null; render(); } return; }
+  if(e.key==='?' && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)){ e.preventDefault(); open('drawer'); }
+  if(e.key==='Escape') close();
+});
+document.addEventListener('change',e=>{
+  const t=e.target;
+  if(t.id==='persona'){ S.persona=t.value; try{localStorage.setItem('mike-proto-persona',t.value);}catch(_){} S.chips=[]; S.view='Todos'; go('#/inicio'); render(); toast('Agora você vê como '+me().full+' ('+me().role+').'); }
+  if(t.dataset.task){ const r=curCard(); const k=t.dataset.task; const label={prog:'Progresso',resp:'Responsável',prio:'Prioridade',prazo:'Prazo'}[k]; r[k]=t.value||null; if(k==='prog'&&t.value==='Bloqueado') r.bloqueio=prompt('O que está bloqueando?','Aguardando o solicitante')||'Bloqueado'; r.activity.push({t:'ev',who:me().name,txt:`mudou ${label} para ${k==='prazo'?isoBR(t.value):t.value||'—'}`,at:'20/10 agora'}); toast(`${label} atualizado. Espelhado no Notion${r.sol&&k==='prog'?' e avisado a '+r.sol+' no Slack':''}.`); render(); }
+});
+document.addEventListener('submit',e=>{
+  e.preventDefault();
+  if(e.target.id==='nlForm'){ S.q=$('#nlIn').value; S.chips=nlToChips(S.q); S.view=''; render(); }
+  if(e.target.id==='askForm'){ const q=$('#askIn').value.trim(); if(q){ $('#askIn').value=''; ask(q);} }
+  if(e.target.id==='founderAsk'){ const q=$('#founderIn').value.trim(); if(q) ask(q); }
+  if(e.target.id==='cmForm'){ const v=$('#cmIn').value.trim(); if(!v) return; const c=curCard(); c.activity.push({t:'cm',who:me().name,txt:v,at:'20/10 agora'}); const ms=[...v.matchAll(/@(\p{L}+)/gu)].map(m=>m[1]); render(); if(ms.length) toast('Notificação enviada para '+ms.join(', ')+' no Slack e por e-mail.'); }
+});
+$('#scrim').onclick=close; $('#askOpen').onclick=()=>open('drawer'); $('#askClose').onclick=close;
+function curC(){ const id=location.hash.split('/')[2]; return C.find(c=>c.id===id); }
+function curCard(){ const id=location.hash.split('/')[2]; return R.find(r=>r.id===id)||C.find(c=>c.id===id); }
+function moveEtapa(r,k){ if(!r||r.etapa===k) return; const from=LANE[r.etapa]; r.etapa=k; if(k==='arquivado'){ r.prog='Concluído'; } else if(r.prog==='A fazer'&&k!=='entrada') r.prog='Em andamento'; r.activity.push({t:'ev',who:me().name,txt:`moveu de ${from} para ${LANE[k]}`,at:'20/10 agora'}); toast(`Etapa: ${LANE[k]}. ${r.sol?r.sol+' vê o novo passo no Slack. ':''}Espelhado no Notion.`); render(); }
+// arrastar card entre etapas
+document.addEventListener('dragstart',e=>{ const t=e.target.closest('[data-drag]'); if(t) e.dataTransfer.setData('text/plain',t.dataset.drag); });
+document.addEventListener('dragover',e=>{ if(e.target.closest('[data-lane]')) e.preventDefault(); });
+document.addEventListener('drop',e=>{ const l=e.target.closest('[data-lane]'); if(!l) return; e.preventDefault(); const r=R.find(x=>x.id===e.dataTransfer.getData('text/plain')); moveEtapa(r,l.dataset.lane); });
+function act(a,t){
+  const d=t.dataset;
+  if(a==='renovar'||a==='adiar'){ S.done.add(d.k); toast(a==='renovar'?'Renovação registrada. O alerta foi fechado e a decisão está na atividade do card.':'Lembrete adiado por 7 dias.'); render(); return; }
+  if(a==='encerrar'||a==='renegociar'){ const c=C.find(x=>'renov-'+x.id===d.k); confirmAct(a==='encerrar'?'Não renovar · '+c.contraparte:'Renegociar · '+c.contraparte,[a==='encerrar'?`Gerar a minuta de notificação de não renovação (aviso de ${esc(c.aviso)}, cl. 5.1) para ${esc(c.resp)} revisar`:`Abrir um card na Entrada da esteira ligado a este contrato, com ${esc(c.resp)} como responsável`,'Registrar a decisão na atividade do contrato','Avisar a área responsável ('+esc(c.area)+') no Slack'],()=>{ S.done.add(d.k); if(a==='renegociar'){ R.unshift({id:'P-'+(130+R.length),titulo:'Renegociação · '+c.contraparte.split(' ')[0],tipo:c.tipo,contraparte:c.contraparte,sol:me().name,areaSol:'Legal',canal:'Prazos',criado:'20/10 agora',slaH:120,usadoH:0,resp:c.resp,etapa:'entrada',prog:'A fazer',prio:'Alta',prazo:'',ctx:'Renegociar antes da renovação.',contractId:c.id,triagem:{tipo:'Renegociação',risco:c.risco,playbook:'—',nota:'Aberto a partir do alerta de renovação.'},thread:[],activity:[{t:'ev',who:me().name,txt:'abriu a partir do alerta de renovação',at:'20/10 agora'}]}); } toast(a==='encerrar'?'Minuta de não renovação gerada para revisão.':'Card de renegociação criado na Entrada.'); render(); }); return; }
+  if(a==='atribuir'){ const r=R.find(x=>x.id===d.r); r.resp='Duda'; r.activity.push({t:'ev',who:me().name,txt:'atribuiu a Duda',at:'20/10 agora'}); toast('Atribuído a Duda. '+r.sol+' foi avisado no Slack.'); render(); return; }
+  if(a==='assumir'){ const r=R.find(x=>x.id===d.r); r.resp=me().name; if(r.etapa==='entrada') r.etapa='triagem'; r.prog='Em andamento'; r.activity.push({t:'ev',who:me().name,txt:'assumiu o card',at:'20/10 agora'}); toast('Card é seu e foi para a Triagem. '+r.sol+' foi avisado no Slack.'); render(); return; }
+  if(a==='avancar'){ moveEtapa(R.find(x=>x.id===d.r),'revisao'); return; }
+  if(a==='pedirinfo'){ const r=R.find(x=>x.id===d.r); confirmAct('Pedir informação a '+r.sol,[`Postar na ${r.thread.length?'thread do Slack':'DM do Slack'} de ${esc(r.sol)}: "O que falta para seguirmos com ${esc(r.titulo)}?"`,'Marcar o card como Bloqueado (o SLA fica pausado)','Voltar o card para Em andamento quando ele responder'],()=>{ r.prog='Bloqueado'; r.bloqueio='Aguardando '+r.sol; r.activity.push({t:'ev',who:me().name,txt:'pediu informação a '+r.sol,at:'20/10 agora'}); toast('Pergunta enviada. Card bloqueado até a resposta.'); render(); }); return; }
+  if(a==='aprovar'){ const r=R.find(x=>x.id===d.r); confirmAct('Aprovar NDA padrão',[`Gerar o NDA padrão Avenia v3 com os dados de ${esc(r.contraparte)}`,`Enviar a minuta para ${esc(r.sol)} na thread do Slack`,'Mover o card para Assinatura'],()=>{ r.resp=r.resp||me().name; r.etapa='assinatura'; r.prog='Em andamento'; r.activity.push({t:'ev',who:me().name,txt:'aprovou o NDA padrão e moveu para Assinatura',at:'20/10 agora'}); toast('NDA aprovado. Minuta enviada para '+r.sol+'.'); render(); }); return; }
+  if(a==='addcol'){ const q=prompt('Pergunta que vira coluna (roda em todos os contratos):','Qual é o foro?'); if(q){ addCol(q,'texto'); render(); toast('Coluna criada. As respostas da IA ficam "a conferir".'); } return; }
+  if(a==='notion'){ toast('No produto, abre o card no board "Pipeline · Mike" do Notion.'); return; }
+  if(a==='novo'){ openNovoPedido(); return; }
+  if(a==='export'){ exportCSV(); return; }
+  if(a==='clearchips'){ S.chips=[]; S.q=''; S.view='Todos'; render(); return; }
+  if(a==='saveview'){ const n='Minha visão '+(Object.keys(VIEWS).length-5); VIEWS[n]=[...S.chips]; S.view=n; toast('Visão salva: '+n); render(); return; }
+  if(a==='validall'){ const c=C.find(x=>x.id===d.c); let n=0; SCHEMA.forEach(f=>{ if(c.prov[f.k].s==='ia'){ c.prov[f.k]={s:'ok',by:me().name,at:'20/10'}; n++; } }); c.activity.push({t:'ev',who:me().name,txt:`verificou ${n} campos em lote`,at:'20/10 agora'}); toast(n+' campos verificados.'); render(); return; }
+  if(a==='share'){ const m=$('#modal'); m.innerHTML=`<div class="card-h"><h2 style="font-size:18px">Compartilhar contrato</h2><button class="btn ghost" data-close>✕</button></div><label class="mono">Pessoa</label><input class="in" placeholder="nome@avenia.io"><label class="mono">Pode</label><div class="opt"><button class="on">ver</button><button>comentar</button><button>editar</button></div><label style="display:flex;gap:8px;align-items:center;margin-bottom:14px"><input type="checkbox"> Confidencial: só o Admin Legal e as pessoas listadas veem (inclusive no Perguntar)</label><div class="mono">Quem tem acesso</div>${['Fernanda · Admin Legal','Duda · Legal (responsável)','Téo · Legal','Bruno · Leitor'].map(x=>`<div class="row">${x}</div>`).join('')}<div class="toolbar"><div class="spacer"></div><button class="btn pri" data-close>Pronto</button></div>`; open('modal'); m.querySelector('.opt').onclick=e=>{ if(e.target.tagName==='BUTTON') m.querySelectorAll('.opt button').forEach(b=>b.classList.toggle('on',b===e.target)); }; return; }
+  if(a==='drive'){ toast('No produto, abre o PDF assinado no Drive do Legal.'); return; }
+  if(a==='addprazo'){ toast('No produto: título, data, recorrência e dono. A IA sugere a partir do contrato.'); return; }
+  if(a==='gcal'){ toast('Prazos sincronizados com o Google Calendar do responsável.'); return; }
+  if(a==='weekly'){ toast('A Head recebe toda segunda às 9h o resumo dos próximos 90 dias.'); return; }
+  if(a==='alerta'){ toast('Alerta criado: você é avisado quando um contrato novo entrar nesse filtro.'); return; }
+}
+
+$('#persona').value=S.persona;
+render();
+</script>
+</body>
+</html>

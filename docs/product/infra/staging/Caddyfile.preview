@@ -1,0 +1,16 @@
+# RASCUNHO — Caddy de prévias na VM mike-staging (container mike-preview-caddy,
+# rede mike-edge). Não executado.
+#
+# TLS fica no Cloudflare (o tunnel entrega HTTP aqui), então só HTTP e sem ACME.
+# Cada stack registra o seu host em sites/<projeto>.caddy (preview-up.sh).
+{
+	auto_https off
+	admin localhost:2019
+}
+
+import /etc/caddy/sites/*.caddy
+
+# Host desconhecido (prévia já removida): página simples em vez de erro do tunnel.
+http:// {
+	respond "Esta prévia não existe mais (PR fechado ou expirada)." 404
+}

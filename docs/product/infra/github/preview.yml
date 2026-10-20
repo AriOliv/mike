@@ -1,0 +1,114 @@
+# RASCUNHO — .github/workflows/preview.yml no fork AriOliv/mike. Não executado.
+#
+# PR aberto/atualizado → builda backend + frontend (frontend com as URLs da prévia
+# embutidas, porque NEXT_PUBLIC_* entra no build) → push no Artifact Registry →
+# sobe a stack mike-pr-<n> na VM mike-staging via IAP SSH → comenta a URL no PR.
+# PR fechado → derruba a stack e apaga os volumes DESSA prévia (nunca de prod:
+# a VM de prod não é alvo deste workflow em nenhum caminho).
+#
+# Só roda para PRs do próprio repo (não de forks externos), porque usa WIF.
+name: preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed, labeled]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write        # WIF
+  pull-requests: write   # comentário com a URL
+
+env:
+  PR: ${{ github.event.pull_request.number }}
+  SHA: ${{ github.event.pull_request.head.sha }}
+  HOST: pr-${{ github.event.pull_request.number }}.preview.clm.avenia.tech
+  REGISTRY: ${{ vars.AR_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/${{ vars.AR_REPO }}
+
+jobs:
+  up:
+    if: >
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'no-preview')
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ env.SHA }}" }
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker ${{ vars.AR_REGION }}-docker.pkg.dev --quiet
+
+      - name: build + push backend (mesma imagem serve staging/prévias)
+        run: |
+          docker build -t "$REGISTRY/mike-backend:$SHA" backend
+          docker push "$REGISTRY/mike-backend:$SHA"
+
+      - name: build + push frontend da prévia (URLs embutidas no build)
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL="https://$HOST/supabase" \
+            --build-arg NEXT_PUBLIC_API_BASE_URL="https://$HOST/api" \
+            --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY="${{ vars.PREVIEW_PUBLISHABLE_KEY }}" \
+            --build-arg NEXT_PUBLIC_FEEDBACK_ENABLED=true \
+            --build-arg NEXT_PUBLIC_ENV_LABEL="pr-$PR" \
+            --build-arg NEXT_PUBLIC_BUILD_SHA="$SHA" \
+            -t "$REGISTRY/mike-frontend:pr-$PR-$SHA" frontend
+          docker push "$REGISTRY/mike-frontend:pr-$PR-$SHA"
+
+      - name: subir stack na VM de staging (IAP)
+        run: |
+          gcloud compute ssh "${{ vars.STAGING_VM }}" --zone "${{ vars.STAGING_ZONE }}" \
+            --tunnel-through-iap --quiet --command \
+            "sudo /opt/mike-preview/preview-up.sh '$PR' '$REGISTRY/mike-backend:$SHA' '$REGISTRY/mike-frontend:pr-$PR-$SHA' '$SHA'"
+
+      - name: smoke
+        # A prévia fica atrás do Cloudflare Access; o smoke usa um service token
+        # do Access (CF_ACCESS_CLIENT_ID/SECRET) só com permissão nos hosts *.preview.
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              -H "CF-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}" \
+              -H "CF-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}" \
+              "https://$HOST/api/health") && [ "$code" = 200 ] && exit 0
+            sleep 5
+          done
+          echo "prévia não respondeu /api/health"; exit 1
+
+      - name: comentar URL no PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- mike-preview -->';
+            const body = `${marker}\n**Prévia:** https://${process.env.HOST}\n` +
+              `Login: \`legal.demo@avenia.io\` (senha com o Ari). Dados 100% sintéticos.\n` +
+              `Build \`${process.env.SHA.slice(0, 7)}\` · expira 7 dias após o último push.\n` +
+              `Feedback: botão **Dar feedback** dentro da prévia (vira issue ligada a este PR).`;
+            const { owner, repo } = context.repo;
+            const issue_number = Number(process.env.PR);
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const mine = comments.find(c => c.body?.includes(marker));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+  down:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud compute ssh "${{ vars.STAGING_VM }}" --zone "${{ vars.STAGING_ZONE }}" \
+            --tunnel-through-iap --quiet --command "sudo /opt/mike-preview/preview-down.sh '$PR'"
