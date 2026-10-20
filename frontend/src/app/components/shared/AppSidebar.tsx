@@ -59,6 +59,7 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
+import { DEFAULT_HOME } from "@/app/lib/authRedirects";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -73,9 +74,10 @@ import {
 } from "@/app/components/ui/liquid-surface";
 
 /** Where a workspace opens: the page the logo leads to. */
-const WORKSPACE_HOME = "/assistant";
+const WORKSPACE_HOME = DEFAULT_HOME;
 
 const NAV_ITEMS = [
+    { href: DEFAULT_HOME, label: "Início", icon: TabularReviewSkeuoIcon },
     { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
     { href: "/ide", label: "IDE", icon: IdeSkeuoIcon },
     { href: "/pipeline", label: "Pipeline", icon: FolderSkeuoIcon },
@@ -507,7 +509,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     {isOpen && (
                         <div className="min-w-0 flex-1 px-1.5">
                             <Link
-                                href="/assistant"
+                                href={WORKSPACE_HOME}
                                 className="flex min-w-0 items-center gap-1.5 hover:opacity-80 transition-opacity"
                             >
                                 <span className="flex shrink-0 px-px">

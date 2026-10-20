@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_HOME } from "@/app/lib/authRedirects";
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -121,9 +122,9 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
 
 function safeNextPath(value: string | null) {
     if (!value || !value.startsWith("/") || value.startsWith("//")) {
-        return "/assistant";
+        return DEFAULT_HOME;
     }
-    if (value.startsWith("/verify-mfa")) return "/assistant";
+    if (value.startsWith("/verify-mfa")) return DEFAULT_HOME;
     return value;
 }
 
