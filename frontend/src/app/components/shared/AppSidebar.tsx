@@ -80,6 +80,8 @@ const NAV_ITEMS = [
     { href: "/ide", label: "IDE", icon: IdeSkeuoIcon },
     { href: "/pipeline", label: "Pipeline", icon: FolderSkeuoIcon },
     { href: "/radar", label: "Radar", icon: WorkflowSkeuoIcon },
+    { href: "/radar-regulatorio", label: "Radar regulatório", icon: WorkflowSkeuoIcon },
+    { href: "/painel", label: "Painel do Legal", icon: TabularReviewSkeuoIcon },
     { href: "/acervo", label: "Acervo", icon: LibrarySkeuoIcon },
     { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
     { href: "/library", label: "Library", icon: LibrarySkeuoIcon },

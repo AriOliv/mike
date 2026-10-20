@@ -4737,3 +4737,238 @@ export async function updateObligation(
 export async function deleteObligation(id: string): Promise<void> {
     await apiRequest(`/obligations/${id}`, { method: "DELETE" });
 }
+
+// ── Regulatory radar ("Radar regulatório") ──────────────────────────────────
+export type RegulatorySourceId = "bcb_normativos" | "dou" | "cvm_noticias" | "rfb_noticias";
+export type RegulatoryTopic = "psp" | "cripto" | "cambio" | "lgpd" | "pld";
+export type RegulatoryImpact = "alto" | "medio" | "baixo";
+export type RegulatoryChangeStatus = "nova" | "lida" | "arquivada";
+export type RegulatoryTab = "todas" | "nao_lidas" | "favoritas" | "arquivadas";
+
+export interface RegulatoryPreset {
+    key: string;
+    name: string;
+    description: string;
+    sources: RegulatorySourceId[];
+    issuers: string[];
+    keywords: string[];
+    topics: RegulatoryTopic[];
+}
+
+export interface RegulatoryCatalog {
+    presets: RegulatoryPreset[];
+    sources: { id: RegulatorySourceId; label: string }[];
+    topics: RegulatoryTopic[];
+}
+
+export interface RegulatoryScan {
+    id: string;
+    user_id: string | null;
+    org_id: string | null;
+    name: string;
+    preset: string | null;
+    sources: RegulatorySourceId[];
+    issuers: string[];
+    keywords: string[];
+    topics: RegulatoryTopic[];
+    enabled: boolean;
+    last_run_at: string | null;
+    last_error: string | null;
+    created_at: string;
+    counts: { novas: number; abertas: number; alto: number };
+}
+
+export interface RegulatoryAffectedContract {
+    project_id: string;
+    name: string;
+    counterparty: string | null;
+    term: string;
+    quote: string;
+}
+
+export interface RegulatoryChange {
+    id: string;
+    scan_id: string;
+    source: RegulatorySourceId;
+    title: string;
+    act_type: string | null;
+    issuer: string | null;
+    published_at: string | null;
+    url: string | null;
+    excerpt: string | null;
+    summary: string | null;
+    summary_quote: string | null;
+    impact: RegulatoryImpact;
+    impact_reason: string | null;
+    effective_date: string | null;
+    topics: RegulatoryTopic[];
+    matched_terms: string[];
+    affected: RegulatoryAffectedContract[];
+    affected_hidden: number;
+    suggested_action: string | null;
+    status: RegulatoryChangeStatus;
+    starred: boolean;
+    request_project_id: string | null;
+    obligation_id: string | null;
+    decided_by: string | null;
+    decided_at: string | null;
+    created_at: string;
+}
+
+export interface RegulatoryChangeList {
+    changes: RegulatoryChange[];
+    tabs: Record<RegulatoryTab, number>;
+}
+
+export async function getRegulatoryCatalog(): Promise<RegulatoryCatalog> {
+    return apiRequest("/regulatory/presets");
+}
+
+export async function listRegulatoryScans(): Promise<RegulatoryScan[]> {
+    return apiRequest("/regulatory/scans");
+}
+
+export async function createRegulatoryScan(body: {
+    preset?: string;
+    name?: string;
+    org_id?: string | null;
+    sources?: RegulatorySourceId[];
+    issuers?: string[];
+    keywords?: string[];
+    topics?: RegulatoryTopic[];
+}): Promise<RegulatoryScan> {
+    return apiRequest("/regulatory/scans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export async function updateRegulatoryScan(
+    id: string,
+    patch: { name?: string; enabled?: boolean; keywords?: string[] },
+): Promise<RegulatoryScan> {
+    return apiRequest(`/regulatory/scans/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+    });
+}
+
+export async function deleteRegulatoryScan(id: string): Promise<void> {
+    return apiRequest(`/regulatory/scans/${id}`, { method: "DELETE" });
+}
+
+export async function runRegulatoryScan(id: string): Promise<{ queued: boolean }> {
+    return apiRequest(`/regulatory/scans/${id}/run`, { method: "POST" });
+}
+
+export async function listRegulatoryChanges(params?: {
+    scanId?: string | null;
+    tab?: RegulatoryTab;
+    q?: string;
+}): Promise<RegulatoryChangeList> {
+    const qs = new URLSearchParams();
+    if (params?.scanId) qs.set("scan_id", params.scanId);
+    if (params?.tab) qs.set("tab", params.tab);
+    if (params?.q) qs.set("q", params.q);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiRequest(`/regulatory/changes${suffix}`);
+}
+
+export async function updateRegulatoryChange(
+    id: string,
+    patch: { status?: RegulatoryChangeStatus; starred?: boolean },
+): Promise<RegulatoryChange> {
+    return apiRequest(`/regulatory/changes/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+    });
+}
+
+/** "Criar pedido": a card on the pipeline's Entrada lane carrying the change. */
+export async function createRequestFromRegulatoryChange(
+    id: string,
+    body: { assignee_email?: string | null } = {},
+): Promise<{ project_id: string; change: RegulatoryChange }> {
+    return apiRequest(`/regulatory/changes/${id}/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+/** "Criar obrigação": the date the rule takes effect, on the deadline radar. */
+export async function createObligationFromRegulatoryChange(
+    id: string,
+    body: { due_date?: string } = {},
+): Promise<{ obligation_id: string; change: RegulatoryChange }> {
+    return apiRequest(`/regulatory/changes/${id}/obligation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+// ── Legal dashboard ("Painel do Legal") ─────────────────────────────────────
+export interface DashboardAssumptions {
+    minutes_per_review: number;
+    minutes_per_terms: number;
+    minutes_per_regulatory_triage: number;
+}
+
+export interface LegalDashboard {
+    period_days: number;
+    generated_at: string;
+    volume: {
+        opened: number;
+        closed: number;
+        open: number;
+        weekly: { week: string; opened: number; closed: number }[];
+        by_type: { label: string; count: number }[];
+        by_requester: { label: string; count: number }[];
+    };
+    cycle: {
+        median_days_to_close: number | null;
+        closed_measured: number;
+        stage_age: { lane: PipelineLane; open: number; median_days: number | null }[];
+        per_stage_history: { lane: PipelineLane; moves: number; median_days: number | null }[];
+        per_stage_moves: number;
+    };
+    sla: { closed_with_deadline: number; on_time: number; rate: number | null; open_overdue: number };
+    notice: { due_in_30_days: number; missed_in_period: number };
+    agents: {
+        contracts_reviewed_by_agents: number;
+        contracts_reviewed_by_people: number;
+        playbook_runs: number;
+        terms_extracted: number;
+        regulatory_changes_triaged: number;
+        regulatory_turned_into_work: number;
+    };
+    hours_saved: { hours: number; assumptions: DashboardAssumptions; formula: string };
+    adoption: {
+        people: { email: string; assigned_open: number; closed: number; reviews_run: number }[];
+        reviews_by_user_id: { user_id: string; count: number }[];
+    };
+    ai_cost: {
+        total_usd: number;
+        runs: number;
+        per_contract_usd: number;
+        by_agent: { agent: string; usd: number }[];
+    } | null;
+}
+
+export async function getLegalDashboard(params?: {
+    period?: 30 | 90 | 365;
+    assumptions?: Partial<DashboardAssumptions>;
+}): Promise<LegalDashboard> {
+    const qs = new URLSearchParams();
+    if (params?.period) qs.set("period", String(params.period));
+    const a = params?.assumptions;
+    if (a?.minutes_per_review) qs.set("min_review", String(a.minutes_per_review));
+    if (a?.minutes_per_terms) qs.set("min_terms", String(a.minutes_per_terms));
+    if (a?.minutes_per_regulatory_triage) qs.set("min_regulatory", String(a.minutes_per_regulatory_triage));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiRequest(`/dashboard${suffix}`);
+}
