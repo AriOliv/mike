@@ -8,6 +8,7 @@ import {
     useMemo,
     useCallback,
     useRef,
+    type ReactElement,
     type UIEvent,
 } from "react";
 import {
@@ -59,6 +60,13 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
+import {
+    NAV_MAIN,
+    NAV_MORE,
+    isNavItemActive,
+    type NavIconKey,
+    type NavItem,
+} from "@/app/lib/navItems";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -75,23 +83,15 @@ import {
 /** Where a workspace opens: the page the logo leads to. */
 const WORKSPACE_HOME = "/assistant";
 
-const NAV_ITEMS = [
-    { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
-    { href: "/ide", label: "IDE", icon: IdeSkeuoIcon },
-    { href: "/pedidos", label: "Pedidos", icon: ChatSkeuoIcon },
-    { href: "/pipeline", label: "Pipeline", icon: FolderSkeuoIcon },
-    { href: "/radar", label: "Radar", icon: WorkflowSkeuoIcon },
-    { href: "/acervo", label: "Acervo", icon: LibrarySkeuoIcon },
-    { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
-    { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
-    {
-        href: "/tabular-reviews",
-        label: "Tabular Review",
-        icon: TabularReviewSkeuoIcon,
-    },
-    { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
-    { href: "/playbooks", label: "Playbooks", icon: PlaybookSkeuoIcon },
-];
+const NAV_ICONS: Record<NavIconKey, (props: { className?: string }) => ReactElement> = {
+    chat: ChatSkeuoIcon,
+    ide: IdeSkeuoIcon,
+    folder: FolderSkeuoIcon,
+    library: LibrarySkeuoIcon,
+    tabular: TabularReviewSkeuoIcon,
+    workflow: WorkflowSkeuoIcon,
+    playbook: PlaybookSkeuoIcon,
+};
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
 const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44";
@@ -573,49 +573,37 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
                     {/* Nav items */}
                     <div className="pt-1.5">
-                        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-                            const isActive =
-                                href === "/assistant"
-                                    ? pathname === href
-                                    : href === "/projects"
-                                      ? pathname === href
-                                      : pathname === href ||
-                                        pathname.startsWith(href + "/");
-                            return (
-                                <div key={href} className="px-1.5 py-0.5">
-                                    <button
-                                        onClick={() => router.push(href)}
-                                        title={!isOpen ? label : ""}
-                                        className={cn(
-                                            "w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
-                                            isActive
-                                                ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
-                                                : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
-                                            !isOpen ? "hidden md:flex" : "flex",
-                                        )}
-                                    >
-                                        <Icon
-                                            className={`h-4 w-4 flex-shrink-0 ${
-                                                isActive
-                                                    ? "text-gray-900"
-                                                    : "text-black"
-                                            }`}
-                                        />
-                                        {isOpen && (
-                                            <span
-                                                className={`text-sm font-medium ${
-                                                    shouldAnimate
-                                                        ? "sidebar-fade-in-2"
-                                                        : ""
-                                                }`}
-                                            >
-                                                {label}
-                                            </span>
-                                        )}
-                                    </button>
-                                </div>
-                            );
-                        })}
+                        {NAV_MAIN.map((item) => (
+                            <NavButton
+                                key={item.href}
+                                item={item}
+                                active={isNavItemActive(item, pathname)}
+                                isOpen={isOpen}
+                                animate={shouldAnimate}
+                                onNavigate={() => router.push(item.href)}
+                            />
+                        ))}
+                        {isOpen ? (
+                            <p
+                                className={`mt-3 mb-1 px-3.5 text-xs font-semibold text-gray-500 ${
+                                    shouldAnimate ? "sidebar-fade-in" : ""
+                                }`}
+                            >
+                                Mais
+                            </p>
+                        ) : (
+                            <div aria-hidden="true" className="mx-3 my-2 hidden border-t border-gray-200 md:block" />
+                        )}
+                        {NAV_MORE.map((item) => (
+                            <NavButton
+                                key={item.href}
+                                item={item}
+                                active={isNavItemActive(item, pathname)}
+                                isOpen={isOpen}
+                                animate={shouldAnimate}
+                                onNavigate={() => router.push(item.href)}
+                            />
+                        ))}
                     </div>
 
                     {isOpen && (
@@ -1041,5 +1029,53 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 </div>
             </div>
         </>
+    );
+}
+
+/** One sidebar navigation row; only the label hides when the sidebar is closed. */
+function NavButton({
+    item,
+    active,
+    isOpen,
+    animate,
+    onNavigate,
+}: {
+    item: NavItem;
+    active: boolean;
+    isOpen: boolean;
+    animate: boolean;
+    onNavigate: () => void;
+}) {
+    const Icon = NAV_ICONS[item.icon];
+    return (
+        <div className="px-1.5 py-0.5">
+            <button
+                onClick={onNavigate}
+                title={!isOpen ? item.label : ""}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                    "w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
+                    active
+                        ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
+                        : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
+                    !isOpen ? "hidden md:flex" : "flex",
+                )}
+            >
+                <Icon
+                    className={`h-4 w-4 flex-shrink-0 ${
+                        active ? "text-gray-900" : "text-black"
+                    }`}
+                />
+                {isOpen && (
+                    <span
+                        className={`text-sm font-medium ${
+                            animate ? "sidebar-fade-in-2" : ""
+                        }`}
+                    >
+                        {item.label}
+                    </span>
+                )}
+            </button>
+        </div>
     );
 }
