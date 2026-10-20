@@ -14,28 +14,42 @@ const {
     requireMfaIfEnrolled,
     getUserApiKeyStatus,
     saveUserApiKey,
+    updateUserApiKeySettings,
     hasEnvApiKey,
     normalizeApiKeyProvider,
     deleteAllUserChats,
     deleteAllUserTabularReviews,
+    deleteUserPrivateMemories,
     deleteUserAccountData,
     deleteUserProjects,
+    listOrgsBlockingAccountDeletion,
     buildUserAccountExport,
     buildUserChatsExport,
     buildUserTabularReviewsExport,
+    supabaseRpc,
+    adminSignOut,
+    adminDeleteUser,
+    dbJobsEnabled,
 } = vi.hoisted(() => ({
     requireMfaIfEnrolled: vi.fn(),
     getUserApiKeyStatus: vi.fn(),
     saveUserApiKey: vi.fn(),
+    updateUserApiKeySettings: vi.fn(),
     hasEnvApiKey: vi.fn(),
     normalizeApiKeyProvider: vi.fn(),
     deleteAllUserChats: vi.fn(),
     deleteAllUserTabularReviews: vi.fn(),
+    deleteUserPrivateMemories: vi.fn(),
     deleteUserAccountData: vi.fn(),
     deleteUserProjects: vi.fn(),
+    listOrgsBlockingAccountDeletion: vi.fn(),
     buildUserAccountExport: vi.fn(),
     buildUserChatsExport: vi.fn(),
     buildUserTabularReviewsExport: vi.fn(),
+    supabaseRpc: vi.fn(),
+    adminSignOut: vi.fn(),
+    adminDeleteUser: vi.fn(),
+    dbJobsEnabled: vi.fn(() => true),
 }));
 
 // ---------------------------------------------------------------------------
@@ -46,8 +60,20 @@ const {
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
+// A table entry may be a queue of results: each query consumes the next one,
+// and the last repeats. Lets tests drive the selectProfile fallback cascade
+// (first select fails with 42703, the retry succeeds).
 let supabaseState: {
-    tables: Record<string, QueryResult>;
+    tables: Record<string, QueryResult | QueryResult[]>;
+    updates: Record<string, unknown[]>;
+    inserts: Record<string, unknown[]>;
+    // Every column list a route asked for, per table, in order. The
+    // deploy-before-migrate cascade is only correct if each retry tier drops
+    // the columns its tier is missing, which is invisible from the result.
+    selects: Record<string, string[]>;
+    // Columns a pre-migration database does not have: any select naming one
+    // fails with 42703, exactly as Postgres would, however many tiers ask.
+    missingColumns: string[];
     adminGetUserById: QueryResult;
     adminDeleteUser: { error: unknown };
 };
@@ -55,6 +81,10 @@ let supabaseState: {
 function resetSupabaseState() {
     supabaseState = {
         tables: {},
+        updates: {},
+        inserts: {},
+        selects: {},
+        missingColumns: [],
         adminGetUserById: {
             data: { user: { id: "u1", factors: [] } },
             error: null,
@@ -65,30 +95,92 @@ function resetSupabaseState() {
 resetSupabaseState();
 
 function resultForTable(table: string): QueryResult {
-    return supabaseState.tables[table] ?? { data: null, error: null };
+    const entry = supabaseState.tables[table];
+    if (Array.isArray(entry)) {
+        return entry.length > 1
+            ? (entry.shift() as QueryResult)
+            : (entry[0] ?? { data: null, error: null });
+    }
+    return entry ?? { data: null, error: null };
 }
 
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "update", "delete", "upsert", "insert",
-        "eq", "neq", "in", "is", "or", "not", "lt", "gt", "gte", "lte",
-        "filter", "order", "limit", "range", "contains",
+        "select",
+        "update",
+        "delete",
+        "upsert",
+        "insert",
+        "eq",
+        "neq",
+        "in",
+        "is",
+        "or",
+        "not",
+        "lt",
+        "gt",
+        "gte",
+        "lte",
+        "filter",
+        "order",
+        "limit",
+        "range",
+        "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
-    q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
-    q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
+    let missing: string | null = null;
+    q.select = vi.fn((columns?: unknown) => {
+        if (typeof columns === "string") {
+            (supabaseState.selects[table] ??= []).push(columns);
+            missing =
+                supabaseState.missingColumns.find((column) =>
+                    columns.split(/,\s*/).includes(column),
+                ) ?? null;
+        }
+        return q;
+    });
+    const missingColumnResult = (): QueryResult | null =>
+        missing
+            ? {
+                  data: null,
+                  error: {
+                      code: "42703",
+                      message: `column user_profiles.${missing} does not exist`,
+                  },
+              }
+            : null;
+    // Record update payloads so tests can assert what a route WROTE (the
+    // per-table result stub only models what queries return).
+    q.update = vi.fn((payload: unknown) => {
+        (supabaseState.updates[table] ??= []).push(payload);
+        return q;
+    });
+    q.insert = vi.fn((payload: unknown) => {
+        (supabaseState.inserts[table] ??= []).push(payload);
+        return q;
+    });
+    q.single = vi.fn(() =>
+        Promise.resolve(missingColumnResult() ?? resultForTable(table)),
+    );
+    q.maybeSingle = vi.fn(() =>
+        Promise.resolve(missingColumnResult() ?? resultForTable(table)),
+    );
     q.then = (
         resolve: (v: unknown) => unknown,
         reject?: (e: unknown) => unknown,
-    ) => Promise.resolve(resultForTable(table)).then(resolve, reject);
+    ) =>
+        Promise.resolve(missingColumnResult() ?? resultForTable(table)).then(
+            resolve,
+            reject,
+        );
     return q;
 }
 
 function mockSupabase() {
     return {
         from: vi.fn((table: string) => makeQuery(table)),
-        rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
+        rpc: (...args: unknown[]) => supabaseRpc(...args),
         auth: {
             getUser: () =>
                 Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -96,9 +188,8 @@ function mockSupabase() {
                 getUserById: vi.fn(() =>
                     Promise.resolve(supabaseState.adminGetUserById),
                 ),
-                deleteUser: vi.fn(() =>
-                    Promise.resolve(supabaseState.adminDeleteUser),
-                ),
+                deleteUser: (...a: unknown[]) => adminDeleteUser(...a),
+                signOut: (...a: unknown[]) => adminSignOut(...a),
             },
         },
     };
@@ -107,6 +198,13 @@ function mockSupabase() {
 vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(() => mockSupabase()),
 }));
+
+// The DB-queue runner's enabled flag is what the account-delete and export
+// routes branch on; keep the rest of the module real.
+vi.mock("../../lib/dbq/runner", async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    return { ...actual, dbJobsEnabled: () => dbJobsEnabled() };
+});
 
 // requireAuth always authenticates u1. requireMfaIfEnrolled is a reconfigurable
 // guard so we can drive both the satisfied (next()) and rejected
@@ -130,25 +228,65 @@ vi.mock("../../middleware/auth", () => ({
 // (which encrypts) and never echo plaintext — getUserApiKeyStatus returns
 // presence-only booleans. getUserApiKeys must be exported too — lib/userSettings
 // imports it at module load.
-vi.mock("../../lib/userApiKeys", () => ({
+vi.mock("../../modules/user/user.apiKeyStore", async (importOriginal) => {
+    // The pure validation helpers run for real; every database touch is a spy.
+    const actual =
+        await importOriginal<typeof import("../../modules/user/user.apiKeyStore")>();
+    return {
+    isSettingsApiKeyProvider: actual.isSettingsApiKeyProvider,
+    normalizeProviderSettings: actual.normalizeProviderSettings,
+    // Reads the saved row through the Supabase stub (user_api_keys table).
+    getSavedApiKeySettings: (
+        actual as unknown as Record<string, unknown>
+    ).getSavedApiKeySettings,
+    // The store serves a person's keys and an organization's through one
+    // owner-based implementation. These routes are the personal ones, so
+    // each owner-based call is handed to the spy the tests already assert
+    // on, with the owner unwrapped to the user id it carries.
+    userKeyOwner: actual.userKeyOwner,
+    orgKeyOwner: actual.orgKeyOwner,
+    updateApiKeySettings: (owner: { id: string }, ...args: unknown[]) =>
+        updateUserApiKeySettings(owner.id, ...args),
     getUserApiKeyStatus: (...args: unknown[]) => getUserApiKeyStatus(...args),
+    getApiKeyStatusFor: (owner: { id: string }, ...args: unknown[]) =>
+        getUserApiKeyStatus(owner.id, ...args),
     saveUserApiKey: (...args: unknown[]) => saveUserApiKey(...args),
+    saveApiKeyFor: (
+        owner: { id: string },
+        provider: string,
+        value: string | null,
+        db: unknown,
+        settings: Record<string, unknown> = {},
+    ) =>
+        // A provider with no companion setting was, and is asserted as, a
+        // four-argument save.
+        actual.isSettingsApiKeyProvider(provider as never)
+            ? saveUserApiKey(owner.id, provider, value, db, settings)
+            : saveUserApiKey(owner.id, provider, value, db),
     hasEnvApiKey: (...args: unknown[]) => hasEnvApiKey(...args),
     normalizeApiKeyProvider: (...args: unknown[]) =>
         normalizeApiKeyProvider(...args),
     getUserApiKeys: vi.fn(async () => ({})),
-}));
+    };
+});
 
-vi.mock("../../lib/userDataCleanup", () => ({
+vi.mock("../../modules/user/user.dataCleanup", () => ({
     deleteAllUserChats: (...args: unknown[]) => deleteAllUserChats(...args),
     deleteAllUserTabularReviews: (...args: unknown[]) =>
         deleteAllUserTabularReviews(...args),
     deleteUserAccountData: (...args: unknown[]) =>
         deleteUserAccountData(...args),
     deleteUserProjects: (...args: unknown[]) => deleteUserProjects(...args),
+    listOrgsBlockingAccountDeletion: (...args: unknown[]) =>
+        listOrgsBlockingAccountDeletion(...args),
 }));
 
-vi.mock("../../lib/userDataExport", () => ({
+vi.mock("../../lib/memory/bulk", () => ({
+    deleteUserPrivateMemories: (...args: unknown[]) =>
+        deleteUserPrivateMemories(...args),
+}));
+
+vi.mock("../../modules/user/user.dataExport", () => ({
     buildUserAccountExport: (...args: unknown[]) =>
         buildUserAccountExport(...args),
     buildUserChatsExport: (...args: unknown[]) => buildUserChatsExport(...args),
@@ -168,13 +306,23 @@ function profileRow(overrides: Record<string, unknown> = {}) {
     return {
         display_name: "Ada",
         organisation: "Acme",
+        jurisdiction: "Singapore",
+        practice_setting: "private_practice",
+        professional_title: "Partner",
+        practice_areas: ["Corporate and M&A"],
+        onboarding_version: 1,
+        password_set_at: null,
         message_credits_used: 3,
         credits_reset_date: "2999-01-01T00:00:00.000Z",
         tier: "Pro",
         title_model: null,
-        tabular_model: "gemini-3-flash-preview",
+        tabular_model: "gemini-3.8-flash",
+        memory_curator_model: null,
+        last_selected_chat_model: null,
         mfa_on_login: false,
         legal_research_us: true,
+        quick_actions_visible: true,
+        dark_mode: false,
         ...overrides,
     };
 }
@@ -198,19 +346,130 @@ describe("user.routes", () => {
         requireMfaIfEnrolled.mockImplementation(
             (_req: unknown, _res: unknown, next: () => void) => next(),
         );
+        adminDeleteUser.mockImplementation(() =>
+            Promise.resolve(supabaseState.adminDeleteUser),
+        );
+        adminSignOut.mockResolvedValue({ data: null, error: null });
+        dbJobsEnabled.mockReturnValue(true);
         getUserApiKeyStatus.mockResolvedValue(STATUS);
         saveUserApiKey.mockResolvedValue(undefined);
+        updateUserApiKeySettings.mockResolvedValue(true);
         hasEnvApiKey.mockReturnValue(false);
         normalizeApiKeyProvider.mockImplementation((v: string) =>
-            ["claude", "openai", "gemini"].includes(v) ? v : null,
+            [
+                "claude",
+                "openai",
+                "gemini",
+                "openrouter",
+                "vercel",
+                "bedrock",
+                "azure",
+                "azure-foundry",
+                "vertex",
+                "xai",
+                "custom",
+            ].includes(v)
+                ? v
+                : null,
         );
         deleteAllUserChats.mockResolvedValue(undefined);
         deleteAllUserTabularReviews.mockResolvedValue(undefined);
+        deleteUserPrivateMemories.mockResolvedValue(undefined);
         deleteUserAccountData.mockResolvedValue(undefined);
         deleteUserProjects.mockResolvedValue(undefined);
+        listOrgsBlockingAccountDeletion.mockResolvedValue([]);
         buildUserAccountExport.mockResolvedValue({ account: "data" });
         buildUserChatsExport.mockResolvedValue({ chats: "data" });
         buildUserTabularReviewsExport.mockResolvedValue({ reviews: "data" });
+        supabaseRpc.mockResolvedValue({ data: null, error: null });
+    });
+
+    describe("profile photos", () => {
+        const photo = "data:image/png;base64,iVBORw0KGgo=";
+        it("saves, serializes and removes the caller's photo", async () => {
+            supabaseState.tables.user_profiles = { data: { ...profileRow(), profile_photo: photo }, error: null };
+            const saved = await request(app).put("/user/profile/photo").set(...AUTH).send({ data_url: photo, user_id: "another-user" });
+            expect(saved.status).toBe(200);
+            expect(saved.body).toEqual({ profilePhoto: photo });
+            expect(saved.headers["cache-control"]).toBe("private, no-store");
+            const loaded = await request(app).get("/user/profile").set(...AUTH);
+            expect(loaded.body.profilePhoto).toBe(photo);
+            const removed = await request(app).delete("/user/profile/photo").set(...AUTH);
+            expect(removed.status).toBe(200);
+            expect(removed.body).toEqual({ profilePhoto: null });
+        });
+        it.each([
+            "memory_curator_model", "project_memory_default",
+            "last_selected_reasoning_level", "last_selected_chat_model",
+            "dark_mode", "password_set_at", "onboarding_version",
+            "quick_actions_visible", "legal_research_us", "mfa_on_login", "title_model",
+        ])("keeps the saved photo on profile reload when %s is absent", async (column) => {
+            supabaseState.missingColumns = [column];
+            supabaseState.tables.user_profiles = {
+                data: { ...profileRow(), profile_photo: photo }, error: null,
+            };
+            const res = await request(app).get("/user/profile").set(...AUTH);
+            expect(res.status).toBe(200);
+            expect(res.body.profilePhoto).toBe(photo);
+            // The mock returns the seeded row; also assert the successful query
+            // actually requests the photo, as the live database requires.
+            const selects = supabaseState.selects.user_profiles;
+            expect(selects.length).toBeGreaterThan(1);
+            expect(selects.at(-1)?.split(/,\s*/)).toContain("profile_photo");
+        });
+        it("keeps profiles readable when both a preference and the photo column are absent", async () => {
+            supabaseState.missingColumns = ["memory_curator_model", "profile_photo"];
+            supabaseState.tables.user_profiles = { data: profileRow(), error: null };
+            const res = await request(app).get("/user/profile").set(...AUTH);
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({ displayName: "Ada", profilePhoto: null });
+            const columns = supabaseState.selects.user_profiles.at(-1)?.split(/,\s*/);
+            expect(columns).not.toContain("profile_photo");
+            expect(columns).not.toContain("memory_curator_model");
+        });
+        it("rejects non-raster and missing data", async () => {
+            for (const data_url of [undefined, "data:image/svg+xml;base64,PHN2Zy8+", "data:image/png;base64,PHN2Zy8+"]) {
+                const res = await request(app).put("/user/profile/photo").set(...AUTH).send({ data_url });
+                expect(res.status).toBe(400);
+            }
+            expect(supabaseState.updates.user_profiles).toBeUndefined();
+        });
+        it("keeps older profiles readable before the migration", async () => {
+            supabaseState.missingColumns = ["profile_photo"];
+            supabaseState.tables.user_profiles = { data: profileRow(), error: null };
+            const res = await request(app).get("/user/profile").set(...AUTH);
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({ displayName: "Ada", profilePhoto: null });
+        });
+    });
+
+    describe("GET /user/lookup", () => {
+        it("does not select or expose an unrelated user's photo", async () => {
+            supabaseState.tables.user_profiles = {
+                data: {
+                    user_id: "unrelated-user",
+                    email: "alice@example.com",
+                    display_name: "Alice",
+                    profile_photo: "data:image/png;base64,iVBORw0KGgo=",
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/lookup")
+                .query({ email: "ALICE@example.com" })
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                exists: true,
+                email: "alice@example.com",
+                display_name: "Alice",
+            });
+            expect(supabaseState.selects.user_profiles).toEqual([
+                "user_id, email, display_name",
+            ]);
+        });
     });
 
     // ── GET /user/profile (MFA bootstrap path) ────────────────────────────
@@ -220,17 +479,38 @@ describe("user.routes", () => {
                 data: profileRow(),
                 error: null,
             };
+            supabaseState.tables.user_router_models = {
+                data: [
+                    { model_id: "anthropic/claude-sonnet-4.5" },
+                    { model_id: "openai/gpt-5.4" },
+                ],
+                error: null,
+            };
 
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({
                 displayName: "Ada",
                 organisation: "Acme",
+                jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: true,
+                onboardingVersion: 1,
+                passwordSet: false,
                 messageCreditsUsed: 3,
                 tier: "Pro",
                 legalResearchUs: true,
+                quickActionsVisible: true,
                 mfaOnLogin: false,
+                openRouterModels: [
+                    "anthropic/claude-sonnet-4.5",
+                    "openai/gpt-5.4",
+                ],
                 apiKeyStatus: STATUS,
             });
             // Presence-only key status — never plaintext.
@@ -246,10 +526,159 @@ describe("user.routes", () => {
                 error: null,
             };
 
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
+        });
+
+        it("keeps existing preferences before the memory curator migration", async () => {
+            const preMigrationRow = profileRow({
+                title_model: "gpt-6-luna",
+            });
+            delete (preMigrationRow as Record<string, unknown>)
+                .memory_curator_model;
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.memory_curator_model does not exist",
+                    },
+                },
+                { data: preMigrationRow, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body.titleModel).toBe("gpt-6-luna");
+            expect(res.body.memoryCuratorModel).toBeNull();
+            expect(res.body.projectMemoryDefault).toBe(true);
+        });
+
+        it("drops project_memory_default from the retry, not just memory_curator_model", async () => {
+            // Both columns arrive in the SAME migration (#451). A database
+            // that has the new code but not the migration rejects every select
+            // naming either one. A retry tier that still names
+            // project_memory_default therefore fails with the identical 42703
+            // and the cascade falls further than it should, dropping
+            // preference columns the database actually has.
+            const preMigrationRow = profileRow({ title_model: "gpt-6-luna" });
+            delete (preMigrationRow as Record<string, unknown>)
+                .memory_curator_model;
+            delete (preMigrationRow as Record<string, unknown>)
+                .project_memory_default;
+            supabaseState.missingColumns = [
+                "memory_curator_model",
+                "project_memory_default",
+            ];
+            supabaseState.tables.user_profiles = {
+                data: preMigrationRow,
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            const selects = supabaseState.selects.user_profiles ?? [];
+            // Exactly one retry: the full select, then the tier that drops
+            // both columns of that migration and nothing else.
+            expect(selects).toHaveLength(2);
+            expect(selects[0]).toContain("project_memory_default");
+            expect(selects[1]).not.toContain("project_memory_default");
+            expect(selects[1]).not.toContain("memory_curator_model");
+            // The tier keeps every other preference the database does have.
+            expect(selects[1]).toContain("last_selected_reasoning_level");
+            expect(selects[1]).toContain("dark_mode");
+            expect(res.body.titleModel).toBe("gpt-6-luna");
+            expect(res.body.memoryCuratorModel).toBeNull();
+        });
+
+        it("keeps saved preferences on a database without the onboarding migration", async () => {
+            // Replicated live (PR #365 review): with the 20260821 columns
+            // dropped, the profile select failed on "jurisdiction", skipped
+            // every fallback tier, and silently reset legal_research_us and
+            // quick_actions_visible to defaults. The retry tier must preserve
+            // the user's saved values and report legacy-exempt onboarding.
+            const preMigrationRow = {
+                display_name: "Ada",
+                organisation: "Acme",
+                message_credits_used: 3,
+                credits_reset_date: "2999-01-01T00:00:00.000Z",
+                tier: "Pro",
+                title_model: null,
+                tabular_model: "gemini-3.8-flash",
+                mfa_on_login: false,
+                legal_research_us: false,
+                quick_actions_visible: false,
+            };
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.jurisdiction does not exist",
+                    },
+                },
+                { data: preMigrationRow, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                legalResearchUs: false,
+                quickActionsVisible: false,
+                onboardingComplete: true,
+                onboardingVersion: 0,
+                passwordSet: false,
+                jurisdiction: null,
+                practiceAreas: [],
+            });
+        });
+
+        it("keeps live onboarding columns when only migration 02 is missing", async () => {
+            // password_set_at (20260821_02) missing must NOT drop the
+            // migration-01 columns that DO exist — otherwise a new user on
+            // such a database would report onboardingComplete: true and
+            // skip onboarding entirely.
+            const migration01Row = profileRow({ onboarding_version: null });
+            delete (migration01Row as Record<string, unknown>).password_set_at;
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.password_set_at does not exist",
+                    },
+                },
+                { data: migration01Row, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                jurisdiction: "Singapore",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: false,
+                onboardingVersion: null,
+                passwordSet: false,
+            });
         });
 
         it("returns 500 with detail when the profile load errors", async () => {
@@ -258,17 +687,253 @@ describe("user.routes", () => {
                 error: { message: "db down" },
             };
 
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("db down");
+            expect(res.body.detail).toBe(
+                "Something went wrong. Please try again.",
+            );
+        });
+    });
+
+    // ── PATCH /user/profile (appearance preference) ───────────────────────
+    describe("PATCH /user/profile appearance", () => {
+        it("persists and returns the dark mode preference", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ dark_mode: true }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ darkMode: true });
+
+            expect(res.status).toBe(200);
+            expect(res.body.darkMode).toBe(true);
+        });
+
+        it("rejects a non-boolean darkMode", async () => {
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ darkMode: "yes" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(/darkMode must be a boolean/);
+        });
+
+        it("persists and returns the project memory default", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ project_memory_default: false }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ projectMemoryDefault: false });
+
+            expect(res.status).toBe(200);
+            expect(res.body.projectMemoryDefault).toBe(false);
+            expect(supabaseState.updates.user_profiles).toContainEqual(
+                expect.objectContaining({ project_memory_default: false }),
+            );
+        });
+
+        it("rejects a non-boolean projectMemoryDefault value", async () => {
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ projectMemoryDefault: "yes" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(
+                /projectMemoryDefault must be a boolean/,
+            );
+        });
+
+        it("rejects the removed transparentTables preference", async () => {
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ transparentTables: false });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(
+                /Unsupported profile field: transparentTables/,
+            );
         });
     });
 
     // ── POST /user/profile (bootstrap upsert) ─────────────────────────────
+    describe("custom instructions", () => {
+        it("returns the stored instructions", async () => {
+            supabaseState.tables.user_profiles = {
+                data: { custom_instructions: "Use British spelling." },
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/custom-instructions")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ content: "Use British spelling." });
+            expect(res.headers["cache-control"]).toBe("private, no-store");
+        });
+
+        it("reads as empty before the migration is applied", async () => {
+            supabaseState.missingColumns = ["custom_instructions"];
+
+            const res = await request(app)
+                .get("/user/custom-instructions")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ content: "" });
+        });
+
+        it("saves normalized instructions for the caller only", async () => {
+            supabaseState.tables.user_profiles = {
+                data: { custom_instructions: "Be concise." },
+                error: null,
+            };
+
+            const res = await request(app)
+                .put("/user/custom-instructions")
+                .set(...AUTH)
+                .send({ content: "Be concise.\r\n\n" });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ content: "Be concise." });
+            expect(supabaseState.updates.user_profiles).toEqual([
+                expect.objectContaining({ custom_instructions: "Be concise." }),
+            ]);
+        });
+
+        it("rejects over-long or non-string content", async () => {
+            const tooLong = await request(app)
+                .put("/user/custom-instructions")
+                .set(...AUTH)
+                .send({ content: "x".repeat(8001) });
+            expect(tooLong.status).toBe(400);
+            expect(tooLong.body.detail).toMatch(/8000 characters or fewer/);
+
+            const wrongType = await request(app)
+                .put("/user/custom-instructions")
+                .set(...AUTH)
+                .send({ content: 1 });
+            expect(wrongType.status).toBe(400);
+            expect(supabaseState.updates.user_profiles).toBeUndefined();
+        });
+    });
+
+    describe("response style", () => {
+        it("returns the stored choices with defaults filled in", async () => {
+            supabaseState.tables.user_profiles = {
+                data: {
+                    response_style: {
+                        verbosity: "detailed",
+                        language: "en-GB",
+                    },
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/response-style")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                verbosity: "detailed",
+                formatting: "balanced",
+                tone: "balanced",
+                language: "en-GB",
+            });
+            expect(res.headers["cache-control"]).toBe("private, no-store");
+        });
+
+        it("reads as the default before the migration is applied", async () => {
+            supabaseState.missingColumns = ["response_style"];
+
+            const res = await request(app)
+                .get("/user/response-style")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                verbosity: "balanced",
+                formatting: "balanced",
+                tone: "balanced",
+                language: "auto",
+            });
+        });
+
+        it("merges only the field that changed, for the caller only", async () => {
+            // The merge function returns the user's whole stored object.
+            supabaseRpc.mockResolvedValue({
+                data: { verbosity: "concise", tone: "plain" },
+                error: null,
+            });
+
+            const res = await request(app)
+                .put("/user/response-style")
+                .set(...AUTH)
+                .send({ tone: "plain" });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                verbosity: "concise",
+                formatting: "balanced",
+                tone: "plain",
+                language: "auto",
+            });
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "merge_user_response_style",
+                {
+                    p_user_id: expect.any(String),
+                    p_patch: { tone: "plain" },
+                },
+            );
+            // Nothing is written outside the merge function.
+            expect(supabaseState.updates.user_profiles).toBeUndefined();
+        });
+
+        it("reports a missing profile as not found", async () => {
+            supabaseRpc.mockResolvedValue({ data: null, error: null });
+
+            const res = await request(app)
+                .put("/user/response-style")
+                .set(...AUTH)
+                .send({ tone: "plain" });
+
+            expect(res.status).toBe(404);
+        });
+
+        it("rejects an unknown value without calling the database", async () => {
+            const res = await request(app)
+                .put("/user/response-style")
+                .set(...AUTH)
+                .send({ formatting: "fancy" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(/formatting must be one of/);
+            expect(supabaseRpc).not.toHaveBeenCalledWith(
+                "merge_user_response_style",
+                expect.anything(),
+            );
+        });
+    });
+
     describe("POST /user/profile", () => {
         it("ensures the profile row and returns ok", async () => {
-            const res = await request(app).post("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .post("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual({ ok: true });
@@ -279,7 +944,9 @@ describe("user.routes", () => {
     // ── GET /user/api-keys (presence without plaintext) ───────────────────
     describe("GET /user/api-keys", () => {
         it("returns the boolean key-status map", async () => {
-            const res = await request(app).get("/user/api-keys").set(...AUTH);
+            const res = await request(app)
+                .get("/user/api-keys")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual(STATUS);
@@ -287,6 +954,40 @@ describe("user.routes", () => {
                 "u1",
                 expect.anything(),
             );
+        });
+    });
+
+    describe("PATCH /user/api-keys/:provider", () => {
+        it.each([false, true])("sets enabled=%s without rewriting the encrypted key", async (enabled) => {
+            supabaseState.tables.user_api_keys = { data: [{ provider: "openai" }], error: null };
+            const response = await request(app)
+                .patch("/user/api-keys/openai")
+                .send({ enabled });
+            expect(response.status).toBe(200);
+            expect(supabaseState.updates.user_api_keys).toEqual([
+                { enabled, updated_at: expect.any(String) },
+            ]);
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+            expect(requireMfaIfEnrolled).toHaveBeenCalledOnce();
+        });
+
+        it("requires an existing saved key", async () => {
+            supabaseState.tables.user_api_keys = { data: [], error: null };
+            const response = await request(app).patch("/user/api-keys/openai").send({ enabled: false });
+            expect(response.status).toBe(404);
+        });
+
+        it.each([{ enabled: "false" }, {}, { enabled: null }])("rejects an invalid enabled value: %j", async (body) => {
+            const response = await request(app).patch("/user/api-keys/openai").send(body);
+            expect(response.status).toBe(400);
+            expect(supabaseState.updates.user_api_keys).toBeUndefined();
+        });
+
+        it("enforces MFA before changing a provider", async () => {
+            requireMfaIfEnrolled.mockImplementation((_req, res) => res.status(403).json({ code: "mfa_required" }));
+            const response = await request(app).patch("/user/api-keys/openai").send({ enabled: false });
+            expect(response.status).toBe(403);
+            expect(supabaseState.updates.user_api_keys).toBeUndefined();
         });
     });
 
@@ -336,7 +1037,7 @@ describe("user.routes", () => {
             expect(saveUserApiKey).not.toHaveBeenCalled();
         });
 
-        it("returns 409 when the provider is configured by the server env", async () => {
+        it("stores a user key when the provider is also configured by the server env", async () => {
             hasEnvApiKey.mockReturnValue(true);
 
             const res = await request(app)
@@ -344,8 +1045,13 @@ describe("user.routes", () => {
                 .set(...AUTH)
                 .send({ api_key: "sk-x" });
 
-            expect(res.status).toBe(409);
-            expect(saveUserApiKey).not.toHaveBeenCalled();
+            expect(res.status).toBe(200);
+            expect(saveUserApiKey).toHaveBeenCalledWith(
+                "u1",
+                "claude",
+                "sk-x",
+                expect.anything(),
+            );
         });
 
         it("returns 500 when saving the key throws", async () => {
@@ -357,7 +1063,9 @@ describe("user.routes", () => {
                 .send({ api_key: "sk-x" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("kms unavailable");
+            expect(res.body.detail).toBe(
+                "Something went wrong. Please try again.",
+            );
         });
 
         it("is rejected with 403 mfa_verification_required when MFA is unsatisfied", async () => {
@@ -376,66 +1084,588 @@ describe("user.routes", () => {
             // Guarded: the crypto path is never reached.
             expect(saveUserApiKey).not.toHaveBeenCalled();
         });
+
+        it("saves a Bedrock key together with its normalized region", async () => {
+            const res = await request(app)
+                .put("/user/api-keys/bedrock")
+                .set(...AUTH)
+                .send({ api_key: "bedrock-key", settings: { region: " US-East-1 " } });
+
+            expect(res.status).toBe(200);
+            expect(saveUserApiKey).toHaveBeenCalledWith(
+                "u1",
+                "bedrock",
+                "bedrock-key",
+                expect.anything(),
+                { bedrock: { region: "us-east-1" } },
+            );
+        });
+
+        it("rejects a Bedrock key without a valid region", async () => {
+            for (const settings of [undefined, { region: "not a region" }]) {
+                const res = await request(app)
+                    .put("/user/api-keys/bedrock")
+                    .set(...AUTH)
+                    .send({ api_key: "bedrock-key", settings });
+
+                expect(res.status).toBe(400);
+                expect(res.body.detail).toMatch(/AWS region/);
+            }
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+        });
+
+        it("rejects an Azure endpoint outside Azure's AI hostnames", async () => {
+            const res = await request(app)
+                .put("/user/api-keys/azure")
+                .set(...AUTH)
+                .send({
+                    api_key: "azure-key",
+                    settings: { endpoint: "https://attacker.example/openai" },
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(/Azure OpenAI endpoint/);
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+        });
+
+        it("rejects a Vertex key that is not a service-account file", async () => {
+            const res = await request(app)
+                .put("/user/api-keys/vertex")
+                .set(...AUTH)
+                .send({
+                    api_key: "AIzaSy-plain-key",
+                    settings: { location: "us-central1" },
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(/service-account key file/);
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+        });
+
+        it("saves a Vertex service-account key with its location", async () => {
+            const key = JSON.stringify({
+                type: "service_account",
+                project_id: "legal-prod",
+                private_key: "-----BEGIN PRIVATE KEY-----",
+                client_email: "mike@legal-prod.iam.gserviceaccount.com",
+            });
+            const res = await request(app)
+                .put("/user/api-keys/vertex")
+                .set(...AUTH)
+                .send({ api_key: key, settings: { location: " US-Central1 " } });
+
+            expect(res.status).toBe(200);
+            expect(saveUserApiKey).toHaveBeenCalledWith(
+                "u1",
+                "vertex",
+                key,
+                expect.anything(),
+                { vertex: { location: "us-central1" } },
+            );
+        });
+
+        it("rejects a custom endpoint that is not public https", async () => {
+            for (const baseUrl of [
+                "http://llm.example.com/v1",
+                "https://localhost:4000/v1",
+                "https://169.254.169.254/latest",
+                "https://10.1.2.3/v1",
+            ]) {
+                const res = await request(app)
+                    .put("/user/api-keys/custom")
+                    .set(...AUTH)
+                    .send({ api_key: "sk-custom", settings: { baseUrl } });
+
+                expect(res.status).toBe(400);
+                expect(res.body.detail).toMatch(/public https base URL/);
+            }
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+        });
+
+        it("saves a custom endpoint, a Foundry key and an xAI key", async () => {
+            await request(app)
+                .put("/user/api-keys/custom")
+                .set(...AUTH)
+                .send({
+                    api_key: "sk-custom",
+                    settings: { baseUrl: "https://llm.example.com/v1/" },
+                })
+                .expect(200);
+            await request(app)
+                .put("/user/api-keys/azure-foundry")
+                .set(...AUTH)
+                .send({
+                    api_key: "foundry-key",
+                    settings: { endpoint: "Contoso-Foundry" },
+                })
+                .expect(200);
+            await request(app)
+                .put("/user/api-keys/xai")
+                .set(...AUTH)
+                .send({ api_key: "xai-key" })
+                .expect(200);
+
+            expect(saveUserApiKey).toHaveBeenCalledWith(
+                "u1",
+                "custom",
+                "sk-custom",
+                expect.anything(),
+                { custom: { baseUrl: "https://llm.example.com/v1" } },
+            );
+            expect(saveUserApiKey).toHaveBeenCalledWith(
+                "u1",
+                "azure-foundry",
+                "foundry-key",
+                expect.anything(),
+                {
+                    "azure-foundry": {
+                        endpoint: "https://contoso-foundry.services.ai.azure.com",
+                    },
+                },
+            );
+            expect(saveUserApiKey).toHaveBeenCalledWith(
+                "u1",
+                "xai",
+                "xai-key",
+                expect.anything(),
+            );
+        });
+
+        it("changes only the Azure endpoint when no new key is sent", async () => {
+            supabaseState.tables.user_api_keys = {
+                data: { settings: { endpoint: "contoso-openai" } },
+                error: null,
+            };
+            const res = await request(app)
+                .put("/user/api-keys/azure")
+                .set(...AUTH)
+                .send({ settings: { endpoint: "Contoso-OpenAI" } });
+
+            expect(res.status).toBe(200);
+            expect(updateUserApiKeySettings).toHaveBeenCalledWith(
+                "u1",
+                "azure",
+                { azure: { endpoint: "contoso-openai" } },
+                expect.anything(),
+            );
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+        });
+
+        // PR #608 regression: a settings-only PUT repointed an already-saved
+        // key at a new host, so the next GET /models/custom (or chat) sent
+        // the stored secret to wherever the new URL pointed.
+        describe("endpoint changes without the key", () => {
+            const REENTER = "Re-enter the API key to change this provider's endpoint.";
+
+            it("refuses to move a saved custom-endpoint key to a new host", async () => {
+                supabaseState.tables.user_api_keys = {
+                    data: { settings: { baseUrl: "https://llm.example.com/v1" } },
+                    error: null,
+                };
+                const res = await request(app)
+                    .put("/user/api-keys/custom")
+                    .set(...AUTH)
+                    .send({ settings: { baseUrl: "https://collector.attacker.example/v1" } });
+
+                expect(res.status).toBe(400);
+                expect(res.body).toEqual({ detail: REENTER });
+                expect(updateUserApiKeySettings).not.toHaveBeenCalled();
+                expect(saveUserApiKey).not.toHaveBeenCalled();
+            });
+
+            it("refuses when the saved endpoint is no longer valid", async () => {
+                supabaseState.tables.user_api_keys = {
+                    data: { settings: { baseUrl: "https://10.0.0.5/v1" } },
+                    error: null,
+                };
+                const res = await request(app)
+                    .put("/user/api-keys/custom")
+                    .set(...AUTH)
+                    .send({ settings: { baseUrl: "https://llm.example.com/v1" } });
+                expect(res.status).toBe(400);
+                expect(res.body).toEqual({ detail: REENTER });
+            });
+
+            it("still allows a path change on the same host", async () => {
+                supabaseState.tables.user_api_keys = {
+                    data: { settings: { baseUrl: "https://llm.example.com/v1" } },
+                    error: null,
+                };
+                const res = await request(app)
+                    .put("/user/api-keys/custom")
+                    .set(...AUTH)
+                    .send({ settings: { baseUrl: "https://LLM.example.com/v2/" } });
+                expect(res.status).toBe(200);
+                expect(updateUserApiKeySettings).toHaveBeenCalledWith(
+                    "u1",
+                    "custom",
+                    { custom: { baseUrl: "https://llm.example.com/v2" } },
+                    expect.anything(),
+                );
+            });
+
+            it("still allows a Bedrock region change, which is not an endpoint host", async () => {
+                supabaseState.tables.user_api_keys = {
+                    data: { settings: { region: "us-east-1" } },
+                    error: null,
+                };
+                const res = await request(app)
+                    .put("/user/api-keys/bedrock")
+                    .set(...AUTH)
+                    .send({ settings: { region: "eu-west-2" } });
+                expect(res.status).toBe(200);
+                expect(updateUserApiKeySettings).toHaveBeenCalledOnce();
+            });
+        });
+
+        it("asks for a key first when changing settings with nothing saved", async () => {
+            updateUserApiKeySettings.mockResolvedValue(false);
+
+            const res = await request(app)
+                .put("/user/api-keys/bedrock")
+                .set(...AUTH)
+                .send({ settings: { region: "eu-west-2" } });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "Save an API key before changing its settings.",
+            );
+        });
+
+        it("removes a Bedrock key and its region when neither is sent", async () => {
+            const res = await request(app)
+                .put("/user/api-keys/bedrock")
+                .set(...AUTH)
+                .send({ api_key: null });
+
+            expect(res.status).toBe(200);
+            expect(saveUserApiKey).toHaveBeenCalledWith(
+                "u1",
+                "bedrock",
+                null,
+                expect.anything(),
+                {},
+            );
+        });
     });
 
-    // ── Data export endpoints (MFA-guarded, attachment headers) ───────────
-    describe("data export endpoints", () => {
-        it("GET /user/export returns the account export as a JSON attachment", async () => {
-            const res = await request(app).get("/user/export").set(...AUTH);
+    describe("PATCH /user/profile", () => {
+        it("persists the last-selected model from the initial chat view", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({
+                    last_selected_chat_model: "gpt-6-astra",
+                }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ lastSelectedChatModel: "gpt-6-astra" });
 
             expect(res.status).toBe(200);
-            expect(res.body).toEqual({ account: "data" });
-            expect(res.headers["content-type"]).toContain("application/json");
-            expect(res.headers["content-disposition"]).toContain("attachment");
-            expect(res.headers["content-disposition"]).toContain(
-                "mike-account-export-u1.json",
+            expect(supabaseState.updates.user_profiles).toContainEqual(
+                expect.objectContaining({
+                    last_selected_chat_model: "gpt-6-astra",
+                }),
             );
-            expect(buildUserAccountExport).toHaveBeenCalledWith(
-                expect.anything(),
-                "u1",
-                "u1@test.local",
+            expect(res.body.lastSelectedChatModel).toBe("gpt-6-astra");
+        });
+
+        it("persists and returns the memory curator model", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ memory_curator_model: "gpt-6-luna" }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ memoryCuratorModel: "gpt-6-luna" });
+
+            expect(res.status).toBe(200);
+            expect(res.body.memoryCuratorModel).toBe("gpt-6-luna");
+            expect(supabaseState.updates.user_profiles).toContainEqual(
+                expect.objectContaining({
+                    memory_curator_model: "gpt-6-luna",
+                }),
             );
         });
 
-        it("GET /user/chats/export returns the chats export", async () => {
+        it("rejects an unsupported memory curator model", async () => {
             const res = await request(app)
-                .get("/user/chats/export")
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ memoryCuratorModel: "unknown-model" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe("Unsupported memoryCuratorModel");
+        });
+
+        it("persists OpenRouter selections through the router-neutral table function", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({
+                    openRouterModels: [
+                        "anthropic/claude-sonnet-4.5",
+                        "openai/gpt-5.4",
+                    ],
+                });
+
+            expect(res.status).toBe(200);
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "replace_user_router_models",
+                {
+                    target_user_id: "u1",
+                    target_router: "openrouter",
+                    target_model_ids: [
+                        "anthropic/claude-sonnet-4.5",
+                        "openai/gpt-5.4",
+                    ],
+                },
+            );
+        });
+
+        it("persists Vercel selections through the router-neutral table function", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ vercelModels: ["openai/gpt-5.4"] });
+
+            expect(res.status).toBe(200);
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "replace_user_router_models",
+                {
+                    target_user_id: "u1",
+                    target_router: "vercel",
+                    target_model_ids: ["openai/gpt-5.4"],
+                },
+            );
+        });
+
+        it("rejects a non-boolean Quick Actions visibility preference", async () => {
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ quickActionsVisible: "yes" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "quickActionsVisible must be a boolean",
+            );
+        });
+
+        it("allows personalisation fields to be cleared", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: null,
+                    practiceSetting: null,
+                    professionalTitle: null,
+                    practiceAreas: [],
+                });
+
+            expect(res.status).toBe(200);
+        });
+
+        // display_name and organisation are injected into every chat's
+        // system prompt, so their size must be bounded like the other
+        // personalisation fields. Truncation (not rejection) mirrors
+        // handle_new_user's left(..., 200) and keeps any over-long value
+        // written before the cap editable rather than stuck.
+        it.each([
+            ["displayName", "display_name"],
+            ["organisation", "organisation"],
+        ] as const)("truncates %s to 200 characters", async (field, column) => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ [field]: "x".repeat(250) });
+
+            expect(res.status).toBe(200);
+            const written = supabaseState.updates.user_profiles?.at(-1) as
+                Record<string, unknown> | undefined;
+            expect(written?.[column]).toBe("x".repeat(200));
+        });
+    });
+
+    describe("POST /user/onboarding", () => {
+        it("accepts a jurisdiction and normalized practice areas", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_version: null }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: " Singapore ",
+                    practiceSetting: "private_practice",
+                    professionalTitle: "Senior Associate",
+                    practiceAreas: [" Corporate and M&A ", "Litigation"],
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                displayName: "Ada",
+                jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: false,
+                onboardingVersion: null,
+            });
+        });
+
+        it("treats onboarding version 0 as legacy-exempt", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_version: 0 }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
-            expect(res.body).toEqual({ chats: "data" });
-            expect(res.headers["content-disposition"]).toContain(
-                "mike-chats-export-u1.json",
-            );
-            expect(buildUserChatsExport).toHaveBeenCalledTimes(1);
+            expect(res.body).toMatchObject({
+                onboardingVersion: 0,
+                onboardingComplete: true,
+            });
         });
 
-        it("GET /user/tabular-reviews/export returns the reviews export", async () => {
+        it("allows users to skip all personalisation fields", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_version: null }),
+                error: null,
+            };
+
             const res = await request(app)
-                .get("/user/tabular-reviews/export")
-                .set(...AUTH);
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({ practiceAreas: [] });
 
             expect(res.status).toBe(200);
-            expect(res.body).toEqual({ reviews: "data" });
-            expect(res.headers["content-disposition"]).toContain(
-                "mike-tabular-reviews-export-u1.json",
+        });
+
+        it("rejects an invalid jurisdiction when one is supplied", async () => {
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({ jurisdiction: "" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "Select a valid jurisdiction of practice",
             );
-            expect(buildUserTabularReviewsExport).toHaveBeenCalledTimes(1);
         });
 
-        it("GET /user/export returns 500 when the builder throws", async () => {
-            buildUserAccountExport.mockRejectedValue(new Error("export boom"));
+        it("requires a valid professional setting", async () => {
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: "Singapore",
+                    practiceSetting: "law_firm",
+                    practiceAreas: ["Litigation"],
+                });
 
-            const res = await request(app).get("/user/export").set(...AUTH);
-
-            expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("export boom");
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe("Select a valid professional setting");
         });
 
-        it("GET /user/export is rejected when MFA is unsatisfied", async () => {
+        it("allows onboarding completion without a display name", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ display_name: null }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: "Singapore",
+                    practiceSetting: "in_house",
+                    practiceAreas: ["Litigation"],
+                });
+
+            expect(res.status).toBe(200);
+        });
+    });
+
+    describe("POST /user/security/password-set", () => {
+        it("records and returns verified password capability", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({
+                    password_set_at: "2026-08-21T12:00:00.000Z",
+                }),
+                error: null,
+            };
+            supabaseRpc.mockResolvedValue({
+                data: "2026-08-21T12:00:00.000Z",
+                error: null,
+            });
+
+            const res = await request(app)
+                .post("/user/security/password-set")
+                .set(...AUTH)
+                .send({});
+
+            expect(res.status).toBe(200);
+            expect(res.body.passwordSet).toBe(true);
+            expect(supabaseRpc).toHaveBeenCalledWith("sync_user_password_set", {
+                p_user_id: "u1",
+            });
+        });
+
+        it("rejects the marker when Supabase has no password", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+            supabaseRpc.mockResolvedValue({ data: null, error: null });
+
+            const res = await request(app)
+                .post("/user/security/password-set")
+                .set(...AUTH)
+                .send({});
+
+            expect(res.status).toBe(409);
+        });
+    });
+
+    // ── Data export endpoint (MFA-guarded) ─────────────────────────────────
+    describe("data export endpoint", () => {
+        it("POST /user/exports is rejected when MFA is unsatisfied", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
 
-            const res = await request(app).get("/user/export").set(...AUTH);
+            const res = await request(app)
+                .post("/user/exports")
+                .set(...AUTH)
+                .send({ type: "account" });
 
             expect(res.status).toBe(403);
             expect(res.body.code).toBe("mfa_verification_required");
@@ -446,7 +1676,9 @@ describe("user.routes", () => {
     // ── Data deletion endpoints (MFA-guarded, cleanup helpers) ────────────
     describe("data deletion endpoints", () => {
         it("DELETE /user/chats invokes deleteAllUserChats and returns 204", async () => {
-            const res = await request(app).delete("/user/chats").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/chats")
+                .set(...AUTH);
 
             expect(res.status).toBe(204);
             expect(deleteAllUserChats).toHaveBeenCalledWith(
@@ -479,44 +1711,247 @@ describe("user.routes", () => {
             );
         });
 
-        it("DELETE /user/account purges data then deletes the auth user (204)", async () => {
-            const res = await request(app).delete("/user/account").set(...AUTH);
+        it("DELETE /user/memories wipes app and private-project memory", async () => {
+            const res = await request(app)
+                .delete("/user/memories")
+                .set(...AUTH);
 
             expect(res.status).toBe(204);
-            // Account purge runs the cleanup helper with id + email.
+            expect(deleteUserPrivateMemories).toHaveBeenCalledWith(
+                expect.anything(),
+                "u1",
+            );
+        });
+
+        // ERASURE ORDERING. documents.user_id references auth.users ON DELETE
+        // CASCADE (and document_versions cascades from documents), so deleting
+        // the auth user is what destroys the rows recording where the account's
+        // files live. It must therefore happen LAST — inside the job, after the
+        // cascade — never in this request.
+        it("DELETE /user/account schedules the cascade and does NOT delete the auth user yet", async () => {
+            supabaseState.tables.db_jobs = {
+                data: { id: "job-1" },
+                error: null,
+            };
+
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
+
+            expect(res.status).toBe(204);
+            expect(supabaseRpc).toHaveBeenCalledWith("request_account_deletion", {
+                p_user_id: "u1", p_user_email: "u1@test.local",
+            });
+            // ...auth user still present, so the cascade can still read the
+            // storage paths it is about to delete.
+            expect(adminDeleteUser).not.toHaveBeenCalled();
+            // Sessions are revoked immediately all the same: the account is
+            // unusable from the moment this returns.
+            expect(adminSignOut).toHaveBeenCalledWith("test-token", "global");
+        });
+
+        // SOLE-ADMIN REFUSAL. Deleting this account would either hand the
+        // organization to an arbitrary successor or strand it with no members
+        // at all, so the product refuses and names the organizations.
+        it("DELETE /user/account returns 409 for the sole owner of a live org", async () => {
+            listOrgsBlockingAccountDeletion.mockResolvedValue([
+                { org_id: "o1", name: "Org A", reason: "members" },
+                { org_id: "o2", name: "Org B", reason: "content" },
+            ]);
+
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
+
+            expect(res.status).toBe(409);
+            expect(res.body.code).toBe("org_successor_required");
+            expect(res.body.detail).toBe(
+                "You are the only owner of Org A. Make another member an owner, or delete the organization, before deleting your account. You are the only owner of Org B, and must appoint another owner or explicitly delete the organization before deleting your account.",
+            );
+            expect(res.body.organizations).toEqual([
+                { org_id: "o1", name: "Org A", reason: "members" },
+                { org_id: "o2", name: "Org B", reason: "content" },
+            ]);
+            // Nothing was scheduled, nothing was revoked, nothing was
+            // destroyed — the user is still signed in and can appoint an
+            // owner. The old behaviour answered 204, revoked the session and
+            // then failed the job forever.
+            expect(supabaseState.inserts.db_jobs ?? []).toHaveLength(0);
+            expect(adminSignOut).not.toHaveBeenCalled();
+            expect(deleteUserAccountData).not.toHaveBeenCalled();
+        });
+
+        it("DELETE /user/account refuses the inline path for a sole owner too", async () => {
+            // The no-runner fallback runs the cascade synchronously, so the
+            // check must gate it as well.
+            dbJobsEnabled.mockReturnValue(false);
+            listOrgsBlockingAccountDeletion.mockResolvedValue([
+                { org_id: "o1", name: "Org A", reason: "members" },
+            ]);
+
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
+
+            expect(res.status).toBe(409);
+            expect(deleteUserAccountData).not.toHaveBeenCalled();
+            expect(adminDeleteUser).not.toHaveBeenCalled();
+        });
+
+        it("DELETE /user/account runs inline when no runner will drain the queue", async () => {
+            dbJobsEnabled.mockReturnValue(false);
+
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
+
+            expect(res.status).toBe(204);
+            // Data first, auth last — main's ordering, done synchronously.
             expect(deleteUserAccountData).toHaveBeenCalledWith(
                 expect.anything(),
                 "u1",
                 "u1@test.local",
             );
+            expect(supabaseState.inserts.db_jobs ?? []).toHaveLength(0);
         });
 
-        it("DELETE /user/account returns 500 when the auth-user delete errors", async () => {
+        it("DELETE /user/account returns 500 when the inline auth-user delete errors", async () => {
+            dbJobsEnabled.mockReturnValue(false);
             supabaseState.adminDeleteUser = { error: { message: "auth boom" } };
 
-            const res = await request(app).delete("/user/account").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("auth boom");
+            expect(res.body.detail).toBe(
+                "Something went wrong. Please try again.",
+            );
+        });
+
+        it("DELETE /user/account returns 500 when the cascade cannot be scheduled", async () => {
+            // Nothing has been destroyed yet, so the request is cleanly
+            // retriable — it must not answer 204.
+            supabaseRpc.mockResolvedValueOnce({
+                data: null,
+                error: { code: "08006", message: "connection lost" },
+            });
+
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
+
+            expect(res.status).toBe(500);
+            expect(deleteUserAccountData).not.toHaveBeenCalled();
+            expect(adminSignOut).not.toHaveBeenCalled();
         });
 
         it("DELETE /user/chats returns 500 when cleanup throws", async () => {
             deleteAllUserChats.mockRejectedValue(new Error("cascade failed"));
 
-            const res = await request(app).delete("/user/chats").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/chats")
+                .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("cascade failed");
+            expect(res.body.detail).toBe(
+                "Something went wrong. Please try again.",
+            );
         });
 
         it("DELETE /user/account is rejected when MFA is unsatisfied (no cleanup)", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
 
-            const res = await request(app).delete("/user/account").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
 
             expect(res.status).toBe(403);
             expect(res.body.code).toBe("mfa_verification_required");
             expect(deleteUserAccountData).not.toHaveBeenCalled();
+        });
+
+        it("DELETE /user/memories is rejected when MFA is unsatisfied", async () => {
+            requireMfaIfEnrolled.mockImplementation(rejectMfa);
+
+            const res = await request(app)
+                .delete("/user/memories")
+                .set(...AUTH);
+
+            expect(res.status).toBe(403);
+            expect(res.body.code).toBe("mfa_verification_required");
+            expect(deleteUserPrivateMemories).not.toHaveBeenCalled();
+        });
+    });
+
+    // ── GET /user/mcp-connectors/oauth/callback (popup hand-off page) ─────
+    describe("GET /user/mcp-connectors/oauth/callback", () => {
+        // The 400 path (missing state/code) renders the same popup HTML via
+        // the same header helper as the success path, without needing any
+        // real OAuth machinery — so it is the regression probe for both.
+        it("relaxes COOP so window.opener survives, alongside the nonce CSP", async () => {
+            const log = vi
+                .spyOn(console, "error")
+                .mockImplementation(() => undefined);
+
+            const res = await request(app).get(
+                "/user/mcp-connectors/oauth/callback",
+            );
+
+            expect(res.status).toBe(400);
+            // Load-bearing: helmet's default COOP of same-origin would sever
+            // window.opener the moment the popup returns from the
+            // cross-origin consent page, silently breaking the postMessage
+            // hand-off. This must hold through the full app assembly (helmet
+            // runs on this very request), not just on the bare router.
+            expect(res.headers["cross-origin-opener-policy"]).toBe(
+                "unsafe-none",
+            );
+            // The route-scoped CSP (with the per-response script nonce) must
+            // survive alongside the COOP relaxation.
+            expect(res.headers["content-security-policy"]).toContain(
+                "script-src 'nonce-",
+            );
+            log.mockRestore();
+        });
+
+        it("keeps helmet's default COOP on every other route", async () => {
+            // Contrast probe: the relaxation must stay scoped to the popup
+            // page. If it ever leaks app-wide, this fails.
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app).get("/user/profile").set(...AUTH);
+
+            expect(res.headers["cross-origin-opener-policy"]).toBe(
+                "same-origin",
+            );
+        });
+
+        it("keeps a </script> breakout in ?error= out of the popup page", async () => {
+            const log = vi
+                .spyOn(console, "error")
+                .mockImplementation(() => undefined);
+
+            // ?error= is attacker-controllable and reaches this route's error
+            // path. The failure detail shown to the user is a fixed string
+            // (the raw error only goes to the server log), and the popup's
+            // JSON literal additionally escapes "<" as \u003c — so a
+            // </script><script>… payload can neither be reflected nor close
+            // the legitimate script element.
+            const res = await request(app).get(
+                "/user/mcp-connectors/oauth/callback?error=" +
+                    encodeURIComponent("</script><script>evil()</script>"),
+            );
+
+            expect(res.status).toBe(400);
+            expect(res.text).not.toContain("evil()");
+            // The only </script> left is the page's own closing tag.
+            expect(res.text).not.toContain("</script><script");
+            expect(res.text.match(/<\/script>/g)).toHaveLength(1);
+            log.mockRestore();
         });
     });
 
@@ -542,9 +1977,7 @@ describe("user.routes", () => {
                 data: {
                     user: {
                         id: "u1",
-                        factors: [
-                            { factor_type: "totp", status: "verified" },
-                        ],
+                        factors: [{ factor_type: "totp", status: "verified" }],
                     },
                 },
                 error: null,

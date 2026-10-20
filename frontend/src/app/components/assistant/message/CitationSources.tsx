@@ -1,8 +1,11 @@
-import { Loader2, Scale } from "lucide-react";
+import { SvgAssetIcon } from "@/app/components/ui/svg-asset-icon";
+import caseLaw from "../../../../../public/icons/legal-sources/case-law.svg";
+import { Loader2 } from "lucide-react";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { displayCitationQuote, formatCitationPage } from "../../shared/types";
 import type { Citation } from "../../shared/types";
-import { RESPONSE_GLASS_ANNOTATION, RESPONSE_GLASS_SURFACE } from "./messageStyles";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { RESPONSE_GLASS_SURFACE } from "./messageStyles";
 import {
     citationVerificationAriaLabel,
     citationVerificationDescription,
@@ -41,22 +44,24 @@ export function citationTooltip(annotation: Citation): string {
     return verification ? `${source} — ${verification}` : source;
 }
 
-function CitationSourceIcon({
-    annotation,
-}: {
-    annotation: Citation;
-}) {
+function CitationSourceIcon({ annotation }: { annotation: Citation }) {
     if (annotation.kind === "case") {
-        return <Scale className="h-3.5 w-3.5 text-slate-600" />;
+        return (
+            <SvgAssetIcon
+                src={caseLaw}
+                aria-hidden="true"
+                width={14}
+                height={14}
+                className="h-3.5 w-3.5 shrink-0"
+            />
+        );
     }
     return (
         <FileTypeIcon fileType={annotation.filename} className="h-3.5 w-3.5" />
     );
 }
 
-function buildCitationSourceRows(
-    citations: Citation[],
-): CitationSourceRow[] {
+function buildCitationSourceRows(citations: Citation[]): CitationSourceRow[] {
     const rows = new Map<string, CitationSourceRow>();
     citations.forEach((annotation, index) => {
         const key = citationSourceKey(annotation);
@@ -129,6 +134,7 @@ export function buildCitationAppendix(citations: Citation[]) {
 
 export function CitationsBlock({
     citations,
+    activeCitation,
     onCitationClick,
     onOpenSource,
     canOpenSource,
@@ -136,6 +142,7 @@ export function CitationsBlock({
     isLoading = false,
 }: {
     citations: Citation[];
+    activeCitation?: Citation | null;
     onCitationClick?: (citation: Citation) => void;
     onOpenSource?: (citation: Citation) => void;
     canOpenSource?: (citation: Citation) => boolean;
@@ -164,46 +171,55 @@ export function CitationsBlock({
                         return (
                             <div
                                 key={row.key}
-                                className="flex items-center gap-3 px-3 py-3"
+                                className="flex items-start gap-3 px-3 py-3"
                             >
                                 <button
                                     type="button"
                                     onClick={() => onOpenSource?.(row.source)}
                                     disabled={!sourceIsClickable}
-                                    className="flex min-w-0 flex-1 items-center gap-2 rounded-lg text-left text-sm font-serif text-gray-700 transition-colors enabled:hover:text-gray-950 disabled:cursor-default"
+                                    title={row.label}
+                                    // The name takes whatever the pills leave and
+                                    // wraps to two lines before truncating.
+                                    className="flex min-w-0 flex-1 items-start gap-2 rounded-lg text-left text-sm font-serif text-gray-700 transition-colors enabled:hover:text-gray-950 disabled:cursor-default"
                                 >
-                                    <CitationSourceIcon
-                                        annotation={row.source}
-                                    />
-                                    <span className="truncate">
+                                    <span className="mt-[3px] flex shrink-0">
+                                        <CitationSourceIcon
+                                            annotation={row.source}
+                                        />
+                                    </span>
+                                    <span className="line-clamp-2 [overflow-wrap:anywhere]">
                                         {row.label}
                                     </span>
                                 </button>
-                                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                                {/* Only as wide as its pills, up to 60% of the
+                                    row; beyond that the pills wrap, so every
+                                    pill shows and the name keeps 40%. */}
+                                <div className="flex max-w-[60%] shrink-0 flex-wrap justify-end gap-1">
                                     {row.entries.map(
                                         ({ annotation, index }) => (
-                                            <button
+                                            <CitationPillUI
                                                 key={`${row.key}:${index}`}
-                                                type="button"
+                                                active={
+                                                    activeCitation ===
+                                                    annotation
+                                                }
                                                 onClick={() =>
                                                     onCitationClick?.(
                                                         annotation,
                                                     )
                                                 }
-                                                className={
-                                                    `${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)}`
-                                                }
-                                                aria-label={
-                                                    citationVerificationAriaLabel(
-                                                        annotation,
-                                                    )
-                                                }
+                                                className={citationVerificationPillClassName(
+                                                    annotation,
+                                                )}
+                                                aria-label={citationVerificationAriaLabel(
+                                                    annotation,
+                                                )}
                                                 title={citationTooltip(
                                                     annotation,
                                                 )}
                                             >
                                                 {annotation.ref}
-                                            </button>
+                                            </CitationPillUI>
                                         ),
                                     )}
                                 </div>

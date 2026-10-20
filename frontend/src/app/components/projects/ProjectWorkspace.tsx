@@ -12,33 +12,91 @@ import {
     useState,
 } from "react";
 import { useRouter, useSelectedLayoutSegments } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import {
     createTabularReview,
     deleteProject,
     getProject,
+    getProjectAccess,
     getProjectPeople,
+    grantProjectAccess,
     listProjectChats,
+    revokeProjectAccess,
     updateProject,
+    type ProjectGrant,
 } from "@/app/lib/mikeApi";
 import type {
     Chat,
     ColumnConfig,
+    ContentVisibility,
     Folder as ProjectFolder,
     Project,
 } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
+import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
-import { PeopleModal } from "@/app/components/modals/PeopleModal";
-import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
+import {
+    PermissionDeniedPopup,
+    type AccessContact,
+} from "@/app/components/popups/PermissionDeniedPopup";
+import { AccessModal } from "@/app/components/modals/AccessModal";
+import { notifyError } from "@/app/lib/userFacingError";
+import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { DocumentWorkspaceScope } from "@/app/contexts/WorkspaceContext";
+import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
+import {
+    type Capability,
+    type ProjectRole,
+    can,
+    roleFromLoaded,
+} from "@/app/lib/permissions";
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
+import { ProjectMemoryModal } from "./ProjectMemoryModal";
 import {
     ProjectPageHeader,
     type ProjectWorkspaceSection,
 } from "./ProjectPageParts";
+
+/**
+ * A denied action: the sentence for the popup plus which role the action is
+ * reserved for. A plain string means the strictest tier, admin.
+ *
+ * The third shape is for rules that are not rungs on the ladder at all — the
+ * server asks "did you create this row?", which no role can answer for you.
+ * Those carry their own sentence, and deliberately offer nobody to ask,
+ * because there is nobody who could grant it.
+ */
+export type OwnerGate =
+    | string
+    | { action: string; requiredRole: "owner" | "editor" }
+    | { title?: string; message: string };
+
+/**
+ * Turn a gate into `PermissionDeniedPopup` props, so every surface renders
+ * the same gate the same way instead of re-deriving `requiredRole` inline.
+ */
+export function permissionDeniedProps(
+    gate: OwnerGate | null,
+    contacts?: AccessContact[] | null,
+) {
+    if (gate && typeof gate === "object" && "message" in gate) {
+        return {
+            open: true,
+            title: gate.title,
+            message: gate.message,
+            contacts: null,
+        };
+    }
+    return {
+        open: !!gate,
+        action: typeof gate === "string" ? gate : gate?.action,
+        requiredRole:
+            typeof gate === "string" ? ("owner" as const) : gate?.requiredRole,
+        contacts,
+    };
+}
 
 type ProjectWorkspaceValue = {
     projectId: string;
@@ -55,12 +113,30 @@ type ProjectWorkspaceValue = {
     projectChatsLoading: boolean;
     ensureProjectChats: () => Promise<Chat[]>;
     prefetchProjectSections: () => void;
-    creatingChat: boolean;
     creatingReview: boolean;
-    createChat: () => Promise<void>;
+    createChat: () => void;
     openNewReview: () => void;
-    setAddDocumentsHeaderAction: (action: (() => void) | null) => void;
-    setOwnerOnlyAction: React.Dispatch<React.SetStateAction<string | null>>;
+    setDocumentUploadHeaderAction: (
+        kind: "savedFiles" | "uploadFiles" | "uploadFolder",
+        action: (() => void) | null,
+    ) => void;
+    setDocumentFolderBreadcrumbs: React.Dispatch<
+        React.SetStateAction<Array<{ label: string; onClick: () => void }>>
+    >;
+    setOwnerOnlyAction: React.Dispatch<React.SetStateAction<OwnerGate | null>>;
+    /**
+     * The caller's role on this project, or `null` while the project row is
+     * still in flight — an explicit "not known yet", never a guess. Surfaces
+     * that render an affordance should disable it while this is null rather
+     * than assume either answer.
+     */
+    accessRole: ProjectRole | null;
+    /**
+     * Capability check against the caller's role — mirror of the server.
+     * Answers `false` while the role is unknown, so a gated affordance is
+     * closed until the server has told us it may open.
+     */
+    canDo: (capability: Capability) => boolean;
 };
 
 const ProjectWorkspaceContext =
@@ -76,10 +152,6 @@ export function useProjectWorkspace() {
     return value;
 }
 
-export function useProjectWorkspaceOptional() {
-    return useContext(ProjectWorkspaceContext);
-}
-
 function activeSectionFromSegments(
     segments: string[],
 ): ProjectWorkspaceSection {
@@ -92,6 +164,7 @@ function activeSectionFromSegments(
 
 function shouldShowWorkspaceShell(segments: string[]) {
     if (segments.length === 0) return true;
+    if (segments.length === 2 && segments[0] === "folders") return true;
     if (segments.length !== 1) return false;
     return (
         segments[0] === "assistant" ||
@@ -116,41 +189,76 @@ export function ProjectWorkspaceProvider({
     >({ documents: "", assistant: "", reviews: "", dossier: "", review: "" });
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
     const [projectChatsLoading, setProjectChatsLoading] = useState(false);
-    const [peopleModalOpen, setPeopleModalOpen] = useState(false);
+    const [accessModalOpen, setAccessModalOpen] = useState(false);
+    // Direct access grants, loaded only when the share dialog is opened: every
+    // project page would otherwise pay for a roster nobody looked at.
+    const [grants, setGrants] = useState<ProjectGrant[] | null>(null);
+    // The grant list failed to load. `grants` stays null so the Access panel
+    // says the list is unavailable instead of rendering an empty list, which
+    // reads as "nobody has access to this project".
+    const [grantsUnavailable, setGrantsUnavailable] = useState(false);
+    const [projectReloadToken, setProjectReloadToken] = useState(0);
     const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
-    const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [projectMemoryOpen, setProjectMemoryOpen] = useState(false);
+    const [ownerOnlyAction, setOwnerOnlyAction] = useState<OwnerGate | null>(
+        null,
+    );
     const [deleteProjectConfirmOpen, setDeleteProjectConfirmOpen] =
         useState(false);
     const [deleteProjectStatus, setDeleteProjectStatus] = useState<
         "idle" | "deleting" | "deleted"
     >("idle");
     const [newTRModalOpen, setNewTRModalOpen] = useState(false);
-    const [creatingChat, setCreatingChat] = useState(false);
     const [creatingReview, setCreatingReview] = useState(false);
-    const [addDocumentsHeaderAction, setAddDocumentsHeaderActionState] =
-        useState<{ action: (() => void) | null }>({ action: null });
-
+    const [documentUploadActions, setDocumentUploadActions] = useState<{
+        savedFiles: (() => void) | null;
+        uploadFiles: (() => void) | null;
+        uploadFolder: (() => void) | null;
+    }>({ savedFiles: null, uploadFiles: null, uploadFolder: null });
+    const [documentFolderBreadcrumbs, setDocumentFolderBreadcrumbs] = useState<
+        Array<{ label: string; onClick: () => void }>
+    >([]);
     const segments = useSelectedLayoutSegments();
     const activeSection = activeSectionFromSegments(segments);
     const showShell = shouldShowWorkspaceShell(segments);
     const router = useRouter();
     const { user } = useAuth();
-    const { profile } = useUserProfile();
-    const { saveChat } = useChatHistoryContext();
     const projectChatsPromiseRef = useRef<Promise<Chat[]> | null>(null);
 
     useEffect(() => {
+        // A new projectId is a new answer to "who am I here?". This provider
+        // lives in the [id] layout, which the App Router keeps mounted across
+        // dynamic-param navigation — so without this reset the PREVIOUS
+        // project's row, and therefore its role, stays live for the whole
+        // fetch window. An admin of project A navigating into project B they
+        // can only view kept admin affordances (Delete included) until B's
+        // row arrived: `roleKnown` was true, so nothing was disabled and
+        // `denyUnlessLoading` never suppressed a thing. Unknown-while-loading
+        // only protects anyone if loading actually starts from unknown.
+        setProject(null);
+        setFolders([]);
         setProjectChats(null);
         setProjectChatsLoading(false);
+        setDocumentFolderBreadcrumbs([]);
         projectChatsPromiseRef.current = null;
     }, [projectId]);
 
-    const setAddDocumentsHeaderAction = useCallback(
-        (action: (() => void) | null) => {
-            setAddDocumentsHeaderActionState({ action });
+    const setDocumentUploadHeaderAction = useCallback(
+        (
+            kind: "savedFiles" | "uploadFiles" | "uploadFolder",
+            action: (() => void) | null,
+        ) => {
+            setDocumentUploadActions((current) => ({
+                ...current,
+                [kind]: action,
+            }));
         },
         [],
     );
+
+    const openProjectRoot = useCallback(() => {
+        router.push(`/projects/${projectId}`);
+    }, [projectId, router]);
 
     useEffect(() => {
         if (!showShell) {
@@ -166,11 +274,17 @@ export function ProjectWorkspaceProvider({
                 setFolders(loaded.folders ?? []);
             })
             .catch((error) => {
-                console.error("[project workspace] failed to load project", error);
-                if (!cancelled) {
-                    setProject(null);
-                    setFolders([]);
-                }
+                if (cancelled) return;
+                // Without this the workspace just renders as an empty
+                // project: no documents, no chats, no explanation.
+                setProject(null);
+                setFolders([]);
+                notifyError(error, {
+                    action: "load this project",
+                    dedupeKey: `project-load:${projectId}`,
+                    onRetry: () =>
+                        setProjectReloadToken((token) => token + 1),
+                });
             })
             .finally(() => {
                 if (!cancelled) setProjectLoading(false);
@@ -178,7 +292,7 @@ export function ProjectWorkspaceProvider({
         return () => {
             cancelled = true;
         };
-    }, [projectId, showShell]);
+    }, [projectId, showShell, projectReloadToken]);
 
     const search = searchBySection[activeSection];
     const setSearch = useCallback(
@@ -213,53 +327,128 @@ export function ProjectWorkspaceProvider({
         return promise;
     }, [projectChats, projectId]);
 
+    // The memory dialog owns its own reads and writes; this keeps the loaded
+    // project row agreeing with them.
+    const syncProjectMemoryEnabled = useCallback((enabled: boolean) => {
+        // Called on every memory load and poll; only a real change may
+        // produce a new project object, or the whole workspace re-renders
+        // every few seconds while a curator runs.
+        setProject((current) =>
+            current && current.memory_enabled !== enabled
+                ? { ...current, memory_enabled: enabled }
+                : current,
+        );
+    }, []);
+
     const prefetchProjectSections = useCallback(() => {
         void ensureProjectChats();
     }, [ensureProjectChats]);
 
-    const createChat = useCallback(async () => {
-        setCreatingChat(true);
+    // Role derived from the loaded project. Until it arrives the role is
+    // *unknown* — not "admin", which is what this used to assume so the shell
+    // would not flash disabled controls. Assuming the top of the ladder while
+    // waiting means every gate stands open during the window in which we know
+    // least, and a viewer who clicks Delete in that window gets a confirmation
+    // dialog for an action the server will refuse. Unknown is its own answer:
+    // `canDo` says no, affordances stay disabled, and no refusal popup accuses
+    // the user of lacking a role we have not looked up yet.
+    const accessRole: ProjectRole | null = roleFromLoaded(project);
+    const roleKnown = accessRole !== null;
+    const canDo = useCallback(
+        (capability: Capability) => can(accessRole, capability),
+        [accessRole],
+    );
+    /**
+     * Refuse an action, explaining only when we can. While the role is
+     * unknown the caller is not told "only an admin can do this" — we do not
+     * know that they are not one — the click simply does nothing, because the
+     * control that produced it is disabled anyway.
+     */
+    const denyUnlessLoading = useCallback(
+        (gate: OwnerGate) => {
+            if (roleKnown) setOwnerOnlyAction(gate);
+        },
+        [roleKnown],
+    );
+
+    const refreshGrantsRef = useRef<(() => void) | null>(null);
+    const refreshGrants = useCallback(async () => {
         try {
-            const id = await saveChat(projectId);
-            if (id) {
-                const now = new Date().toISOString();
-                setProjectChats((prev) =>
-                    prev
-                        ? [
-                              {
-                                  id,
-                                  project_id: projectId,
-                                  user_id: user?.id ?? "",
-                                  creator_display_name:
-                                      profile?.displayName ?? null,
-                                  title: null,
-                                  created_at: now,
-                              },
-                              ...prev,
-                          ]
-                        : prev,
-                );
-                router.push(`/projects/${projectId}/assistant/chat/${id}`);
-            }
-        } finally {
-            setCreatingChat(false);
+            const access = await getProjectAccess(projectId);
+            setGrants(access.grants);
+            setGrantsUnavailable(false);
+        } catch (error) {
+            setGrantsUnavailable(true);
+            notifyError(error, {
+                action: "load who has access",
+                dedupeKey: `project-access:${projectId}`,
+                onRetry: () => refreshGrantsRef.current?.(),
+            });
         }
-    }, [profile?.displayName, projectId, router, saveChat, user?.id]);
+    }, [projectId]);
+
+    // "Retry" re-runs the current closure, not the one that failed.
+    useAssignLatest(refreshGrantsRef, () => void refreshGrants());
+
+    useEffect(() => {
+        setGrants(null);
+        setGrantsUnavailable(false);
+    }, [projectId]);
+
+    useEffect(() => {
+        // The grant list is the management surface and the server now only
+        // serves it at access.manage — the Access modal's role pickers, its
+        // one consumer, render only at that tier anyway. Below admin the
+        // modal shows the /people roster, so there is nothing to fetch and
+        // no point collecting a 403 on every open.
+        // `grantsUnavailable` also stops this from re-firing forever once a
+        // load has failed: the user retries from the notice.
+        if (
+            accessModalOpen &&
+            grants === null &&
+            !grantsUnavailable &&
+            canDo("access.manage")
+        )
+            void refreshGrants();
+    }, [accessModalOpen, grants, grantsUnavailable, refreshGrants, canDo]);
+
+    const createChat = useCallback(() => {
+        if (!canDo("content.edit")) {
+            denyUnlessLoading({ action: "create a chat", requiredRole: "editor" });
+            return;
+        }
+        router.push(`/projects/${projectId}/assistant/chat`);
+    }, [projectId, router, canDo, denyUnlessLoading]);
 
     const openNewReview = useCallback(() => {
-        const readyDocs =
-            project?.documents?.filter((d) => d.status === "ready") ?? [];
-        if (readyDocs.length === 0) return;
+        // Creating a review is member-tier server-side (POST /tabular-review
+        // gates on content.edit) — stop viewers before the modal, not after
+        // an unexplained failed submit.
+        if (!canDo("content.edit")) {
+            denyUnlessLoading({
+                action: "create a tabular review",
+                requiredRole: "editor",
+            });
+            return;
+        }
         setNewTRModalOpen(true);
-    }, [project?.documents]);
+    }, [canDo, denyUnlessLoading]);
 
     async function handleCreateReview(
         title: string,
-        _projectId?: string,
-        documentIds?: string[],
-        columnsConfig?: ColumnConfig[] | null,
-        documentGrouping?: "document" | "folder",
+        _projectId: string | undefined,
+        documentIds: string[] | undefined,
+        columnsConfig: ColumnConfig[] | null | undefined,
+        documentGrouping: "document" | "folder" | undefined,
+        model: string,
+        _accessAssignments: {
+            email: string;
+            role: import("@/app/lib/mikeApi").AccessAssignmentRole;
+        }[],
     ) {
+        // Project-owned reviews inherit their project's organization and
+        // access exactly, so modal-level standalone assignments are ignored.
+        void _accessAssignments;
         setCreatingReview(true);
         try {
             const readyDocs =
@@ -269,6 +458,7 @@ export function ProjectWorkspaceProvider({
                 document_ids: documentIds ?? readyDocs.map((d) => d.id),
                 columns_config: columnsConfig ?? [],
                 document_grouping: documentGrouping,
+                model,
                 project_id: projectId,
             });
             router.push(`/projects/${projectId}/tabular-reviews/${review.id}`);
@@ -281,9 +471,13 @@ export function ProjectWorkspaceProvider({
         name: string;
         cmNumber: string;
         practice: string;
+        visibility?: ContentVisibility;
     }) {
-        if (project && project.is_owner === false) {
-            setOwnerOnlyAction("edit project details");
+        if (!canDo("access.manage")) {
+            denyUnlessLoading({
+                action: "edit project details",
+                requiredRole: "owner",
+            });
             return;
         }
         const name = values.name.trim();
@@ -294,6 +488,7 @@ export function ProjectWorkspaceProvider({
             name,
             cm_number: cmNumber,
             practice: practice || null,
+            ...(values.visibility ? { visibility: values.visibility } : {}),
         });
         setProject((prev) =>
             prev
@@ -302,14 +497,15 @@ export function ProjectWorkspaceProvider({
                       name: updated.name,
                       cm_number: updated.cm_number,
                       practice: updated.practice,
+                      visibility: updated.visibility ?? prev.visibility,
                   }
                 : updated,
         );
     }
 
     function requestProjectDelete() {
-        if (project && project.is_owner === false) {
-            setOwnerOnlyAction("delete this project");
+        if (!canDo("container.delete")) {
+            denyUnlessLoading("delete this project");
             return;
         }
         setDeleteProjectStatus("idle");
@@ -324,8 +520,16 @@ export function ProjectWorkspaceProvider({
             setDeleteProjectStatus("deleted");
             window.setTimeout(() => router.push("/projects"), 500);
         } catch (error) {
-            console.error("deleteProject failed", error);
+            // The dialog otherwise drops back to its resting state with the
+            // project still listed, which reads as "nothing happened".
             setDeleteProjectStatus("idle");
+            notifyError(error, {
+                action: "delete this project",
+                dedupeKey: `project-delete:${projectId}`,
+                // Retry re-opens the confirmation rather than deleting from
+                // the notice: a destructive action is always confirmed.
+                onRetry: () => setDeleteProjectConfirmOpen(true),
+            });
         }
     }
 
@@ -345,12 +549,14 @@ export function ProjectWorkspaceProvider({
             projectChatsLoading,
             ensureProjectChats,
             prefetchProjectSections,
-            creatingChat,
             creatingReview,
             createChat,
             openNewReview,
-            setAddDocumentsHeaderAction,
+            setDocumentUploadHeaderAction,
+            setDocumentFolderBreadcrumbs,
             setOwnerOnlyAction,
+            accessRole,
+            canDo,
         }),
         [
             projectId,
@@ -364,168 +570,220 @@ export function ProjectWorkspaceProvider({
             projectChatsLoading,
             ensureProjectChats,
             prefetchProjectSections,
-            creatingChat,
             creatingReview,
             createChat,
             openNewReview,
-            setAddDocumentsHeaderAction,
+            setDocumentUploadHeaderAction,
+            accessRole,
+            canDo,
         ],
     );
+
+    // Pickers and uploads anywhere in the project use the project's own
+    // workspace; unknown until the project has loaded.
+    const projectOrgId = project ? (project.org_id ?? null) : undefined;
+    // Opening a project opens its workspace.
+    useItemWorkspace(project?.id, projectOrgId);
 
     if (!showShell) {
         return (
             <ProjectWorkspaceContext.Provider value={value}>
-                {children}
+                <DocumentWorkspaceScope orgId={projectOrgId}>
+                    {children}
+                </DocumentWorkspaceScope>
             </ProjectWorkspaceContext.Provider>
         );
     }
 
     return (
         <ProjectWorkspaceContext.Provider value={value}>
-            <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-                <ProjectPageHeader
-                    project={project}
-                    search={search}
-                    activeSection={activeSection}
-                    creatingChat={creatingChat}
-                    creatingReview={creatingReview}
-                    docsCount={project?.documents?.length ?? 0}
-                    isOwner={project?.is_owner !== false}
-                    onBackToProjects={() => router.push("/projects")}
-                    onOpenDetails={() => setProjectDetailsOpen(true)}
-                    onDeleteProject={requestProjectDelete}
-                    onSearchChange={setSearch}
-                    onOpenPeople={() => setPeopleModalOpen(true)}
-                    onNewChat={() => void createChat()}
-                    onNewReview={openNewReview}
-                    onAddDocuments={addDocumentsHeaderAction.action}
-                />
-
-                {children}
-
-                <NewTRModal
-                    open={newTRModalOpen}
-                    onClose={() => setNewTRModalOpen(false)}
-                    onAdd={handleCreateReview}
-                    projectDocs={project?.documents?.filter(
-                        (d) => d.status === "ready",
-                    )}
-                    projectFolders={folders}
-                    projectName={project?.name}
-                    projectCmNumber={project?.cm_number}
-                />
-
-                <OwnerOnlyPopup
-                    open={!!ownerOnlyAction}
-                    action={ownerOnlyAction ?? undefined}
-                    onClose={() => setOwnerOnlyAction(null)}
-                />
-
-                <ProjectDetailsModal
-                    open={projectDetailsOpen}
-                    project={project}
-                    canEdit={project?.is_owner !== false}
-                    onClose={() => setProjectDetailsOpen(false)}
-                    onSave={handleProjectDetailsSave}
-                    onShareProject={() => {
-                        setProjectDetailsOpen(false);
-                        setPeopleModalOpen(true);
-                    }}
-                />
-
-                <ConfirmPopup
-                    open={deleteProjectConfirmOpen}
-                    title="Delete project?"
-                    message="This will permanently delete the project and its related documents, chats, and tabular reviews."
-                    confirmLabel="Delete"
-                    confirmStatus={
-                        deleteProjectStatus === "deleting"
-                            ? "loading"
-                            : deleteProjectStatus === "deleted"
-                              ? "complete"
-                              : "idle"
-                    }
-                    cancelLabel="Cancel"
-                    onCancel={() => {
-                        if (deleteProjectStatus === "deleting") return;
-                        setDeleteProjectConfirmOpen(false);
-                        setDeleteProjectStatus("idle");
-                    }}
-                    onConfirm={() => void confirmProjectDelete()}
-                />
-
-                {project && (
-                    <PeopleModal
-                        open={peopleModalOpen}
-                        onClose={() => setPeopleModalOpen(false)}
-                        resource={project}
-                        fetchPeople={getProjectPeople}
-                        currentUserEmail={user?.email ?? null}
-                        breadcrumb={[
-                            "Projects",
-                            project.name +
-                                (project.cm_number
-                                    ? ` (${project.cm_number})`
-                                    : ""),
-                            "People",
-                        ]}
-                        onSharedWithChange={
-                            project.is_owner === false
-                                ? undefined
-                                : async (next) => {
-                                      const updated = await updateProject(
-                                          projectId,
-                                          { shared_with: next },
-                                      );
-                                      setProject((prev) =>
-                                          prev
-                                              ? {
-                                                    ...prev,
-                                                    shared_with:
-                                                        updated.shared_with,
-                                                }
-                                              : prev,
-                                      );
-                                  }
-                        }
+            <DocumentWorkspaceScope orgId={projectOrgId}>
+                <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+                    <ProjectPageHeader
+                        project={project}
+                        search={search}
+                        activeSection={activeSection}
+                        creatingReview={creatingReview}
+                        canManageProject={canDo("access.manage")}
+                        roleKnown={roleKnown}
+                        onBackToProjects={() => router.push("/projects")}
+                        onProjectRoot={openProjectRoot}
+                        onOpenDetails={() => setProjectDetailsOpen(true)}
+                        onOpenMemory={() => setProjectMemoryOpen(true)}
+                        onDeleteProject={requestProjectDelete}
+                        onSearchChange={setSearch}
+                        onOpenAccess={() => setAccessModalOpen(true)}
+                        onNewChat={() => void createChat()}
+                        onNewReview={openNewReview}
+                        onSavedFiles={documentUploadActions.savedFiles}
+                        onUploadFiles={documentUploadActions.uploadFiles}
+                        onUploadFolder={documentUploadActions.uploadFolder}
+                        documentFolderBreadcrumbs={documentFolderBreadcrumbs}
                     />
-                )}
-            </div>
+
+                    {children}
+
+                    <NewTRModal
+                        open={newTRModalOpen}
+                        onClose={() => setNewTRModalOpen(false)}
+                        onAdd={handleCreateReview}
+                        projectId={projectId}
+                        projectDocs={
+                            project?.documents?.filter(
+                                (d) => d.status === "ready",
+                            ) ?? []
+                        }
+                        projectFolders={folders}
+                        projectName={project?.name}
+                        projectCmNumber={project?.cm_number}
+                    />
+
+                    <PermissionDeniedPopup
+                        {...permissionDeniedProps(
+                            ownerOnlyAction,
+                            project?.admin_contacts,
+                        )}
+                        onClose={() => setOwnerOnlyAction(null)}
+                    />
+
+                    <ProjectMemoryModal
+                        key={projectId}
+                        open={projectMemoryOpen}
+                        onClose={() => setProjectMemoryOpen(false)}
+                        projectId={projectId}
+                        projectName={project?.name ?? null}
+                        projectLoading={projectLoading}
+                        canEdit={canDo("content.edit")}
+                        canManage={canDo("access.manage")}
+                        onMemoryEnabledChange={syncProjectMemoryEnabled}
+                    />
+
+                    <ProjectDetailsModal
+                        open={projectDetailsOpen}
+                        project={project}
+                        canEdit={canDo("access.manage")}
+                        onClose={() => setProjectDetailsOpen(false)}
+                        onSave={handleProjectDetailsSave}
+                        onShareProject={() => {
+                            setProjectDetailsOpen(false);
+                            setAccessModalOpen(true);
+                        }}
+                    />
+
+                    <ConfirmPopup
+                        open={deleteProjectConfirmOpen}
+                        title="Delete project?"
+                        message="This will permanently delete the project and its related documents, chats, and tabular reviews."
+                        confirmLabel="Delete"
+                        confirmVariant="danger"
+                        confirmStatus={
+                            deleteProjectStatus === "deleting"
+                                ? "loading"
+                                : deleteProjectStatus === "deleted"
+                                  ? "complete"
+                                  : "idle"
+                        }
+                        cancelLabel="Cancel"
+                        onCancel={() => {
+                            if (deleteProjectStatus === "deleting") return;
+                            setDeleteProjectConfirmOpen(false);
+                            setDeleteProjectStatus("idle");
+                        }}
+                        onConfirm={() => void confirmProjectDelete()}
+                    />
+
+                    {project && (
+                        <AccessModal
+                            open={accessModalOpen}
+                            onClose={() => setAccessModalOpen(false)}
+                            resource={project}
+                            fetchAccess={getProjectPeople}
+                            currentUserEmail={user?.email ?? null}
+                            // Both identifiers: a roster row without an email
+                            // would otherwise offer the caller a Remove that locks
+                            // them out of their own project.
+                            currentUserId={user?.id ?? null}
+                            breadcrumb={[
+                                "Projects",
+                                project.name +
+                                    (project.cm_number
+                                        ? ` (${project.cm_number})`
+                                        : ""),
+                                "Access",
+                            ]}
+                            access={{
+                                grants: grants ?? [],
+                                grantsUnavailable,
+                                orgId: project.org_id ?? null,
+                                ownerLabel: "Project owners",
+                                canManage: canDo("access.manage"),
+                                visibility: project.visibility ?? "private",
+                                onGrant: async (email, role) => {
+                                    await grantProjectAccess(
+                                        projectId,
+                                        email,
+                                        role,
+                                    );
+                                    await refreshGrants();
+                                },
+                                onRevoke: async (email) => {
+                                    await revokeProjectAccess(projectId, email);
+                                    await refreshGrants();
+                                },
+                            }}
+                        />
+                    )}
+                </div>
+            </DocumentWorkspaceScope>
         </ProjectWorkspaceContext.Provider>
     );
 }
 
 export function ProjectSectionToolbar({
     actions,
+    backAction,
 }: {
     actions?: ReactNode;
+    backAction?: (() => void) | null;
 }) {
     const { activeSection, projectId } = useProjectWorkspace();
     const router = useRouter();
 
     return (
         <TableToolbar
-            items={[
-                { id: "documents", label: "Documents" },
-                { id: "assistant", label: "Chats" },
-                { id: "reviews", label: "Tabular Reviews" },
-                { id: "review", label: "Review" },
-                { id: "dossier", label: "Analysis" },
-            ]}
+            items={
+                backAction
+                    ? []
+                    : [
+                          { id: "documents", label: "Documents" },
+                          { id: "assistant", label: "Chats" },
+                          { id: "reviews", label: "Tabular Reviews" },
+                          { id: "review", label: "Review" },
+                          { id: "dossier", label: "Analysis" },
+                      ]
+            }
             active={activeSection}
             onChange={(next) => {
                 const href =
-                    next === "documents"
-                        ? `/projects/${projectId}`
-                        : next === "assistant"
-                          ? `/projects/${projectId}/assistant`
+                    next === "assistant"
+                        ? `/projects/${projectId}/assistant`
+                        : next === "reviews"
+                          ? `/projects/${projectId}/tabular-reviews`
                           : next === "review"
                             ? `/projects/${projectId}/review`
                             : next === "dossier"
-                            ? `/projects/${projectId}/dossier`
-                            : `/projects/${projectId}/tabular-reviews`;
+                              ? `/projects/${projectId}/dossier`
+                              : `/projects/${projectId}`;
                 router.push(href);
             }}
+            leading={
+                backAction ? (
+                    <TabPillButtonUI onClick={backAction} className="pl-2">
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                        Back
+                    </TabPillButtonUI>
+                ) : undefined
+            }
             actions={actions}
         />
     );

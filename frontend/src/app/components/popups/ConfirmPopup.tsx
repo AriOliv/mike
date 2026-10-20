@@ -1,114 +1,147 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import type { ReactNode } from "react";
-import { Loader2, Trash2 } from "lucide-react";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { useEffect, useId, type ReactNode } from "react";
+import { Trash2 } from "lucide-react";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { CloseButton } from "@/shared/ui/CloseButton";
 import { cn } from "@/app/lib/utils";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 type ConfirmStatus = "idle" | "loading" | "complete";
 
 interface ConfirmPopupProps {
-    open: boolean;
-    title?: ReactNode;
-    message?: ReactNode;
-    confirmLabel?: ReactNode;
-    confirmStatus?: ConfirmStatus;
-    cancelLabel?: ReactNode;
-    onConfirm: () => void;
-    onCancel: () => void;
-    confirmDisabled?: boolean;
-    className?: string;
+  open: boolean;
+  title?: ReactNode;
+  message?: ReactNode;
+  confirmLabel?: ReactNode;
+  confirmVariant?: "default" | "danger";
+  confirmStatus?: ConfirmStatus;
+  cancelLabel?: ReactNode;
+  onConfirm: () => void;
+  onCancel: () => void;
+  confirmDisabled?: boolean;
+  className?: string;
 }
 
 export function ConfirmPopup({
-    open,
-    title,
-    message,
-    confirmLabel = "Confirm",
-    confirmStatus = "idle",
-    cancelLabel = "Cancel",
-    onConfirm,
-    onCancel,
-    confirmDisabled = false,
-    className,
+  open,
+  title,
+  message,
+  confirmLabel = "Confirm",
+  confirmVariant = "default",
+  confirmStatus = "idle",
+  cancelLabel = "Cancel",
+  onConfirm,
+  onCancel,
+  confirmDisabled = false,
+  className,
 }: ConfirmPopupProps) {
-    if (!open) return null;
-    const confirmBusy = confirmStatus === "loading";
-    const resolvedConfirmDisabled = confirmDisabled || confirmStatus !== "idle";
-    const normalizedConfirmLabel =
-        typeof confirmLabel === "string" ? confirmLabel : "Confirm";
-    const isDeleteAction = normalizedConfirmLabel.toLowerCase() === "delete";
-    const resolvedConfirmLabel =
-        confirmStatus === "loading" ? (
-            <span className="inline-flex h-full items-center gap-1.5">
-                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                {progressiveLabel(normalizedConfirmLabel)}
-            </span>
-        ) : confirmStatus === "complete" ? (
-            completedLabel(normalizedConfirmLabel)
-        ) : isDeleteAction ? (
-            <span className="inline-flex h-full items-center gap-1.5">
-                <Trash2 className="h-3 w-3 shrink-0" />
-                {confirmLabel}
-            </span>
-        ) : (
-            confirmLabel
-        );
+  const titleId = useId();
 
-    return createPortal(
-        <div className="pointer-events-none fixed inset-x-0 bottom-5 z-[230] flex justify-center px-4">
-            <div
-                className={cn(
-                    "pointer-events-auto w-[min(92vw,520px)] rounded-2xl border border-white/70 bg-white px-4 py-3 text-sm shadow-[0_4px_14px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.92)] backdrop-blur-2xl",
-                    className,
-                )}
-            >
-                {title && (
-                    <div className="text-sm font-medium text-gray-950 mb-3">
-                        {title}
-                    </div>
-                )}
-                {message && (
-                    <div
-                        className={cn("text-xs text-gray-700", title && "mt-1")}
-                    >
-                        {message}
-                    </div>
-                )}
-                <div className="mt-3 flex items-center justify-end gap-2">
-                    <PillButton
-                        tone="white"
-                        size="sm"
-                        onClick={onCancel}
-                    >
-                        {cancelLabel}
-                    </PillButton>
-                    <PillButton
-                        tone={isDeleteAction ? "danger" : "black"}
-                        size="sm"
-                        onClick={onConfirm}
-                        disabled={resolvedConfirmDisabled}
-                        className="h-7 px-3.5 leading-none"
-                        aria-busy={confirmBusy}
-                    >
-                        {resolvedConfirmLabel}
-                    </PillButton>
-                </div>
-            </div>
-        </div>,
-        document.body,
+  /**
+   * Escape cancels.
+   *
+   * This popup asks a question and takes the keyboard's attention while it is
+   * up, but it answered only to the mouse: there was no way to decline it
+   * without finding and clicking Cancel, which is the one thing every other
+   * dismissable surface in the app does with Escape. It is also announced as
+   * a dialog now — a bare `div` gave screen readers a heading and two buttons
+   * that appeared from nowhere, with nothing saying they belong together or
+   * that an answer is being asked for.
+   *
+   * The key is claimed in the capture phase and stopped there. This popup is
+   * routinely opened over a `ModalUI`, which closes itself on Escape from a
+   * `window` listener in the bubble phase; without stopping propagation one
+   * press answered both, so declining a delete confirmation also threw away
+   * the settings modal underneath it along with any unsaved rename. The
+   * topmost layer consumes the key, and the next press reaches the modal.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      onCancel();
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+  const confirmBusy = confirmStatus === "loading";
+  const resolvedConfirmDisabled = confirmDisabled || confirmStatus !== "idle";
+  const normalizedConfirmLabel =
+    typeof confirmLabel === "string" ? confirmLabel : "Confirm";
+  const isDangerAction = confirmVariant === "danger";
+  const resolvedConfirmLabel =
+    confirmStatus === "loading" ? (
+      progressiveLabel(normalizedConfirmLabel)
+    ) : confirmStatus === "complete" ? (
+      completedLabel(normalizedConfirmLabel)
+    ) : (
+      confirmLabel
     );
+
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 bottom-5 z-[230] flex justify-center px-4">
+      <div
+        role="dialog"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : "Confirm action"}
+        className={cn(
+          `pointer-events-auto relative w-[min(92vw,520px)] rounded-2xl p-2.5 pl-3 text-sm ${LIQUID_GLASS_FLOAT_CLASS}`,
+          className,
+        )}
+      >
+        <CloseButton
+          onClick={onCancel}
+          label="Close confirmation"
+          size="sm"
+          className="absolute right-2.5 top-2.5"
+        />
+        {title && (
+          <div id={titleId} className="pr-4 text-sm font-medium text-gray-950 mb-3">
+            {title}
+          </div>
+        )}
+        {message && (
+          <div className={cn("pr-4 text-xs text-gray-700", title && "mt-1")}>
+            {message}
+          </div>
+        )}
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <PillButtonUI tone="white" size="sm" onClick={onCancel}>
+            {cancelLabel}
+          </PillButtonUI>
+          <PillButtonUI
+            tone={isDangerAction ? "danger" : "black"}
+            size="sm"
+            onClick={onConfirm}
+            disabled={resolvedConfirmDisabled}
+            loading={confirmBusy}
+          >
+            {isDangerAction && confirmStatus !== "complete" && (
+              <Trash2 className="h-3 w-3 shrink-0" />
+            )}
+            {resolvedConfirmLabel}
+          </PillButtonUI>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
 }
 
 function progressiveLabel(label: string) {
-    const lower = label.toLowerCase();
-    if (lower.endsWith("e")) return `${label.slice(0, -1)}ing...`;
-    return `${label}ing...`;
+  const lower = label.toLowerCase();
+  if (lower.endsWith("e")) return `${label.slice(0, -1)}ing...`;
+  return `${label}ing...`;
 }
 
 function completedLabel(label: string) {
-    const lower = label.toLowerCase();
-    if (lower.endsWith("e")) return `${label}d`;
-    return `${label}ed`;
+  const lower = label.toLowerCase();
+  if (lower.endsWith("e")) return `${label}d`;
+  return `${label}ed`;
 }

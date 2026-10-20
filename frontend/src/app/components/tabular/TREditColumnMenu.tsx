@@ -8,20 +8,24 @@ import { generateTabularColumnPrompt } from "@/app/lib/mikeApi";
 import { FORMAT_OPTIONS, formatLabel, formatIcon } from "./columnFormat";
 import { TAG_COLORS } from "./pillUtils";
 import {
-    DropdownMenu,
-    DropdownMenuRadioGroup,
-    DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
+    Dropdown,
+    DropdownContent,
+    DropdownRadioGroup,
+    DropdownRadioItem,
+    DropdownTrigger,
+} from "@/shared/ui/dropdown";
+import { GlassIconButtonUI } from "@/shared/ui/GlassIconButtonUI";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { FieldLabel } from "@/app/components/ui/form-field";
 import {
-    LiquidDropdownContent,
-    LiquidDropdownRadioItem,
-} from "@/app/components/ui/liquid-dropdown";
-import { PillButton } from "@/app/components/ui/pill-button";
+    LIQUID_GLASS_FLOAT_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 // Liquid-glass field styling shared by the menu's inputs/controls, matching the
 // modal's glass treatment (translucent white over the light-gray panel).
 const GLASS_FIELD =
-    "border border-white/70 bg-white/55 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl";
+    LIQUID_GLASS_SUBTLE_CLASS;
 
 export interface TREditColumnMenuProps {
     column: ColumnConfig;
@@ -236,7 +240,7 @@ export function TREditColumnMenu({
                 createPortal(
                     <div
                         ref={panelRef}
-                        className="fixed z-[40] rounded-3xl border border-white/70 bg-gray-50/95 p-3 shadow-[0_14px_40px_rgba(15,23,42,0.071),0_5px_14px_rgba(15,23,42,0.047)] backdrop-blur-3xl"
+                        className={`fixed z-[40] rounded-3xl p-3 ${LIQUID_GLASS_FLOAT_CLASS}`}
                         style={{
                             top: menuPos.top,
                             left: menuPos.left,
@@ -248,34 +252,34 @@ export function TREditColumnMenu({
                         <p className="font-serif text-lg font-medium text-gray-900">
                             Edit Column
                         </p>
-                        <button
-                            type="button"
+                        <GlassIconButtonUI
                             onClick={() => setOpen(false)}
                             aria-label="Close"
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/55 text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),inset_0_-1px_0_rgba(255,255,255,0.55),0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-colors hover:bg-white/75 hover:text-gray-700"
                         >
                             <X className="h-3.5 w-3.5" />
-                        </button>
+                        </GlassIconButtonUI>
                     </div>
-                    <label className="text-xs font-medium text-gray-800">
+                    <FieldLabel htmlFor={`${menuId}-name`}>
                         Label
-                    </label>
+                    </FieldLabel>
                     <input
+                        id={`${menuId}-name`}
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className={`mt-1 w-full rounded-lg px-2 py-1 text-xs font-normal text-gray-800 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
+                        className={`w-full rounded-lg px-2 py-1 text-xs font-normal text-gray-800 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
                     />
 
                     {/* Format */}
                     <div className="mt-3">
-                        <label className="text-xs font-medium text-gray-800">
+                        <FieldLabel htmlFor={`${menuId}-format`}>
                             Format
-                        </label>
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
+                        </FieldLabel>
+                        <Dropdown>
+                            <DropdownTrigger asChild>
                                 <button
-                                    className={`mt-1 flex w-full items-center justify-between rounded-lg px-2 py-1 text-xs text-gray-700 transition-colors hover:bg-white/75 focus:outline-none ${GLASS_FIELD}`}
+                                    id={`${menuId}-format`}
+                                    className={`flex w-full items-center justify-between rounded-lg px-2 py-1 text-xs text-gray-700 transition-colors hover:bg-white/75 focus:outline-none ${GLASS_FIELD}`}
                                 >
                                     <span className="flex items-center gap-1.5">
                                         {(() => {
@@ -288,15 +292,14 @@ export function TREditColumnMenu({
                                     </span>
                                     <ChevronDown className="h-3 w-3 text-gray-400" />
                                 </button>
-                            </DropdownMenuTrigger>
-                            <LiquidDropdownContent
+                            </DropdownTrigger>
+                            <DropdownContent
                                 align="start"
-                                className="z-[50]"
                                 style={{
                                     width: "var(--radix-dropdown-menu-trigger-width)",
                                 }}
                             >
-                                <DropdownMenuRadioGroup
+                                <DropdownRadioGroup
                                     value={format}
                                     onValueChange={(v) => {
                                         setFormat(v as ColumnFormat);
@@ -305,18 +308,18 @@ export function TREditColumnMenu({
                                     }}
                                 >
                                     {FORMAT_OPTIONS.map((o) => (
-                                        <LiquidDropdownRadioItem
+                                        <DropdownRadioItem
                                             key={o.value}
                                             value={o.value}
                                             className="text-xs"
                                         >
                                             <o.icon className="h-3 w-3 text-gray-400" />
                                             {o.label}
-                                        </LiquidDropdownRadioItem>
+                                        </DropdownRadioItem>
                                     ))}
-                                </DropdownMenuRadioGroup>
-                            </LiquidDropdownContent>
-                        </DropdownMenu>
+                                </DropdownRadioGroup>
+                            </DropdownContent>
+                        </Dropdown>
                     </div>
 
                     {/* Tag input */}
@@ -365,10 +368,10 @@ export function TREditColumnMenu({
 
                     {/* Prompt */}
                     <div className="mt-3">
-                        <div className="flex items-center justify-between">
-                            <label className="text-xs font-medium text-gray-800">
+                        <div className="flex items-start justify-between">
+                            <FieldLabel htmlFor={`${menuId}-prompt`}>
                                 Prompt
-                            </label>
+                            </FieldLabel>
                             <button
                                 type="button"
                                 onClick={handleAutoGenerate}
@@ -384,22 +387,23 @@ export function TREditColumnMenu({
                             </button>
                         </div>
                         <textarea
+                            id={`${menuId}-prompt`}
                             rows={6}
                             value={prompt}
                             onChange={(e) => setPrompt(e.target.value)}
-                            className={`mt-2 w-full resize-none rounded-lg px-3 py-2 text-xs font-normal leading-relaxed text-gray-800 placeholder-gray-300 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
+                            className={`w-full resize-none rounded-lg px-3 py-2 text-xs font-normal leading-relaxed text-gray-800 placeholder-gray-300 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
                         />
                     </div>
 
                     <div className="mt-3 flex items-center justify-between gap-2">
-                        <PillButton
+                        <PillButtonUI
                             tone="danger"
                             onClick={handleDelete}
                             disabled={deleting || saving}
                         >
                             Delete
-                        </PillButton>
-                        <PillButton
+                        </PillButtonUI>
+                        <PillButtonUI
                             tone="black"
                             size="sm"
                             onClick={handleSave}
@@ -410,10 +414,9 @@ export function TREditColumnMenu({
                                 !name.trim() ||
                                 !prompt.trim()
                             }
-                            className="px-3"
                         >
                             {saving ? "Saving…" : "Save"}
-                        </PillButton>
+                        </PillButtonUI>
                     </div>
                     </div>,
                     document.body,

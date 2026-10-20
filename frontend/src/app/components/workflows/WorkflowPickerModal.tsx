@@ -1,5 +1,8 @@
 "use client";
 
+import { useDocumentWorkspace } from "@/app/contexts/WorkspaceContext";
+import { useWorkspaceIdentity } from "@/app/hooks/useWorkspaceIdentity";
+
 import { useEffect, useState, type ReactNode } from "react";
 import { listWorkflows } from "@/app/lib/mikeApi";
 import { Modal } from "../modals/Modal";
@@ -25,7 +28,7 @@ interface WorkflowPickerModalProps {
     disabledWorkflow?: (workflow: Workflow) => boolean;
 }
 
-export function WorkflowPickerModal({
+function WorkflowPickerModalForWorkspace({
     open,
     onClose,
     onSelect,
@@ -38,6 +41,7 @@ export function WorkflowPickerModal({
     initialWorkflowId,
     disabledWorkflow,
 }: WorkflowPickerModalProps) {
+    const workspace = useDocumentWorkspace();
     const [workflows, setWorkflows] = useState<Workflow[]>([]);
     const [loading, setLoading] = useState(false);
     const [selected, setSelected] = useState<Workflow | null>(null);
@@ -54,7 +58,7 @@ export function WorkflowPickerModal({
             setSearch("");
         });
 
-        listWorkflows(workflowType)
+        listWorkflows(workflowType, workspace ?? "personal")
             .then((workflows) => {
                 if (cancelled) return;
                 devLog("[workflows/ui:picker] loaded", {
@@ -97,7 +101,7 @@ export function WorkflowPickerModal({
             cancelled = true;
             cancelAnimationFrame(frame);
         };
-    }, [initialWorkflowId, open, workflowType]);
+    }, [initialWorkflowId, open, workflowType, workspace]);
 
     if (!open) return null;
 
@@ -137,10 +141,16 @@ export function WorkflowPickerModal({
                 search={search}
                 onSearchChange={setSearch}
                 loading={loading}
+                previewLoading={loading}
                 workflowType={workflowType}
                 previewMode={workflowType === "tabular" ? "columns" : "prompt"}
                 disabledWorkflow={disabledWorkflow}
             />
         </Modal>
     );
+}
+
+export function WorkflowPickerModal(props: WorkflowPickerModalProps) {
+    const identity = useWorkspaceIdentity();
+    return <WorkflowPickerModalForWorkspace key={identity} {...props} />;
 }

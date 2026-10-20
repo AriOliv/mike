@@ -23,10 +23,19 @@ test-results/
 playwright-report/
 e2e/.auth/
 
-# Local Supabase scaffold (supabase init output) — the local stack is a test
-# harness only; CI scaffolds its own fresh copy on every run
+# Local Supabase scaffold. Keep the shared project configuration reproducible,
+# while excluding CLI state and other generated local files.
 /supabase/
-backend/supabase/
+backend/supabase/*
+!backend/supabase/config.toml
+
+# dev-cycle scratch files
+.current-issue.md
+.implementation-plan.md
+.implement-config
+
+# Local review artifact; it is a nested repository, not application source.
+/pr-267-analysis-site/
 
 # service account keys (never commit)
 backend/secrets/

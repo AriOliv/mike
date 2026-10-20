@@ -9,27 +9,52 @@ import {
     useContext,
     useEffect,
     useMemo,
+    useRef,
     useState,
 } from "react";
+import { useWorkspaceIdentity } from "@/app/hooks/useWorkspaceIdentity";
 import { useRouter } from "next/navigation";
-import { Plus, Upload } from "lucide-react";
+import { BookOpen, ChevronLeft, Plus } from "lucide-react";
 import { DocTable } from "@/app/components/documents/DocTable";
-import type { DocTableFolder } from "@/app/components/documents/DocTable";
+import { NO_ROLE_MODEL } from "@/app/lib/permissions";
+import type {
+  DocTableFolderBreadcrumb,
+  DocTableFolder,
+  DocTableQuery,
+  DocTableSelectionActions,
+} from "@/app/components/documents/DocTable";
+import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { PageHeader } from "@/app/components/shared/PageHeader";
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
-import { TabPillButton } from "@/app/components/ui/tab-pill-button";
+import { DocumentUploadMenu } from "@/app/components/shared/DocumentUploadMenu";
+import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
+  bulkDeleteLibraryDocuments,
     createLibraryFolder,
     deleteLibraryFolder,
     getLibrary,
+    getLibraryFilterOptions,
+    getLibraryFolderChildren,
+    getLibraryFolderPath,
+  getLibraryLevels,
+  listLibraryDocumentIds,
     moveLibraryDocument,
     moveLibraryFolder,
     renameLibraryDocument,
     renameLibraryFolder,
+  resolveLibraryFolderPath,
+  searchLibraryDocuments,
     uploadLibraryDocument,
+    uploadLibraryDocuments,
     type LibraryKind,
+    type LibraryScope,
 } from "@/app/lib/mikeApi";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import type { Document } from "@/app/components/shared/types";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
+import { notifyError } from "@/app/lib/userFacingError";
+import { useAssignLatest } from "@/app/hooks/useLatestRef";
 
 type LibraryViewCollection = {
     documents: Document[];
@@ -40,9 +65,17 @@ type LibraryWorkspaceContextValue = {
     collections: Record<LibraryKind, LibraryViewCollection | null>;
     loadingByKind: Record<LibraryKind, boolean>;
     searchByKind: Record<LibraryKind, string>;
+    loadedFolderIdsByKind: Record<LibraryKind, Set<string>>;
+    documentsHasMoreByKind: Record<LibraryKind, Record<string, boolean>>;
+    loadingMoreDocumentsByKind: Record<LibraryKind, Record<string, boolean>>;
     loadLibrary: (
         kind: LibraryKind,
         options?: { showLoading?: boolean },
+    ) => Promise<void>;
+    loadFolderChildren: (kind: LibraryKind, folderId: string) => Promise<void>;
+    loadMoreDocuments: (
+        kind: LibraryKind,
+        parentId: string | null,
     ) => Promise<void>;
     setSearchForKind: (kind: LibraryKind, value: string) => void;
     setDocumentsForKind: (
@@ -56,7 +89,7 @@ type LibraryWorkspaceContextValue = {
 };
 
 const LIBRARY_TABS: { id: LibraryKind; label: string }[] = [
-    { id: "files", label: "Files" },
+    { id: "files", label: "Documents" },
     { id: "templates", label: "Templates" },
 ];
 
@@ -65,10 +98,30 @@ const EMPTY_COLLECTION: LibraryViewCollection = {
     folders: [],
 };
 
+// Sentinel key identifying the root level in the per-level pagination maps
+// below (folder levels are keyed by their real folder id, which is always a
+// uuid and so can never collide with this).
+const ROOT_LEVEL_KEY = "root";
+const DOCUMENT_PAGE_SIZE = 40;
+
+function libraryLevelKey(parentId: string | null): string {
+    return parentId ?? ROOT_LEVEL_KEY;
+}
+
 const LibraryWorkspaceContext =
     createContext<LibraryWorkspaceContextValue | null>(null);
 
-function useLibraryWorkspace() {
+/**
+ * The library of one kind in the active workspace, which is what every call
+ * on this page is about: the library is per workspace, and shows a person
+ * their own documents and folders there.
+ */
+function useScopedLibrary(): (kind: LibraryKind) => LibraryScope {
+    const workspace = useWorkspaceParam();
+    return useCallback((kind) => ({ kind, workspace }), [workspace]);
+}
+
+export function useLibraryWorkspace() {
     const context = useContext(LibraryWorkspaceContext);
     if (!context) {
         throw new Error(
@@ -83,6 +136,7 @@ export function LibraryWorkspaceProvider({
 }: {
     children: ReactNode;
 }) {
+    const scoped = useScopedLibrary();
     const [collections, setCollections] = useState<
         Record<LibraryKind, LibraryViewCollection | null>
     >({
@@ -95,41 +149,322 @@ export function LibraryWorkspaceProvider({
         files: false,
         templates: false,
     });
-    const [searchByKind, setSearchByKind] = useState<
-        Record<LibraryKind, string>
-    >({
+  const [searchByKind, setSearchByKind] = useState<Record<LibraryKind, string>>(
+    {
         files: "",
         templates: "",
+    },
+  );
+    const [loadedFolderIdsByKind, setLoadedFolderIdsByKind] = useState<
+        Record<LibraryKind, Set<string>>
+    >({
+        files: new Set(),
+        templates: new Set(),
     });
+    // Per-level (root or folder id) document paging state: how many
+    // documents are currently requested for that level, whether the server
+    // has more beyond that, and whether a "load more" fetch is in flight.
+    const [documentLimitByKind, setDocumentLimitByKind] = useState<
+        Record<LibraryKind, Record<string, number>>
+  >({
+    files: {},
+    templates: {},
+  });
+    const [documentsHasMoreByKind, setDocumentsHasMoreByKind] = useState<
+        Record<LibraryKind, Record<string, boolean>>
+  >({
+    files: {},
+    templates: {},
+  });
+  const [loadingMoreDocumentsByKind, setLoadingMoreDocumentsByKind] = useState<
+    Record<LibraryKind, Record<string, boolean>>
+  >({
+            files: {},
+            templates: {},
+        });
+    const folderChildrenRequestsRef = useRef<Map<string, Promise<void>>>(
+        new Map(),
+    );
+    const loadMoreDocumentsRequestsRef = useRef<Map<string, Promise<void>>>(
+        new Map(),
+    );
 
+    const retryRef = useRef<{
+        loadLibrary: (kind: LibraryKind) => void;
+        loadFolderChildren: (kind: LibraryKind, folderId: string) => void;
+        loadMoreDocuments: (kind: LibraryKind, parentId: string | null) => void;
+    } | null>(null);
+    // Refetches root-level content plus every folder level already lazy-loaded
+    // for this kind (each level re-requested at its current page size), so a
+    // refresh (e.g. after uploading a new document version) doesn't drop the
+    // contents of folders the user has expanded, or documents loaded beyond
+    // the first page.
     const loadLibrary = useCallback(
         async (kind: LibraryKind, options: { showLoading?: boolean } = {}) => {
             if (options.showLoading) {
                 setLoadingByKind((prev) => ({ ...prev, [kind]: true }));
             }
             try {
-                const loaded = await getLibrary(kind);
+                const loadedFolderIds = [...loadedFolderIdsByKind[kind]];
+                const limits = documentLimitByKind[kind];
+        const response = await getLibraryLevels(scoped(kind), [
+          {
+            parentId: null,
+                        limit: limits[ROOT_LEVEL_KEY] ?? DOCUMENT_PAGE_SIZE,
+          },
+          ...loadedFolderIds.map((folderId) => ({
+            parentId: folderId,
+                                limit: limits[folderId] ?? DOCUMENT_PAGE_SIZE,
+          })),
+                ]);
+        const root = response.levels.find((level) => level.parentId === null);
+        if (!root) throw new Error("Library root was not returned");
+
+                const documents = [...root.documents];
+                const folders = [...root.folders];
+                const seenDocIds = new Set(documents.map((d) => d.id));
+                const seenFolderIds = new Set(folders.map((f) => f.id));
+                const stillLoaded = new Set<string>();
+                const nextHasMore: Record<string, boolean> = {
+                    [ROOT_LEVEL_KEY]: root.documentsHasMore,
+                };
+
+        response.levels.forEach((level) => {
+          const folderId = level.parentId;
+          if (!folderId) return;
+                    stillLoaded.add(folderId);
+          nextHasMore[folderId] = level.documentsHasMore;
+          for (const doc of level.documents) {
+                        if (seenDocIds.has(doc.id)) continue;
+                        seenDocIds.add(doc.id);
+                        documents.push(doc);
+                    }
+          for (const folder of level.folders) {
+                        if (seenFolderIds.has(folder.id)) continue;
+                        seenFolderIds.add(folder.id);
+                        folders.push(folder);
+                    }
+                });
+
                 setCollections((prev) => ({
                     ...prev,
-                    [kind]: {
-                        documents: loaded.documents,
-                        folders: loaded.folders,
-                    },
+                    [kind]: { documents, folders },
                 }));
+                setLoadedFolderIdsByKind((prev) => ({
+                    ...prev,
+                    [kind]: stillLoaded,
+                }));
+                setDocumentsHasMoreByKind((prev) => ({
+                    ...prev,
+                    [kind]: nextHasMore,
+                }));
+        setDocumentLimitByKind((prev) => ({
+          ...prev,
+          [kind]: {
+            [ROOT_LEVEL_KEY]: root.documents.length,
+            ...Object.fromEntries(
+              loadedFolderIds.map((folderId) => [
+                folderId,
+                documents.filter(
+                  (document) => (document.folder_id ?? null) === folderId,
+                ).length,
+              ]),
+            ),
+          },
+        }));
             } catch (error) {
-                console.error("[library] failed to load", error);
+                // Everything below resets this kind to an empty shelf. That
+                // is indistinguishable from "you have no files", so the user
+                // has to be told which one it is.
+                notifyError(error, {
+                    action: `load your ${kind}`,
+                    dedupeKey: `library:${kind}`,
+                    onRetry: () => retryRef.current?.loadLibrary(kind),
+                });
                 setCollections((prev) => ({
                     ...prev,
                     [kind]: EMPTY_COLLECTION,
                 }));
+                setLoadedFolderIdsByKind((prev) => ({
+                    ...prev,
+                    [kind]: new Set(),
+                }));
+                setDocumentLimitByKind((prev) => ({ ...prev, [kind]: {} }));
+                setDocumentsHasMoreByKind((prev) => ({ ...prev, [kind]: {} }));
             } finally {
                 if (options.showLoading) {
                     setLoadingByKind((prev) => ({ ...prev, [kind]: false }));
                 }
             }
         },
-        [],
+        [loadedFolderIdsByKind, documentLimitByKind, scoped],
     );
+
+    const loadFolderChildren = useCallback(
+        async (kind: LibraryKind, folderId: string) => {
+            if (loadedFolderIdsByKind[kind].has(folderId)) return;
+            const key = `${kind}:${folderId}`;
+            const inFlight = folderChildrenRequestsRef.current.get(key);
+            if (inFlight) return inFlight;
+
+            const request = (async () => {
+                try {
+          const children = await getLibraryFolderChildren(scoped(kind), folderId, {
+            limit: DOCUMENT_PAGE_SIZE,
+          });
+                    setCollections((prev) => {
+                        const current = prev[kind] ?? EMPTY_COLLECTION;
+            const existingDocIds = new Set(current.documents.map((d) => d.id));
+            const existingFolderIds = new Set(current.folders.map((f) => f.id));
+                        return {
+                            ...prev,
+                            [kind]: {
+                                documents: [
+                                    ...current.documents,
+                  ...children.documents.filter((d) => !existingDocIds.has(d.id)),
+                                ],
+                                folders: [
+                                    ...current.folders,
+                                    ...children.folders.filter(
+                                        (f) => !existingFolderIds.has(f.id),
+                                    ),
+                                ],
+                            },
+                        };
+                    });
+                    setLoadedFolderIdsByKind((prev) => {
+                        const next = new Set(prev[kind]);
+                        next.add(folderId);
+                        return { ...prev, [kind]: next };
+                    });
+                    setDocumentLimitByKind((prev) => ({
+                        ...prev,
+            [kind]: {
+              ...prev[kind],
+              [folderId]: DOCUMENT_PAGE_SIZE,
+            },
+                    }));
+                    setDocumentsHasMoreByKind((prev) => ({
+                        ...prev,
+                        [kind]: {
+                            ...prev[kind],
+                            [folderId]: children.documentsHasMore,
+                        },
+                    }));
+                } catch (error) {
+                    notifyError(error, {
+                        action: "open the folder",
+                        dedupeKey: `library-folder:${kind}:${folderId}`,
+                        onRetry: () =>
+                            retryRef.current?.loadFolderChildren(
+                                kind,
+                                folderId,
+                            ),
+                    });
+                } finally {
+                    folderChildrenRequestsRef.current.delete(key);
+                }
+            })();
+            folderChildrenRequestsRef.current.set(key, request);
+            return request;
+        },
+        [loadedFolderIdsByKind, scoped],
+    );
+
+  // Fetches a fixed-size next page for one level. The old implementation
+  // repeatedly fetched 100, then 150, then 200 rows from offset zero, which
+  // made scrolling transfer the same rows over and over.
+    const loadMoreDocuments = useCallback(
+        async (kind: LibraryKind, parentId: string | null) => {
+            const levelKey = libraryLevelKey(parentId);
+            const requestKey = `${kind}:${levelKey}`;
+            const inFlight = loadMoreDocumentsRequestsRef.current.get(requestKey);
+            if (inFlight) return inFlight;
+
+      const offset = documentLimitByKind[kind][levelKey] ?? 0;
+            setLoadingMoreDocumentsByKind((prev) => ({
+                ...prev,
+                [kind]: { ...prev[kind], [levelKey]: true },
+            }));
+
+            const request = (async () => {
+                try {
+                    const page =
+                        parentId === null
+              ? await getLibrary(scoped(kind), {
+                  limit: DOCUMENT_PAGE_SIZE,
+                  offset,
+                })
+                            : await getLibraryFolderChildren(scoped(kind), parentId, {
+                  limit: DOCUMENT_PAGE_SIZE,
+                  offset,
+                              });
+
+                    setCollections((prev) => {
+                        const current = prev[kind] ?? EMPTY_COLLECTION;
+            const existingDocumentIds = new Set(
+              current.documents.map((document) => document.id),
+            );
+            const existingFolderIds = new Set(
+              current.folders.map((folder) => folder.id),
+            );
+                        const documents = [
+              ...current.documents,
+              ...page.documents.filter(
+                (document) => !existingDocumentIds.has(document.id),
+                            ),
+                        ];
+                        const folders = [
+              ...current.folders,
+              ...page.folders.filter(
+                (folder) => !existingFolderIds.has(folder.id),
+                            ),
+                        ];
+                        return { ...prev, [kind]: { documents, folders } };
+                    });
+                    setDocumentLimitByKind((prev) => ({
+                        ...prev,
+            [kind]: {
+              ...prev[kind],
+              [levelKey]: offset + page.documents.length,
+            },
+                    }));
+                    setDocumentsHasMoreByKind((prev) => ({
+                        ...prev,
+                        [kind]: {
+                            ...prev[kind],
+                            [levelKey]: page.documentsHasMore,
+                        },
+                    }));
+                } catch (error) {
+                    notifyError(error, {
+                        action: `load more ${kind}`,
+                        dedupeKey: `library-more:${kind}:${levelKey}`,
+                        onRetry: () =>
+                            retryRef.current?.loadMoreDocuments(kind, parentId),
+                    });
+                } finally {
+                    setLoadingMoreDocumentsByKind((prev) => ({
+                        ...prev,
+                        [kind]: { ...prev[kind], [levelKey]: false },
+                    }));
+                    loadMoreDocumentsRequestsRef.current.delete(requestKey);
+                }
+            })();
+            loadMoreDocumentsRequestsRef.current.set(requestKey, request);
+            return request;
+        },
+        [documentLimitByKind, scoped],
+    );
+
+    // "Retry" on a failed load re-enters the latest loader (see useLatestRef).
+    useAssignLatest(retryRef, {
+        loadLibrary: (kind: LibraryKind) => void loadLibrary(kind),
+        loadFolderChildren: (kind: LibraryKind, folderId: string) =>
+            void loadFolderChildren(kind, folderId),
+        loadMoreDocuments: (kind: LibraryKind, parentId: string | null) =>
+            void loadMoreDocuments(kind, parentId),
+    });
 
     const setSearchForKind = useCallback((kind: LibraryKind, value: string) => {
         setSearchByKind((prev) => ({ ...prev, [kind]: value }));
@@ -140,9 +475,7 @@ export function LibraryWorkspaceProvider({
             setCollections((prev) => {
                 const current = prev[kind] ?? EMPTY_COLLECTION;
                 const nextDocuments =
-                    typeof update === "function"
-                        ? update(current.documents)
-                        : update;
+          typeof update === "function" ? update(current.documents) : update;
                 return {
                     ...prev,
                     [kind]: {
@@ -160,9 +493,7 @@ export function LibraryWorkspaceProvider({
             setCollections((prev) => {
                 const current = prev[kind] ?? EMPTY_COLLECTION;
                 const nextFolders =
-                    typeof update === "function"
-                        ? update(current.folders)
-                        : update;
+          typeof update === "function" ? update(current.folders) : update;
                 return {
                     ...prev,
                     [kind]: {
@@ -180,7 +511,12 @@ export function LibraryWorkspaceProvider({
             collections,
             loadingByKind,
             searchByKind,
+            loadedFolderIdsByKind,
+            documentsHasMoreByKind,
+            loadingMoreDocumentsByKind,
             loadLibrary,
+            loadFolderChildren,
+            loadMoreDocuments,
             setSearchForKind,
             setDocumentsForKind,
             setFoldersForKind,
@@ -188,7 +524,12 @@ export function LibraryWorkspaceProvider({
         [
             collections,
             loadingByKind,
+            loadedFolderIdsByKind,
+            documentsHasMoreByKind,
+            loadingMoreDocumentsByKind,
             loadLibrary,
+            loadFolderChildren,
+            loadMoreDocuments,
             searchByKind,
             setDocumentsForKind,
             setFoldersForKind,
@@ -204,31 +545,182 @@ export function LibraryWorkspaceProvider({
 }
 
 export function LibraryWorkspaceLayout({ children }: { children: ReactNode }) {
-    return <LibraryWorkspaceProvider>{children}</LibraryWorkspaceProvider>;
+    // Keyed by workspace: switching starts the library again from nothing,
+    // so one workspace's folders and documents are never shown, or filed
+    // into, under another's name.
+    const identity = useWorkspaceIdentity();
+    return (
+        <LibraryWorkspaceProvider key={identity}>
+            {children}
+        </LibraryWorkspaceProvider>
+    );
 }
 
-export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
+export function LibraryCollectionPage({
+    kind,
+    folderId = null,
+}: {
+    kind: LibraryKind;
+    folderId?: string | null;
+}) {
     const router = useRouter();
+    const identity = useWorkspaceIdentity();
+    const scoped = useScopedLibrary();
     const {
         collections,
         loadingByKind,
         searchByKind,
+        documentsHasMoreByKind,
+        loadingMoreDocumentsByKind,
         loadLibrary,
+        loadFolderChildren,
+        loadMoreDocuments,
         setSearchForKind,
         setDocumentsForKind,
         setFoldersForKind,
     } = useLibraryWorkspace();
     const collection = collections[kind];
+    const collectionLoaded = collection !== null;
     const search = searchByKind[kind];
-    const title = kind === "files" ? "Files" : "Templates";
+    const collectionRootPath = kind === "files" ? "/library" : "/library/templates";
+  const debouncedSearch = useDebouncedValue(search, 250);
+    const title = kind === "files" ? "Documents" : "Templates";
+    const [selectionActions, setSelectionActions] = useState<DocTableSelectionActions | null>(null);
+  const [documentTypeOptions, setDocumentTypeOptions] = useState<string[]>([]);
+  const [tableQuery, setTableQuery] = useState<DocTableQuery>({
+    search: "",
+    fileType: null,
+    sort: null,
+  });
+  const [serverDocuments, setServerDocuments] = useState<Document[] | null>(
+    null,
+  );
+  const [serverQueryLoading, setServerQueryLoading] = useState(false);
+  const [serverQueryLoadingMore, setServerQueryLoadingMore] = useState(false);
+  const [serverQueryHasMore, setServerQueryHasMore] = useState(false);
+  const [serverQueryRefreshVersion, setServerQueryRefreshVersion] = useState(0);
+  const [filterOptionsAttempt, setFilterOptionsAttempt] = useState(0);
+  const serverQueryRequestRef = useRef(0);
+    const loadedFolderRouteRef = useRef<string | null>(null);
+    const loadFolderChildrenRef = useRef(loadFolderChildren);
+    loadFolderChildrenRef.current = loadFolderChildren;
+    const folderAvailable =
+        !folderId ||
+        !!collection?.folders.some((folder) => folder.id === folderId);
+    const folderAvailableRef = useRef(folderAvailable);
+    folderAvailableRef.current = folderAvailable;
 
     useEffect(() => {
         if (collection) return;
         void loadLibrary(kind, { showLoading: true });
     }, [collection, kind, loadLibrary]);
 
+    useEffect(() => {
+        if (!folderId) {
+            loadedFolderRouteRef.current = null;
+            return;
+        }
+        if (!collectionLoaded) return;
+
+        const routeKey = `${kind}:${folderId}`;
+        if (loadedFolderRouteRef.current === routeKey) return;
+        loadedFolderRouteRef.current = routeKey;
+        let cancelled = false;
+
+        const loadRoute = folderAvailableRef.current
+            ? Promise.resolve()
+            : getLibraryFolderPath(scoped(kind), folderId).then(
+                  ({ folders: path }) => {
+                      if (cancelled) return;
+                      setFoldersForKind(kind, (current) => {
+                          const pathById = new Map(
+                              path.map((folder) => [folder.id, folder]),
+                          );
+                          const merged = current.map(
+                              (folder) =>
+                                  pathById.get(folder.id) ?? folder,
+                          );
+                          const currentIds = new Set(
+                              current.map((folder) => folder.id),
+                          );
+                          return [
+                              ...merged,
+                              ...path.filter(
+                                  (folder) => !currentIds.has(folder.id),
+                              ),
+                          ];
+                      });
+                  },
+              );
+
+        void loadRoute
+            .then(() => {
+                if (cancelled) return;
+                return loadFolderChildrenRef.current(kind, folderId);
+            })
+            .catch((error) => {
+                loadedFolderRouteRef.current = null;
+                if (!cancelled) {
+                    router.replace(collectionRootPath, { scroll: false });
+                }
+                // The user asked for a folder and landed at the root
+                // instead; say why, and let Retry navigate back into it.
+                notifyError(error, {
+                    action: "open the folder",
+                    dedupeKey: `library-route:${kind}:${folderId}`,
+                    onRetry: () =>
+                        router.push(
+                            `${collectionRootPath}/folders/${encodeURIComponent(folderId)}`,
+                            { scroll: false },
+                        ),
+                });
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        scoped,
+        collectionLoaded,
+        collectionRootPath,
+        folderId,
+        kind,
+        router,
+        setFoldersForKind,
+    ]);
+
+    const handleFolderViewIdChange = useCallback(
+        (nextFolderId: string | null) => {
+            const nextPath = nextFolderId
+                ? `${collectionRootPath}/folders/${encodeURIComponent(nextFolderId)}`
+                : collectionRootPath;
+            router.push(nextPath, { scroll: false });
+        },
+        [collectionRootPath, router],
+    );
+
+    const openPresets = useCallback(() => {
+        router.push(
+            `${
+                folderId
+                    ? `${collectionRootPath}/folders/${encodeURIComponent(folderId)}`
+                    : collectionRootPath
+            }/presets`,
+        );
+    }, [collectionRootPath, folderId, router]);
+    const presetsEmptyStateAction = useMemo(
+        () => ({ label: "Presets", onClick: openPresets }),
+        [openPresets],
+    );
+
     const setDocuments: Dispatch<SetStateAction<Document[]>> = useCallback(
-        (update) => setDocumentsForKind(kind, update),
+    (update) => {
+      setDocumentsForKind(kind, update);
+      setServerDocuments((current) => {
+        if (current === null) return null;
+        return typeof update === "function" ? update(current) : update;
+      });
+    },
         [kind, setDocumentsForKind],
     );
     const setFolders: Dispatch<SetStateAction<DocTableFolder[]>> = useCallback(
@@ -241,9 +733,17 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
     const [createFolderAction, setCreateFolderAction] = useState<
         (() => void) | null
     >(null);
-    const loading = !collection || loadingByKind[kind];
-    const addCollectionLabel = kind === "templates" ? "Templates" : "Files";
-
+    const [uploadFolderAction, setUploadFolderAction] = useState<
+        (() => void) | null
+    >(null);
+    const [folderBackAction, setFolderBackAction] = useState<
+        (() => void) | null
+    >(null);
+    const [folderBreadcrumbs, setFolderBreadcrumbs] = useState<
+        Array<{ label: string; onClick: () => void }>
+    >([]);
+    const loading =
+        !collection || loadingByKind[kind] || !folderAvailable;
     const handleAddDocumentsActionChange = useCallback(
         (action: (() => void) | null) => {
             setAddDocumentsAction(() => action);
@@ -257,55 +757,310 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
         },
         [],
     );
+    const handleUploadFolderActionChange = useCallback(
+        (action: (() => void) | null) => {
+            setUploadFolderAction(() => action);
+        },
+        [],
+    );
+
+    const handleFolderBackActionChange = useCallback(
+        (action: (() => void) | null) => {
+            setFolderBackAction(() => action);
+        },
+        [],
+    );
+
+    const handleFolderViewChange = useCallback(
+        (path: DocTableFolderBreadcrumb[]) => {
+            setFolderBreadcrumbs(
+                path.map((folder) => ({
+                    label: folder.name,
+                    onClick: folder.onClick,
+                })),
+            );
+        },
+        [],
+    );
+
+    const handleExpandFolder = useCallback(
+        (folderId: string) => loadFolderChildren(kind, folderId),
+        [kind, loadFolderChildren],
+    );
+
+    const handleLoadMoreDocuments = useCallback(
+        (parentId: string | null) => loadMoreDocuments(kind, parentId),
+        [kind, loadMoreDocuments],
+    );
+
+  const handleServerQueryChange = useCallback((query: DocTableQuery) => {
+    setTableQuery(query);
+  }, []);
+
+  const handleSelectAllMatching = useCallback(
+    (query: DocTableQuery) =>
+      listLibraryDocumentIds(scoped(kind), {
+        search: query.search.trim() || undefined,
+        fileType: query.fileType ?? undefined,
+      }),
+    [kind, scoped],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void getLibraryFilterOptions(scoped(kind))
+      .then((options) => {
+        if (!cancelled) setDocumentTypeOptions(options.fileTypes);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        // An empty type filter reads as "this library has one file type",
+        // so the user is told the list is missing rather than wrong.
+        setDocumentTypeOptions([]);
+        notifyError(error, {
+          action: "load the file type filter",
+          dedupeKey: `library-filter-options:${kind}`,
+          onRetry: () => setFilterOptionsAttempt((attempt) => attempt + 1),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filterOptionsAttempt, kind, scoped]);
+
+  const serverQueryActive =
+    debouncedSearch.trim().length > 0 ||
+    !!tableQuery.fileType ||
+    !!tableQuery.sort;
+
+  useEffect(() => {
+    const requestVersion = ++serverQueryRequestRef.current;
+    if (!serverQueryActive) {
+      setServerDocuments(null);
+      setServerQueryLoading(false);
+      setServerQueryLoadingMore(false);
+      setServerQueryHasMore(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setServerDocuments([]);
+    setServerQueryLoading(true);
+    setServerQueryLoadingMore(false);
+    void searchLibraryDocuments(scoped(kind), {
+      limit: DOCUMENT_PAGE_SIZE,
+      search: debouncedSearch.trim() || undefined,
+      fileType: tableQuery.fileType ?? undefined,
+      sortKey: tableQuery.sort?.key,
+      sortDirection: tableQuery.sort?.direction,
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (requestVersion !== serverQueryRequestRef.current) return;
+        setServerDocuments(result.documents);
+        setServerQueryHasMore(result.documentsHasMore);
+      })
+      .catch((error) => {
+        if (
+          !controller.signal.aborted &&
+          requestVersion === serverQueryRequestRef.current
+        ) {
+          setServerDocuments([]);
+          setServerQueryHasMore(false);
+          // No results and a failed search look identical in the table.
+          notifyError(error, {
+            action: "search this library",
+            dedupeKey: `library-search:${kind}`,
+            onRetry: () =>
+              setServerQueryRefreshVersion((version) => version + 1),
+          });
+        }
+      })
+      .finally(() => {
+        if (
+          !controller.signal.aborted &&
+          requestVersion === serverQueryRequestRef.current
+        ) {
+          setServerQueryLoading(false);
+        }
+      });
+    return () => controller.abort();
+  }, [
+    scoped,
+    debouncedSearch,
+    kind,
+    serverQueryActive,
+    serverQueryRefreshVersion,
+    tableQuery.fileType,
+    tableQuery.sort,
+  ]);
+
+  // "Retry" re-enters the latest loader; a callback cannot reference itself.
+  const loadMoreServerDocumentsRef = useRef<(() => void) | null>(null);
+  const handleLoadMoreServerDocuments = useCallback(async () => {
+    if (
+      !serverQueryActive ||
+      !serverQueryHasMore ||
+      serverQueryLoading ||
+      serverQueryLoadingMore
+    ) {
+      return;
+    }
+    const requestVersion = serverQueryRequestRef.current;
+    const offset = serverDocuments?.length ?? 0;
+    setServerQueryLoadingMore(true);
+    try {
+      const result = await searchLibraryDocuments(scoped(kind), {
+        limit: DOCUMENT_PAGE_SIZE,
+        offset,
+        search: debouncedSearch.trim() || undefined,
+        fileType: tableQuery.fileType ?? undefined,
+        sortKey: tableQuery.sort?.key,
+        sortDirection: tableQuery.sort?.direction,
+      });
+      if (requestVersion !== serverQueryRequestRef.current) return;
+      setServerDocuments((current) => {
+        if (current === null) return result.documents;
+        const existing = new Set(current.map((document) => document.id));
+        return [
+          ...current,
+          ...result.documents.filter((document) => !existing.has(document.id)),
+        ];
+      });
+      setServerQueryHasMore(result.documentsHasMore);
+    } catch (error) {
+      if (requestVersion === serverQueryRequestRef.current) {
+        notifyError(error, {
+          action: "load more search results",
+          dedupeKey: `library-search-more:${kind}`,
+          onRetry: () => loadMoreServerDocumentsRef.current?.(),
+        });
+      }
+    } finally {
+      if (requestVersion === serverQueryRequestRef.current) {
+        setServerQueryLoadingMore(false);
+      }
+    }
+  }, [
+    scoped,
+    debouncedSearch,
+    kind,
+    serverDocuments?.length,
+    serverQueryActive,
+    serverQueryHasMore,
+    serverQueryLoading,
+    serverQueryLoadingMore,
+    tableQuery.fileType,
+    tableQuery.sort,
+  ]);
+
+  // "Retry" re-enters the latest loader; a callback cannot reference itself.
+  useAssignLatest(loadMoreServerDocumentsRef, () => void handleLoadMoreServerDocuments());
 
     const operations = useMemo(
         () => ({
-            uploadDocument: (file: File) => uploadLibraryDocument(kind, file),
-            refreshCollection: () => loadLibrary(kind),
+            uploadDocument: (file: File, folderId?: string | null) =>
+                uploadLibraryDocument(scoped(kind), file, folderId),
+            uploadDocuments: (
+                files: Array<{
+                    file: File;
+                    folderId: string | null;
+                    clientId: string;
+                }>,
+                options?: Parameters<typeof uploadLibraryDocuments>[2],
+            ) =>
+                uploadLibraryDocuments(
+                    scoped(kind),
+                    files.map(({ file, folderId, clientId }) => ({
+                        file,
+                        folderId,
+                        clientId,
+                    })),
+                    options,
+                ),
+      refreshCollection: async () => {
+        await loadLibrary(kind);
+        setServerQueryRefreshVersion((current) => current + 1);
+      },
             createFolder: (name: string, parentFolderId?: string | null) =>
-                createLibraryFolder(kind, name, parentFolderId),
+                createLibraryFolder(scoped(kind), name, parentFolderId),
+            resolveFolderPath: (
+                segments: string[],
+                baseFolderId: string | null,
+                conflictResolution?: "error" | "reuse" | "rename",
+            ) =>
+                resolveLibraryFolderPath(
+                    scoped(kind),
+                    segments,
+                    baseFolderId,
+                    conflictResolution,
+                ),
             renameFolder: (folderId: string, name: string) =>
-                renameLibraryFolder(kind, folderId, name),
-            deleteFolder: (folderId: string) =>
-                deleteLibraryFolder(kind, folderId),
+                renameLibraryFolder(scoped(kind), folderId, name),
+      deleteFolder: (folderId: string) => deleteLibraryFolder(scoped(kind), folderId),
             moveFolder: (folderId: string, parentFolderId: string | null) =>
-                moveLibraryFolder(kind, folderId, parentFolderId),
+                moveLibraryFolder(scoped(kind), folderId, parentFolderId),
             moveDocument: (documentId: string, folderId: string | null) =>
-                moveLibraryDocument(kind, documentId, folderId),
+                moveLibraryDocument(scoped(kind), documentId, folderId),
             renameDocument: (documentId: string, filename: string) =>
-                renameLibraryDocument(kind, documentId, filename),
+                renameLibraryDocument(scoped(kind), documentId, filename),
+      bulkDeleteDocuments: (documentIds: string[]) =>
+        bulkDeleteLibraryDocuments(scoped(kind), documentIds),
         }),
-        [kind, loadLibrary],
+        [kind, loadLibrary, scoped],
     );
 
     return (
         <div className="flex h-full min-h-0 flex-col">
             <PageHeader
-                breadcrumbs={[{ label: "Library" }, { label: title }]}
+                breadcrumbs={[
+                    {
+                        label: "Library",
+                        onClick: () => router.push("/library"),
+                    },
+                    {
+                        label: title,
+                        onClick: () => router.push(collectionRootPath),
+                    },
+                    ...folderBreadcrumbs,
+                ]}
                 actionGroups={[
                     {
                         actions: [
                             {
                                 type: "search",
                                 value: search,
-                                onChange: (value) =>
-                                    setSearchForKind(kind, value),
+                onChange: (value) => setSearchForKind(kind, value),
                                 placeholder: `Search ${title.toLowerCase()}...`,
+                            },
+                            kind === "templates" && {
+                                type: "custom",
+                                render: (
+                                    <HeaderActionsMenu
+                                        title="More actions"
+                                        items={[
+                                            {
+                                                label: "Add preset templates",
+                                                icon: BookOpen,
+                                                onSelect: openPresets,
+                                            },
+                                        ]}
+                                    />
+                                ),
                             },
                         ],
                     },
                     {
                         actions: [
                             {
-                                icon: <Upload className="h-3.5 w-3.5" />,
-                                label: (
-                                    <span className="hidden sm:inline">
-                                        {addCollectionLabel}
-                                    </span>
+                                type: "custom",
+                                render: (
+                                    <DocumentUploadMenu
+                                        onUploadFiles={addDocumentsAction}
+                                        onUploadFolder={uploadFolderAction}
+                                        disabled={loading}
+                                    />
                                 ),
-                                title: `Add ${addCollectionLabel}`,
-                                onClick: addDocumentsAction ?? undefined,
-                                disabled: !addDocumentsAction || loading,
                             },
                         ],
                     },
@@ -314,25 +1069,40 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
 
             <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
                 <TableToolbar
-                    items={LIBRARY_TABS}
+                    items={folderBackAction ? [] : LIBRARY_TABS}
                     active={kind}
                     onChange={(next) =>
                         router.push(
                             next === "files" ? "/library" : "/library/templates",
                         )
                     }
+                    leading={
+                        folderBackAction ? (
+                            <TabPillButtonUI onClick={folderBackAction} className="pl-2">
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                                Back
+                            </TabPillButtonUI>
+                        ) : undefined
+                    }
                     actions={
-                        <TabPillButton
-                            onClick={createFolderAction ?? undefined}
-                            disabled={!createFolderAction || loading}
-                        >
-                            <Plus className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Folder</span>
-                        </TabPillButton>
+                        <>
+                            {selectionActions && (
+                                <SelectionActionsMenu renderItems={selectionActions.renderMenuItems} />
+                            )}
+                            <TabPillButtonUI
+                                onClick={createFolderAction ?? undefined}
+                                disabled={!createFolderAction || loading}
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Folder</span>
+                            </TabPillButtonUI>
+                        </>
                     }
                 />
                 <DocTable
-                    scopeKey={kind}
+                    onSelectionActionsChange={setSelectionActions}
+                    key={`${identity}:${kind}`}
+                    scopeKey={`${identity}:${kind}`}
                     documents={collection?.documents ?? []}
                     setDocuments={setDocuments}
                     folders={collection?.folders ?? []}
@@ -340,16 +1110,44 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
                     loading={loading}
                     search={search}
                     operations={operations}
-                    onAddDocumentsActionChange={handleAddDocumentsActionChange}
-                    onCreateFolderActionChange={
-                        handleCreateFolderActionChange
-                    }
-                    enableHeaderFilters
-                    emptyDropLabel={
+                    emptyStateTitle={title}
+                    emptyStateSecondaryAction={
                         kind === "templates"
-                            ? "Drop template files here"
-                            : "Drop PDF, Word, Excel, or PowerPoint files here"
+                            ? presetsEmptyStateAction
+                            : undefined
                     }
+                    onAddDocumentsActionChange={handleAddDocumentsActionChange}
+                    onUploadFolderActionChange={
+                        handleUploadFolderActionChange
+                    }
+          onCreateFolderActionChange={handleCreateFolderActionChange}
+                    onFolderViewBackActionChange={handleFolderBackActionChange}
+                    onFolderViewChange={handleFolderViewChange}
+                    folderViewId={folderId}
+                    onFolderViewIdChange={handleFolderViewIdChange}
+                    onExpandFolder={handleExpandFolder}
+                    documentsHasMoreByLevel={documentsHasMoreByKind[kind]}
+          loadingMoreDocumentsByLevel={loadingMoreDocumentsByKind[kind]}
+                    onLoadMoreDocuments={handleLoadMoreDocuments}
+          serverDocuments={serverDocuments}
+          serverQueryLoading={serverQueryLoading}
+          serverQueryHasMore={serverQueryHasMore}
+          serverQueryLoadingMore={serverQueryLoadingMore}
+          onLoadMoreServerDocuments={handleLoadMoreServerDocuments}
+          onServerQueryChange={handleServerQueryChange}
+          onSelectAllMatching={handleSelectAllMatching}
+          documentTypeOptions={documentTypeOptions.map((fileType) => ({
+            value: fileType,
+            label: fileType.toUpperCase(),
+          }))}
+          autoLoadOnScroll
+                    enableHeaderFilters
+                    defaultSort={{ key: "updated", direction: "desc" }}
+                    // The library is the caller's own shelf: there is no
+                    // project, so no project role. Stated rather than left
+                    // implicit, so a surface that DOES have a role and forgot
+                    // to pass it stands out instead of silently opening.
+                    canDo={NO_ROLE_MODEL}
                 />
             </div>
         </div>

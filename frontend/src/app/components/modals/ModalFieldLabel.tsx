@@ -19,13 +19,8 @@ export function ModalFieldLabel({
         className,
     );
 
-    if (as === "p") {
-        return <p className={classes}>{children}</p>;
-    }
-
-    if (as === "span") {
-        return <span className={classes}>{children}</span>;
-    }
+    if (as === "p") return <p className={classes}>{children}</p>;
+    if (as === "span") return <span className={classes}>{children}</span>;
 
     return (
         <label className={classes} {...props}>

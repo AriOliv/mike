@@ -1,52 +1,36 @@
-import Image, { type ImageProps } from "next/image";
+import { SvgAssetIcon, type SvgAssetIconProps } from "@/app/components/ui/svg-asset-icon";
+import folderClosed from "../../../../public/icons/file-system/folder-closed.svg";
+import folderOpen from "../../../../public/icons/file-system/folder-open.svg";
+import projectClosed from "../../../../public/icons/file-system/project-closed.svg";
+import projectOpened from "../../../../public/icons/file-system/project-opened.svg";
 
-type FolderSvgIconProps = Omit<
-    ImageProps,
-    "alt" | "src" | "width" | "height" | "unoptimized"
->;
+type FolderSvgIconProps = Omit<SvgAssetIconProps, "width" | "height">;
 
-type FolderIconName =
-    | "folder-closed"
-    | "folder-open"
-    | "project-closed"
-    | "project-opened";
-
-type FolderStateIconProps = FolderSvgIconProps & {
-    open?: boolean;
+const icons = {
+    "folder-closed": folderClosed,
+    "folder-open": folderOpen,
+    "project-closed": projectClosed,
+    "project-opened": projectOpened,
 };
 
-const FOLDER_ICON_VERSION = "19";
-const FOLDER_ICON_BASE_PATH = "/icons/app-sidebar";
+type FolderStateIconProps = FolderSvgIconProps & { open?: boolean };
 
-function FolderSvgIcon({
-    name,
-    className,
-    ...props
-}: FolderSvgIconProps & { name: FolderIconName }) {
-    return (
-        <Image
-            src={`${FOLDER_ICON_BASE_PATH}/${name}.svg?v=${FOLDER_ICON_VERSION}`}
-            alt=""
-            width={64}
-            height={64}
-            unoptimized
-            aria-hidden="true"
-            draggable={false}
-            className={`${className ?? ""} object-contain`}
-            {...props}
-        />
-    );
+function FolderSvgIcon({ name, ...props }: FolderSvgIconProps & { name: keyof typeof icons }) {
+    return <SvgAssetIcon src={icons[name]} {...props} />;
 }
 
-export function ClosedSubfolderSvgIcon(props: FolderSvgIconProps) {
+function ClosedSubfolderSvgIcon(props: FolderSvgIconProps) {
     return <FolderSvgIcon name="folder-closed" {...props} />;
 }
 
-export function OpenSubfolderSvgIcon(props: FolderSvgIconProps) {
+function OpenSubfolderSvgIcon(props: FolderSvgIconProps) {
     return <FolderSvgIcon name="folder-open" {...props} />;
 }
 
-export function SubfolderSvgIcon({ open = false, ...props }: FolderStateIconProps) {
+export function SubfolderSvgIcon({
+    open = false,
+    ...props
+}: FolderStateIconProps) {
     return open ? (
         <OpenSubfolderSvgIcon {...props} />
     ) : (
@@ -62,7 +46,10 @@ export function OpenProjectSvgIcon(props: FolderSvgIconProps) {
     return <FolderSvgIcon name="project-opened" {...props} />;
 }
 
-export function ProjectSvgIcon({ open = false, ...props }: FolderStateIconProps) {
+export function ProjectSvgIcon({
+    open = false,
+    ...props
+}: FolderStateIconProps) {
     return open ? (
         <OpenProjectSvgIcon {...props} />
     ) : (
@@ -72,8 +59,4 @@ export function ProjectSvgIcon({ open = false, ...props }: FolderStateIconProps)
 
 export function ClosedFolderSvgIcon(props: FolderSvgIconProps) {
     return <ClosedSubfolderSvgIcon {...props} />;
-}
-
-export function OpenFolderSvgIcon(props: FolderSvgIconProps) {
-    return <OpenSubfolderSvgIcon {...props} />;
 }

@@ -1,11 +1,12 @@
 import { Request, Response, NextFunction } from "express";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { ParamsFlatDictionary } from "express-serve-static-core";
+import { createServerSupabase, type Db } from "../lib/supabase";
 import { syncProfileEmail } from "../lib/userLookup";
-
-const isDev = process.env.NODE_ENV !== "production";
-const devLog = (...args: Parameters<typeof console.log>) => {
-  if (isDev) console.log(...args);
-};
+import { sendInternalError } from "../lib/httpError";
+import { createRequestSupabase } from "../lib/authSession";
+import { requestOriginIsTrusted } from "../lib/origins";
+import { devLog, isDev } from "../lib/log";
+import { setCurrentUser } from "../lib/observability/sentry";
 
 function summarizeMfaFactors(
   factors: Array<{
@@ -21,16 +22,19 @@ function summarizeMfaFactors(
 
 function isLoginMfaBootstrapRoute(req: Request) {
   const path = req.originalUrl.split("?")[0];
+  if (path === "/auth/session" || path.startsWith("/auth/mfa/")) {
+    return true;
+  }
   return (
     (req.method === "GET" || req.method === "POST") &&
-    (path === "/user/profile" || path === "/users/profile")
+    path === "/user/profile"
   );
 }
 
 async function enforceLoginMfaIfEnabled(
   req: Request,
   res: Response,
-  admin: SupabaseClient<any, "public", any>,
+  admin: Db,
   token: string,
 ) {
   if (isLoginMfaBootstrapRoute(req)) return true;
@@ -44,13 +48,13 @@ async function enforceLoginMfaIfEnabled(
   if (error) {
     devLog("[auth/mfa] login preference lookup failed", {
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.split("?")[0],
       userId: res.locals.userId,
       error: error.message,
       code: error.code,
     });
     if (error.code === "42703") return true;
-    res.status(500).json({ detail: error.message });
+    sendInternalError(res, error);
     return false;
   }
 
@@ -63,18 +67,25 @@ async function enforceLoginMfaIfEnabled(
   if (assuranceError) {
     devLog("[auth/mfa] login assurance lookup failed", {
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.split("?")[0],
       userId: res.locals.userId,
       error: assuranceError.message,
     });
-    res.status(401).json({ detail: assuranceError.message });
+    console.error(
+      "[auth/mfa] login assurance lookup failed",
+      assuranceError,
+    );
+    res.status(401).json({
+      code: "authentication_failed",
+      detail: "Unable to verify authentication. Please sign in again.",
+    });
     return false;
   }
 
   if (assurance.nextLevel === "aal2" && assurance.currentLevel !== "aal2") {
     devLog("[auth/mfa] login verification required", {
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.split("?")[0],
       userId: res.locals.userId,
     });
     res.status(403).json({
@@ -87,48 +98,105 @@ async function enforceLoginMfaIfEnabled(
   return true;
 }
 
+function getAdminClient(res: Response) {
+  try {
+    return createServerSupabase();
+  } catch {
+    res.status(500).json({ detail: "Server auth is not configured" });
+    return null;
+  }
+}
+
 export async function requireAuth(
-  req: Request,
+  req: Request<ParamsFlatDictionary>,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   const auth = req.headers.authorization ?? "";
-  if (!auth.startsWith("Bearer ")) {
-    res.status(401).json({ detail: "Missing or invalid Authorization header" });
+  const admin = getAdminClient(res);
+  if (!admin) return;
+
+  let token = "";
+  let user: Awaited<ReturnType<typeof admin.auth.getUser>>["data"]["user"] =
+    null;
+
+  if (auth.startsWith("Bearer ")) {
+    // Temporary compatibility path for older Word add-ins, load tests, and
+    // API clients. Updated browser clients authenticate with HttpOnly cookies.
+    token = auth.slice(7).trim();
+    const result = await admin.auth.getUser(token);
+    user = result.data.user;
+  } else {
+    if (
+      !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+      !requestOriginIsTrusted(req.get("origin"))
+    ) {
+      res.status(403).json({
+        code: "untrusted_origin",
+        detail: "The request origin is not allowed.",
+      });
+      return;
+    }
+
+    try {
+      const authClient = createRequestSupabase(req, res);
+      const result = await authClient.auth.getUser();
+      user = result.data.user;
+      if (user) {
+        const sessionResult = await authClient.auth.getSession();
+        token = sessionResult.data.session?.access_token ?? "";
+        res.locals.authClient = authClient;
+        res.locals.authSource = "cookie";
+      }
+    } catch (error) {
+      console.error("[auth] cookie session initialization failed", error);
+      res.status(500).json({ detail: "Server auth is not configured" });
+      return;
+    }
+  }
+
+  if (!user || !token) {
+    res.status(401).json({ detail: "Invalid or expired session" });
     return;
   }
-  const token = auth.slice(7).trim();
 
-  const supabaseUrl = process.env.SUPABASE_URL ?? "";
-  const serviceKey = process.env.SUPABASE_SECRET_KEY ?? "";
-
-  if (!supabaseUrl || !serviceKey) {
-    res.status(500).json({ detail: "Server auth is not configured" });
+  const { data: deletionProfile, error: deletionError } = await admin
+    .from("user_profiles")
+    .select("account_deletion_requested_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (deletionError) {
+    sendInternalError(res, deletionError);
+    return;
+  }
+  if (deletionProfile?.account_deletion_requested_at) {
+    res.status(401).json({ code: "account_deletion_pending", detail: "This account is being deleted." });
     return;
   }
 
-  const admin = createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false },
-  });
-  const { data } = await admin.auth.getUser(token);
-  if (!data.user) {
-    res.status(401).json({ detail: "Invalid or expired token" });
-    return;
-  }
-
-  res.locals.userId = data.user.id;
-  res.locals.userEmail = data.user.email?.toLowerCase() ?? "";
+  res.locals.userId = user.id;
+  // `userEmail` is an AUTHORIZATION input, not a display value: direct grants
+  // (projects, chats, reviews, workflows) and organization invitations are
+  // all matched against it. An address the account has not proved it owns
+  // must therefore match nothing — otherwise signing up as someone else's
+  // address (before they do) inherits whatever was shared or extended to it.
+  // Such a session still authenticates; it only stops matching email-keyed
+  // grants until the address is confirmed.
+  res.locals.userEmail =
+    user.email && user.email_confirmed_at ? user.email.toLowerCase() : "";
   res.locals.token = token;
+  // Id only — enough for "how many users are affected", never the email.
+  setCurrentUser(user.id);
   const syncError = await syncProfileEmail(
     admin,
-    data.user.id,
-    data.user.email,
+    user.id,
+    user.email,
   );
   if (syncError) {
     devLog("[auth/profile-email] sync failed", {
       method: req.method,
-      path: req.originalUrl,
-      userId: data.user.id,
+      path: req.originalUrl.split("?")[0],
+      userId: user.id,
       error: syncError.message,
     });
   }
@@ -139,7 +207,7 @@ export async function requireAuth(
 }
 
 export async function requireMfaIfEnrolled(
-  req: Request,
+  req: Request<ParamsFlatDictionary>,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
@@ -147,40 +215,35 @@ export async function requireMfaIfEnrolled(
   if (!token) {
     devLog("[auth/mfa] missing auth session", {
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.split("?")[0],
     });
     res.status(401).json({ detail: "Missing auth session" });
     return;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL ?? "";
-  const serviceKey = process.env.SUPABASE_SECRET_KEY ?? "";
-
-  if (!supabaseUrl || !serviceKey) {
-    res.status(500).json({ detail: "Server auth is not configured" });
-    return;
-  }
-
-  const admin = createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false },
-  });
+  const admin = getAdminClient(res);
+  if (!admin) return;
   const { data, error } =
     await admin.auth.mfa.getAuthenticatorAssuranceLevel(token);
 
   if (error) {
     devLog("[auth/mfa] assurance lookup failed", {
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.split("?")[0],
       userId: res.locals.userId,
       error: error.message,
     });
-    res.status(401).json({ detail: error.message });
+    console.error("[auth/mfa] assurance lookup failed", error);
+    res.status(401).json({
+      code: "authentication_failed",
+      detail: "Unable to verify authentication. Please sign in again.",
+    });
     return;
   }
 
   devLog("[auth/mfa] assurance level", {
     method: req.method,
-    path: req.originalUrl,
+    path: req.originalUrl.split("?")[0],
     userId: res.locals.userId,
     currentLevel: data.currentLevel,
     nextLevel: data.nextLevel,
@@ -191,7 +254,7 @@ export async function requireMfaIfEnrolled(
     const { data: userData, error: userError } = await admin.auth.getUser(token);
     devLog("[auth/mfa] user factors", {
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.split("?")[0],
       userId: res.locals.userId,
       factorCount: userData.user?.factors?.length ?? 0,
       factors: summarizeMfaFactors(userData.user?.factors),
@@ -202,7 +265,7 @@ export async function requireMfaIfEnrolled(
   if (data.nextLevel === "aal2" && data.currentLevel !== "aal2") {
     devLog("[auth/mfa] verification required", {
       method: req.method,
-      path: req.originalUrl,
+      path: req.originalUrl.split("?")[0],
       userId: res.locals.userId,
     });
     res.status(403).json({

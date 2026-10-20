@@ -4,6 +4,14 @@ import { useState, useEffect } from "react";
 import { Send, CheckCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import { authenticatedFetch } from "@/app/lib/authEvents";
+import { textButtonUIClassName } from "@/shared/ui/TextButtonUI.styles";
+import {
+    describeError,
+    supportMailtoFor,
+    type UserFacingError,
+} from "@/app/lib/userFacingError";
 
 type FeedbackType = "bug" | "feature" | "question" | "other";
 
@@ -22,7 +30,7 @@ export default function SupportPage() {
     const [link, setLink] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<UserFacingError | null>(null);
 
     const feedbackTypes: {
         value: FeedbackType;
@@ -57,7 +65,7 @@ export default function SupportPage() {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch("/api/support", {
+            const response = await authenticatedFetch("/api/support", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -70,13 +78,37 @@ export default function SupportPage() {
             });
 
             if (!response.ok) {
-                throw new Error("Failed to submit feedback");
+                // Carry the status and request id so the failure can be
+                // classified, and so support can find it in the logs.
+                const body = (await response.json().catch(() => ({}))) as {
+                    code?: unknown;
+                    detail?: unknown;
+                };
+                throw Object.assign(
+                    new Error(
+                        typeof body.detail === "string"
+                            ? body.detail
+                            : "Support request failed",
+                    ),
+                    {
+                        status: response.status,
+                        code:
+                            typeof body.code === "string" ? body.code : null,
+                        requestId: response.headers.get("x-request-id"),
+                    },
+                );
             }
 
             setIsSubmitted(true);
         } catch (err) {
             console.error("Error submitting feedback:", err);
-            setError("Failed to submit your feedback. Please try again.");
+            setError(
+                describeError(err, {
+                    action: "send your message",
+                    fallback:
+                        "Mike couldn't send your message. Try again, or email us directly.",
+                }),
+            );
         } finally {
             setIsSubmitting(false);
         }
@@ -126,9 +158,9 @@ export default function SupportPage() {
                         <form onSubmit={handleSubmit} className="space-y-6">
                             {/* Feedback Type Selection */}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-3">
+                                <FieldLabel as="p">
                                     What can we help you with?
-                                </label>
+                                </FieldLabel>
                                 <div className="grid grid-cols-2 gap-3">
                                     {feedbackTypes.map((type) => (
                                         <button
@@ -163,12 +195,9 @@ export default function SupportPage() {
                             {/* Link (for bugs) */}
                             {feedbackType === "bug" && (
                                 <div>
-                                    <label
-                                        htmlFor="link"
-                                        className="block text-sm font-medium text-gray-700 mb-2"
-                                    >
+                                    <FieldLabel htmlFor="link">
                                         Link to issue (optional)
-                                    </label>
+                                    </FieldLabel>
                                     <input
                                         type="url"
                                         id="link"
@@ -190,12 +219,9 @@ export default function SupportPage() {
 
                             {/* Subject */}
                             <div>
-                                <label
-                                    htmlFor="subject"
-                                    className="block text-sm font-medium text-gray-700 mb-2"
-                                >
+                                <FieldLabel htmlFor="subject">
                                     Subject
-                                </label>
+                                </FieldLabel>
                                 <input
                                     type="text"
                                     id="subject"
@@ -208,12 +234,9 @@ export default function SupportPage() {
 
                             {/* Message */}
                             <div>
-                                <label
-                                    htmlFor="message"
-                                    className="block text-sm font-medium text-gray-700 mb-2"
-                                >
+                                <FieldLabel htmlFor="message">
                                     Message
-                                </label>
+                                </FieldLabel>
                                 <textarea
                                     id="message"
                                     value={message}
@@ -237,8 +260,23 @@ export default function SupportPage() {
 
                             {/* Error Message */}
                             {error && (
-                                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                                    {error}
+                                <div
+                                    role="alert"
+                                    className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"
+                                >
+                                    {error.message}
+                                    <a
+                                        href={supportMailtoFor(
+                                            error,
+                                            `Support form failed. Subject: ${subject}`,
+                                        )}
+                                        className={textButtonUIClassName({
+                                            size: "normal",
+                                            className: "ml-2 px-0",
+                                        })}
+                                    >
+                                        Email support directly
+                                    </a>
                                 </div>
                             )}
 

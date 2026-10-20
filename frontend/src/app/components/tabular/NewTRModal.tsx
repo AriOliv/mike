@@ -1,20 +1,53 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useWorkspaceIdentity } from "@/app/hooks/useWorkspaceIdentity";
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Upload } from "lucide-react";
 import type { Document, Folder, Project, Workflow } from "../shared/types";
 import {
+    UploadBatchError,
+    failedUploadMessage,
     getProject,
     listWorkflows,
-    uploadProjectDocument,
-    uploadStandaloneDocument,
+    uploadProjectDocuments,
+    uploadStandaloneDocuments,
 } from "@/app/lib/mikeApi";
+import type { AccessAssignmentRole } from "@/app/lib/mikeApi";
+import {
+    useDocumentWorkspace,
+    useWorkspace,
+    useWorkspaceOrgId,
+} from "@/app/contexts/WorkspaceContext";
+import { notifyError, userFacingApiError } from "@/app/lib/userFacingError";
+import {
+    SUPPORTED_DOCUMENT_ACCEPT,
+    combineUploadWarnings,
+    formatUnsupportedDocumentWarning,
+    partitionSupportedDocumentFiles,
+} from "@/app/lib/documentUploadValidation";
 import { FileDirectory } from "../shared/FileDirectory";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
-import { ModalTextInput } from "../modals/ModalTextInput";
-import { ToggleSwitch } from "@/app/components/ui/toggle-switch";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
+import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { ModelToggle } from "../assistant/ModelToggle";
+import {
+    isRouterModelSelected,
+    type NoModelsReason,
+} from "@/shared/lib/modelCatalog";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
+import { useModelRouterSelections } from "@/app/hooks/useModelRouterSelections";
+import { isModelAvailable } from "@/app/lib/modelAvailability";
+import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
+import { useAuth } from "@/app/contexts/AuthContext";
+import {
+    CreateAccessStep,
+    type PendingDirectGrant,
+    type PendingOrgOverride,
+} from "../modals/CreateAccessStep";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -25,38 +58,76 @@ const TABULAR_DIRECTORY_TABS = ["files", "projects"] as const;
 interface Props {
     open: boolean;
     onClose: () => void;
+    /**
+     * Creates the review. Resolving with a string means the review itself was
+     * created but part of the request was not honoured — the dialog stays open
+     * and shows that message, and pressing Create again retries the remainder
+     * against the same review rather than making a second one.
+     */
     onAdd: (
         title: string,
-        projectId?: string,
-        documentIds?: string[],
-        columnsConfig?: Workflow["columns_config"],
-        documentGrouping?: "document" | "folder",
-    ) => void;
+        projectId: string | undefined,
+        documentIds: string[] | undefined,
+        columnsConfig: Workflow["columns_config"] | undefined,
+        documentGrouping: "document" | "folder" | undefined,
+        model: string,
+        accessAssignments: { email: string; role: AccessAssignmentRole }[],
+    ) => Promise<string | void> | void;
     projects?: Project[];
     /** When provided, skip the project/directory picker and show only these docs */
     projectDocs?: Document[];
     projectFolders?: Folder[];
+    projectId?: string;
     projectName?: string;
     projectCmNumber?: string | null;
 }
 
-export function NewTRModal({
+/** Collects tabular-review configuration and pending access choices before creating a review. */
+function NewTRModalForWorkspace({
     open,
     onClose,
     onAdd,
     projects = [],
     projectDocs: fixedProjectDocs,
     projectFolders: fixedProjectFolders,
+    projectId,
     projectName,
     projectCmNumber,
 }: Props) {
-    const isProjectMode = fixedProjectDocs !== undefined;
-    const [step, setStep] = useState<"details" | "documents">("details");
+    // A document uploaded on its own belongs to the workspace it is
+    // uploaded in.
+    const workspace = useDocumentWorkspace();
+    const isProjectMode = projectId !== undefined;
+    const [step, setStep] = useState<"details" | "access" | "documents">(
+        "details",
+    );
     const [title, setTitle] = useState("");
     const [underProject, setUnderProject] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState("");
+    const [directGrants, setDirectGrants] = useState<PendingDirectGrant[]>([]);
+    // In an organization's workspace a review started on its own belongs to
+    // that organization and is shared with its members only: they are picked
+    // from the roster here, and given access by address once it exists. The
+    // id is the one the review is created under, so the two cannot disagree.
+    const { activeOrganization } = useWorkspace();
+    const workspaceOrgId = useWorkspaceOrgId() ?? null;
+    const [memberGrants, setMemberGrants] = useState<PendingOrgOverride[]>([]);
+    const [selectedModel, setSelectedModel] = useState("");
+    const [noModelsWarning, setNoModelsWarning] =
+        useState<NoModelsReason | null>(null);
+    const { profile, loading: profileLoading } = useUserProfile();
+    const { user } = useAuth();
+    const apiKeys = useModelApiKeys();
+    const modelRouterSelections = useModelRouterSelections();
+    const configuredModels = useConfiguredModels();
+    const configuredModelIds = useMemo(
+        () => configuredModels.map((model) => model.id),
+        [configuredModels],
+    );
 
-    // Project-scoped docs (when underProject is true and no fixedProjectDocs)
+    // Project-scoped docs fetched for the "under project" toggle. In project
+    // mode the list comes from the fixedProjectDocs prop instead, so this only
+    // holds documents uploaded from inside the modal.
     const [projectDocs, setProjectDocs] = useState<Document[]>([]);
     const [projectFolders, setProjectFolders] = useState<Folder[]>([]);
     const [loadingDocs, setLoadingDocs] = useState(false);
@@ -67,26 +138,56 @@ export function NewTRModal({
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [groupBySubfolder, setGroupBySubfolder] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [creating, setCreating] = useState(false);
+    // The review already exists, because a first attempt created it and then
+    // failed on the grants. The page holds that row and the retry reuses it,
+    // so the earlier steps no longer describe anything this dialog can still
+    // change: switching Personal → a project on the second attempt left the
+    // review where it was created and applied the new scope's assignments to
+    // it. Back retires once this is true.
+    const [reviewExists, setReviewExists] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const creatingRef = useRef(false);
+    // The project whose files the picker is loading; see handleSelectProject.
+    const projectRequestRef = useRef<string | null>(null);
 
     // Workflow templates
     const [workflows, setWorkflows] = useState<Workflow[]>([]);
+    // Bumped by the "Retry" on a failed template load so the effect refetches.
+    const [workflowReloadKey, setWorkflowReloadKey] = useState(0);
     const [loadingWorkflows, setLoadingWorkflows] = useState(false);
     const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(
         null,
     );
     const formId = "new-tabular-review-modal-form";
+    const preselectedProjectDocsRef = useRef(false);
+
+    // Derived, not copied into state: the parent passes `[]` until the project
+    // has loaded, so a snapshot taken when the modal opened left the picker
+    // permanently empty for anyone who opened it early.
+    const projectModeDocs: Document[] = [];
+    if (isProjectMode) {
+        const seen = new Set<string>();
+        for (const doc of [...projectDocs, ...(fixedProjectDocs ?? [])]) {
+            if (seen.has(doc.id)) continue;
+            seen.add(doc.id);
+            projectModeDocs.push(doc);
+        }
+    }
+    const projectModeDocsKey = projectModeDocs.map((doc) => doc.id).join(",");
 
     useEffect(() => {
         if (!open) return;
 
         setLoadingWorkflows(true);
-        listWorkflows("tabular")
+        listWorkflows("tabular", workspace ?? "personal")
             .then((workflows) => {
                 devLog("[workflows/ui:tabular-review-modal] loaded", {
                     workflowCount: workflows.length,
-                    systemCount: workflows.filter((workflow) => workflow.is_system)
-                        .length,
+                    systemCount: workflows.filter(
+                        (workflow) => workflow.is_system,
+                    ).length,
                     sample: workflows.slice(0, 5).map((workflow) => ({
                         id: workflow.id,
                         title: workflow.metadata.title,
@@ -99,67 +200,169 @@ export function NewTRModal({
                 setWorkflows(workflows);
             })
             .catch((error) => {
-                devLog(
-                    "[workflows/ui:tabular-review-modal] failed",
-                    error,
-                );
+                devLog("[workflows/ui:tabular-review-modal] failed", error);
                 setWorkflows([]);
+                // An empty list reads as "this firm has no templates", so a
+                // failed load has to say that it failed.
+                notifyError(error, {
+                    action: "load the workflow templates",
+                    dedupeKey: "new-review-workflows",
+                    onRetry: () => setWorkflowReloadKey((key) => key + 1),
+                });
             })
             .finally(() => setLoadingWorkflows(false));
 
-        if (isProjectMode) {
-            setSelectedDocuments(fixedProjectDocs ?? []);
+        if (isProjectMode) preselectedProjectDocsRef.current = false;
+    }, [open, workflowReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        if (!open || !profile?.tabularModel) return;
+        const defaultModel = profile.tabularModel;
+        // Unknown lists (an organization's, still loading) preselect nothing.
+        const routerSelectionValid =
+            !!modelRouterSelections &&
+            isRouterModelSelected(defaultModel, modelRouterSelections);
+        const providerAvailable =
+            !apiKeys ||
+            isModelAvailable(defaultModel, apiKeys, configuredModelIds);
+        if (routerSelectionValid && providerAvailable) {
+            setSelectedModel((current) => current || defaultModel);
         }
-    }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [apiKeys, configuredModelIds, modelRouterSelections, open, profile]);
+
+    // Preselect every project document once, as soon as they're available —
+    // which may be after the modal opened, since the parent's list is empty
+    // while the project is still loading. Only the first non-empty list wins,
+    // so later renders don't stomp on the user's own selection.
+    useEffect(() => {
+        if (!open || !isProjectMode) return;
+        if (preselectedProjectDocsRef.current || !projectModeDocs.length)
+            return;
+        preselectedProjectDocsRef.current = true;
+        setSelectedDocuments(projectModeDocs);
+    }, [open, isProjectMode, projectModeDocsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (!open) return null;
 
-    function handleClose() {
-        setStep("details");
-        setTitle("");
-        setUnderProject(false);
+    // Dismissal — Escape, the backdrop and the close button all arrive here.
+    // A create in flight owns the dialog: leaving now would strand the only
+    // account of what happened to it. The success path calls `handleClose`
+    // directly, which is why the guard lives here and not there.
+    function handleDismiss() {
+        if (creatingRef.current) return;
+        handleClose();
+    }
+
+    // Also drops a project load still in flight, so it cannot land later.
+    function clearProjectSelection() {
+        projectRequestRef.current = null;
+        setLoadingDocs(false);
         setSelectedProjectId("");
         setProjectDocs([]);
         setProjectFolders([]);
-        setExtraStandaloneDocs([]);
         setSelectedDocuments([]);
+    }
+
+    function handleClose() {
+        setStep("details");
+        setReviewExists(false);
+        setTitle("");
+        setUnderProject(false);
+        clearProjectSelection();
+        setDirectGrants([]);
+        setMemberGrants([]);
+        setSelectedModel("");
+        setNoModelsWarning(null);
+        setExtraStandaloneDocs([]);
         setGroupBySubfolder(false);
         setSelectedWorkflowId(null);
+        setUploadError(null);
         onClose();
     }
 
     function submitterValue(e: React.FormEvent<HTMLFormElement>) {
         return (
-            (e.nativeEvent as SubmitEvent).submitter as
-                | HTMLButtonElement
-                | null
+            (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
         )?.value;
     }
 
-    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!title.trim()) return;
+        if (!selectedModel) return;
         if (underProject && !selectedProjectId) return;
-        if (step === "details" || submitterValue(e) !== "create-review") {
+        if (step === "details") {
+            setStep("access");
+            return;
+        }
+        if (step === "access" || submitterValue(e) !== "create-review") {
             setStep("documents");
             return;
         }
+        if (creatingRef.current) return;
+        creatingRef.current = true;
+        setCreating(true);
+        setUploadError(null);
         const selectedWorkflow = workflows.find(
             (w) => w.id === selectedWorkflowId,
         );
-        onAdd(
-            title.trim(),
-            underProject ? selectedProjectId : undefined,
-            selectedDocuments.length > 0
-                ? selectedDocuments.map((document) => document.id)
-                : undefined,
-            selectedWorkflow?.columns_config ?? undefined,
-            groupBySubfolder ? "folder" : "document",
-        );
-        handleClose();
+        const effectiveProjectId = isProjectMode
+            ? projectId
+            : underProject
+              ? selectedProjectId
+              : undefined;
+        const assignments: PendingDirectGrant[] = effectiveProjectId
+            ? []
+            : workspaceOrgId
+              ? memberGrants.flatMap((grant) =>
+                    grant.role === "deny"
+                        ? []
+                        : [
+                              {
+                                  email: grant.email,
+                                  display_name: null,
+                                  role: grant.role,
+                              },
+                          ],
+                )
+              : directGrants;
+        try {
+            const partialFailure = await onAdd(
+                title.trim(),
+                effectiveProjectId,
+                selectedDocuments.length > 0
+                    ? selectedDocuments.map((document) => document.id)
+                    : undefined,
+                selectedWorkflow?.columns_config ?? undefined,
+                groupBySubfolder ? "folder" : "document",
+                selectedModel,
+                assignments,
+            );
+            if (partialFailure) {
+                // The review exists. Report what did not happen and stay open;
+                // closing here would hide the only account of it, and the
+                // generic create failure would be a lie.
+                setUploadError(partialFailure);
+                setReviewExists(true);
+                return;
+            }
+            handleClose();
+        } catch (error) {
+            setUploadError(
+                userFacingApiError(error, "Could not create the review."),
+            );
+        } finally {
+            creatingRef.current = false;
+            setCreating(false);
+        }
     }
 
     async function handleSelectProject(projectId: string) {
+        projectRequestRef.current = projectId;
+        // A slower load for a project the user has since moved away from
+        // must not fill the picker, end its loading state, or raise a notice
+        // whose Retry would switch the picker back.
+        const superseded = () => projectRequestRef.current !== projectId;
         setSelectedProjectId(projectId);
         setProjectDocs([]);
         setProjectFolders([]);
@@ -167,30 +370,67 @@ export function NewTRModal({
         setLoadingDocs(true);
         try {
             const proj = await getProject(projectId);
+            if (superseded()) return;
+            setDirectGrants([]);
+            setMemberGrants([]);
             const docs = (proj.documents ?? []).filter(
                 (d) => d.status === "ready",
             );
             setProjectDocs(docs);
             setProjectFolders(proj.folders ?? []);
             setSelectedDocuments(docs);
+        } catch (error) {
+            if (superseded()) return;
+            // Without this the picker just sat there empty, and the rejection
+            // went nowhere because the caller does not await it.
+            notifyError(error, {
+                action: "load this project's files",
+                dedupeKey: `new-review-project:${projectId}`,
+                onRetry: () => void handleSelectProject(projectId),
+            });
         } finally {
-            setLoadingDocs(false);
+            if (!superseded()) setLoadingDocs(false);
         }
     }
 
     async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
         const files = Array.from(e.target.files ?? []);
         if (!files.length) return;
+        // `accept` is a hint the OS picker can be talked out of, so the file
+        // types the converter cannot read are filtered here too, and named,
+        // rather than spending an upload session on a guaranteed rejection.
+        const { supported, unsupported } =
+            partitionSupportedDocumentFiles(files);
+        const unsupportedWarning =
+            formatUnsupportedDocumentWarning(unsupported);
+        setUploadError(unsupportedWarning);
+        if (supported.length === 0) {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            return;
+        }
         setUploading(true);
         try {
-            const uploaded = await Promise.all(
-                files.map((f) =>
-                    underProject && selectedProjectId
-                        ? uploadProjectDocument(selectedProjectId, f)
-                        : uploadStandaloneDocument(f),
-                ),
+            const uploadProjectId = isProjectMode
+                ? projectId
+                : underProject
+                  ? selectedProjectId
+                  : undefined;
+            const outcomes = uploadProjectId
+                ? await uploadProjectDocuments(
+                      uploadProjectId,
+                      supported.map((file) => ({ file })),
+                  )
+                : await uploadStandaloneDocuments(
+                      supported.map((file) => ({ file })),
+                      undefined,
+                      workspace,
+                  );
+            const uploaded = outcomes.flatMap((outcome) =>
+                outcome.status === "completed" && outcome.result
+                    ? [outcome.result]
+                    : [],
             );
-            if (underProject && selectedProjectId) {
+            if (uploadProjectId) {
                 setProjectDocs((prev) => [...uploaded, ...prev]);
             } else {
                 setExtraStandaloneDocs((prev) => [...uploaded, ...prev]);
@@ -202,8 +442,30 @@ export function NewTRModal({
                         !prev.some((selected) => selected.id === document.id),
                 ),
             ]);
+            // Files that never became documents cannot be attached to the
+            // review, so say which ones instead of leaving the picker looking
+            // as though the upload simply produced nothing.
+            if (uploaded.length < outcomes.length) {
+                setUploadError(
+                    combineUploadWarnings(
+                        unsupportedWarning,
+                        failedUploadMessage(outcomes),
+                    ),
+                );
+            }
         } catch (err) {
             console.error("Upload failed:", err);
+            setUploadError(
+                combineUploadWarnings(
+                    unsupportedWarning,
+                    err instanceof UploadBatchError
+                        ? failedUploadMessage(err.outcomes)
+                        : userFacingApiError(
+                              err,
+                              "The selected files could not be uploaded. Please try again.",
+                          ),
+                ),
+            );
         } finally {
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";
@@ -233,7 +495,7 @@ export function NewTRModal({
 
     // What to show in the directory depends on mode and toggle state
     const directoryDocuments = isProjectMode
-        ? (fixedProjectDocs ?? [])
+        ? projectModeDocs
         : underProject
           ? projectDocs
           : extraStandaloneDocs;
@@ -260,10 +522,14 @@ export function NewTRModal({
     return (
         <Modal
             open={open}
-            onClose={handleClose}
+            onClose={handleDismiss}
             breadcrumbs={[
                 ...breadcrumbs,
-                step === "details" ? "Details" : "Add Documents",
+                step === "details"
+                    ? "Details"
+                    : step === "access"
+                      ? "Access"
+                      : "Add Documents",
             ]}
             secondaryAction={
                 step === "documents"
@@ -275,17 +541,45 @@ export function NewTRModal({
                               <Upload className="h-3.5 w-3.5" />
                           ),
                           onClick: () => fileInputRef.current?.click(),
-                          disabled: uploading,
+                          // Once the review exists a retry reuses it and
+                          // never re-reads the document set, so anything
+                          // uploaded or ticked here on the second attempt was
+                          // dropped without a word. Freeze both.
+                          disabled: uploading || reviewExists,
+                          title: reviewExists
+                              ? "The review has been created — add documents from the review itself."
+                              : undefined,
                       }
-                    : undefined
+                    : step === "access"
+                      ? {
+                            label: "Back",
+                            type: "button",
+                            onClick: () => setStep("details"),
+                            disabled: uploading,
+                        }
+                      : undefined
             }
             cancelAction={
                 step === "documents"
                     ? {
                           label: "Back",
-                          onClick: () => setStep("details"),
-                          disabled: uploading,
+                          onClick: () => setStep("access"),
+                          disabled: uploading || reviewExists,
+                          title: reviewExists
+                              ? "The review has been created — its details and access can be changed from the review itself."
+                              : undefined,
                       }
+                    : step === "access"
+                      ? {
+                            label: "Skip",
+                            type: "button",
+                            onClick: () => {
+                                setDirectGrants([]);
+                                setMemberGrants([]);
+                                setStep("documents");
+                            },
+                            disabled: uploading,
+                        }
                     : undefined
             }
             primaryAction={
@@ -293,30 +587,43 @@ export function NewTRModal({
                     ? {
                           label: "Next",
                           type: "button",
-                          onClick: (event) => {
-                              event.preventDefault();
-                              setStep("documents");
-                          },
+                          onClick: () => setStep("access"),
                           disabled:
                               !title.trim() ||
-                              (underProject && !selectedProjectId),
+                              (underProject && !selectedProjectId) ||
+                              !selectedModel,
                       }
-                    : {
-                          label: "Create",
+                    : step === "access"
+                      ? {
+                            label: "Next",
+                            type: "button",
+                            onClick: (event) => {
+                                // The same footer node becomes the submit button
+                                // on the next render. Cancel this click's native
+                                // default action before changing its type.
+                                event.preventDefault();
+                                setStep("documents");
+                            },
+                            disabled: uploading,
+                        }
+                      : {
+                          label: creating ? "Creating..." : "Create",
                           type: "submit",
                           form: formId,
                           name: "modalAction",
                           value: "create-review",
                           disabled:
                               !title.trim() ||
-                              (underProject && !selectedProjectId),
+                              (underProject && !selectedProjectId) ||
+                              !selectedModel ||
+                              creating,
                       }
             }
         >
             <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt"
+                accept={SUPPORTED_DOCUMENT_ACCEPT}
                 multiple
                 className="hidden"
                 onChange={handleUpload}
@@ -329,10 +636,10 @@ export function NewTRModal({
                 {step === "details" ? (
                     <div className="space-y-6">
                         <div>
-                            <ModalFieldLabel htmlFor="new-tr-title">
+                            <FieldLabel htmlFor="new-tr-title">
                                 Review name
-                            </ModalFieldLabel>
-                            <ModalTextInput
+                            </FieldLabel>
+                            <FormTextInput
                                 id="new-tr-title"
                                 type="text"
                                 value={title}
@@ -344,11 +651,22 @@ export function NewTRModal({
                             />
                         </div>
 
+                        <div>
+                            <FieldLabel as="p">Model</FieldLabel>
+                            <ModelToggle
+                                value={selectedModel}
+                                onChange={setSelectedModel}
+                                apiKeys={apiKeys}
+                                apiKeysLoading={profileLoading && !profile}
+                                routerSelections={modelRouterSelections}
+                                onNoModelsClick={setNoModelsWarning}
+                                modalInput
+                            />
+                        </div>
+
                         {/* Workflow template */}
                         <div>
-                            <ModalFieldLabel as="p">
-                                Workflow template
-                            </ModalFieldLabel>
+                            <FieldLabel as="p">Workflow template</FieldLabel>
                             <ModalSelect
                                 id="new-tr-workflow-template"
                                 value={selectedWorkflowId ?? ""}
@@ -363,23 +681,16 @@ export function NewTRModal({
                         {/* Create under a project toggle */}
                         {!isProjectMode && (
                             <div className="space-y-3">
-                                <ModalFieldLabel as="p">
-                                    Project
-                                </ModalFieldLabel>
-                                <ToggleSwitch
+                                <FieldLabel as="p">Project</FieldLabel>
+                                <ToggleSwitchUI
                                     checked={underProject}
                                     onCheckedChange={(next) => {
                                         setUnderProject(next);
-                                        if (!next) {
-                                            setSelectedProjectId("");
-                                            setProjectDocs([]);
-                                            setProjectFolders([]);
-                                            setSelectedDocuments([]);
-                                        }
+                                        if (!next) clearProjectSelection();
                                     }}
                                 >
                                     Create under a project
-                                </ToggleSwitch>
+                                </ToggleSwitchUI>
 
                                 {underProject && (
                                     <ModalSelect
@@ -399,19 +710,47 @@ export function NewTRModal({
                         )}
 
                         <div>
-                            <ModalFieldLabel as="p">
-                                Document grouping
-                            </ModalFieldLabel>
-                            <ToggleSwitch
+                            <FieldLabel as="p">Document grouping</FieldLabel>
+                            <ToggleSwitchUI
                                 checked={groupBySubfolder}
                                 onCheckedChange={setGroupBySubfolder}
                             >
-                                Treat documents in the same folder as one review row
-                            </ToggleSwitch>
+                                Treat documents in the same folder as one review
+                                row
+                            </ToggleSwitchUI>
                         </div>
                     </div>
+                ) : step === "access" ? (
+                    <CreateAccessStep
+                        orgId={workspaceOrgId}
+                        organizationName={activeOrganization?.name ?? null}
+                        currentUserEmail={user?.email ?? null}
+                        currentUserProfile={profile}
+                        currentUserId={user?.id ?? null}
+                        directGrants={directGrants}
+                        onDirectGrantsChange={setDirectGrants}
+                        orgOverrides={memberGrants}
+                        onOrgOverridesChange={setMemberGrants}
+                        inheritedFromProject={isProjectMode || underProject}
+                        inheritedProjectId={
+                            isProjectMode
+                                ? projectId
+                                : underProject
+                                  ? selectedProjectId || null
+                                  : null
+                        }
+                        ownerLabel="Review owners"
+                        resourceNoun="review"
+                    />
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col">
+                        {reviewExists && (
+                            <p className="mb-3 text-sm text-gray-500">
+                                The review has been created, so its documents
+                                can no longer be changed here. Add documents
+                                from the review once access has been granted.
+                            </p>
+                        )}
                         {showDirectory && (
                             <FileDirectory
                                 documents={directoryDocuments}
@@ -419,13 +758,31 @@ export function NewTRModal({
                                 loading={directoryLoading}
                                 selectedDocuments={selectedDocuments}
                                 onChange={setSelectedDocuments}
+                                selectionDisabled={reviewExists}
                                 showTabs={!isProjectMode && !underProject}
                                 tabs={TABULAR_DIRECTORY_TABS}
                             />
                         )}
+                        {uploadError && (
+                            <p
+                                role="alert"
+                                className="mt-3 text-sm text-red-500"
+                            >
+                                {uploadError}
+                            </p>
+                        )}
                     </div>
                 )}
             </form>
+            <NoModelsWarningPopup
+                reason={noModelsWarning}
+                onClose={() => setNoModelsWarning(null)}
+            />
         </Modal>
     );
+}
+
+export function NewTRModal(props: Props) {
+    const identity = useWorkspaceIdentity();
+    return <NewTRModalForWorkspace key={identity} {...props} />;
 }

@@ -1,0 +1,468 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import type {
+    AccessAssignmentRole,
+    OrgMember,
+    ProjectPeople,
+    UserLookupResult,
+} from "@/app/lib/mikeApi";
+import { getOrg, listOrgMembers } from "@/app/lib/mikeApi";
+import type { ContentVisibility } from "@/app/components/shared/types";
+import { isOrgOwner, type ProjectRole } from "@/app/lib/permissions";
+import { userFacingApiError } from "@/app/lib/userFacingError";
+import { Modal } from "./Modal";
+import {
+    OrganizationAccessEditor,
+    AccessEditor,
+    type OrganizationAccessAssignment,
+    type AccessRow,
+} from "./AccessEditor";
+
+export interface SharedResource {
+    id: string;
+    owner_display_name?: string | null;
+    owner_email?: string | null;
+}
+
+export interface AccessControls {
+    grants: { email: string; role: AccessAssignmentRole }[];
+    /**
+     * The grant list could not be loaded, so `grants` is not "nobody has
+     * access" — it is "we don't know". The editor says so instead of showing
+     * an empty list the user would read as a fact.
+     */
+    grantsUnavailable?: boolean;
+    orgId?: string | null;
+    inheritedFromProjectId?: string | null;
+    canManage: boolean;
+    ownerLabel?: string;
+    /** What the item is called where the dialog describes sharing it. */
+    resourceNoun?: string;
+    /**
+     * For an organization's project or workflow: whether it is public (open
+     * to every member) or private (shared with individuals). It is set on
+     * the item's details, and decides what this modal offers.
+     */
+    visibility?: ContentVisibility;
+    /**
+     * What every organization member holds on a public item; see
+     * OrganizationAccessEditor. Playbooks pass "viewer".
+     */
+    publicMemberRole?: "editor" | "viewer";
+    /**
+     * A failure the owner of this modal wants shown beside the roster rather
+     * than in place of it — a refused grants fetch, say, which leaves the
+     * people list perfectly loadable but management impossible. It shares the
+     * editor's error line with the modal's own action failures; an in-flight
+     * action's message wins, because it is the newer answer.
+     */
+    error?: string | null;
+    onGrant: (email: string, role: AccessAssignmentRole) => Promise<void>;
+    onRevoke: (email: string) => Promise<void>;
+}
+
+interface Props {
+    open: boolean;
+    onClose: () => void;
+    resource: SharedResource | null;
+    fetchAccess: (id: string) => Promise<ProjectPeople>;
+    currentUserEmail?: string | null;
+    currentUserId?: string | null;
+    breadcrumb: string[];
+    access: AccessControls;
+}
+
+/** Loads the selected resource's authorized roster and coordinates supported access changes inside the modal. */
+export function AccessModal({
+    open,
+    onClose,
+    resource,
+    fetchAccess,
+    currentUserEmail,
+    currentUserId,
+    breadcrumb,
+    access,
+}: Props) {
+    const [busy, setBusy] = useState(false);
+    const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+    const [newRole, setNewRole] = useState<ProjectRole>("editor");
+    const [error, setError] = useState<string | null>(null);
+    const [accessRoster, setAccessRoster] = useState<ProjectPeople | null>(null);
+    const [accessLoading, setAccessLoading] = useState(false);
+    const [loadedRosterKey, setLoadedRosterKey] = useState<string | null>(null);
+    const [lookupNames, setLookupNames] = useState<Map<string, string | null>>(
+        new Map(),
+    );
+    const [organizationLookup, setOrganizationLookup] = useState<{
+        orgId: string;
+        name: string | null;
+    } | null>(null);
+    // The organization's members: the only people its items can be shared
+    // with. Kept with the id it was loaded for, so a modal reused for another
+    // organization never offers the previous one's people.
+    const [organizationRoster, setOrganizationRoster] = useState<{
+        orgId: string;
+        members: OrgMember[];
+    } | null>(null);
+
+    const scope = access.inheritedFromProjectId
+        ? "project"
+        : access.orgId
+          ? "organization"
+          : "direct";
+    const canManage = access.canManage;
+    const grantsError = access.grantsUnavailable
+        ? "The list of people with access couldn't be loaded, so it may be incomplete. Retry from the notification, or reopen this dialog."
+        : null;
+    const orgId = access.orgId ?? null;
+    const resourceId = resource?.id ?? null;
+    const grants = useMemo(() => access.grants, [access.grants]);
+    // The roster changes with the grants AND with the visibility: opening an
+    // item to the organization puts every member on it without a grant.
+    const rosterKey = `${resourceId ?? ""}:${access.visibility ?? ""}:${grants
+        .map((grant) => `${grant.email}:${grant.role}`)
+        .map((entry) => entry.toLowerCase())
+        .sort()
+        .join(",")}`;
+
+    useEffect(() => {
+        if (!open) return;
+        setBusy(false);
+        setPendingEmail(null);
+        setNewRole("editor");
+        setError(null);
+    }, [open]);
+
+    useEffect(() => {
+        if (!open || !resourceId) return;
+        let cancelled = false;
+        setAccessLoading(true);
+        setAccessRoster(null);
+        setLoadedRosterKey(null);
+        fetchAccess(resourceId)
+            .then((data) => {
+                if (!cancelled) {
+                    setAccessRoster(data);
+                    setLoadedRosterKey(rosterKey);
+                }
+            })
+            .catch((cause) => {
+                if (!cancelled) {
+                    setError(
+                        userFacingApiError(
+                            cause,
+                            "Could not load access details.",
+                        ),
+                    );
+                    setLoadedRosterKey(rosterKey);
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setAccessLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchAccess, open, resourceId, rosterKey]);
+
+    useEffect(() => {
+        if (!open || !orgId) return;
+        let cancelled = false;
+        getOrg(orgId)
+            .then((organization) => {
+                if (!cancelled) {
+                    setOrganizationLookup({
+                        orgId,
+                        name: organization.name,
+                    });
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setOrganizationLookup({ orgId, name: null });
+                }
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [open, orgId]);
+
+    useEffect(() => {
+        if (!open || !orgId || !canManage) return;
+        let cancelled = false;
+        listOrgMembers(orgId)
+            .then((members) => {
+                if (!cancelled) setOrganizationRoster({ orgId, members });
+            })
+            .catch(() => {
+                // The people already shared with still load from the item's
+                // own roster; only adding somebody new needs this list.
+                if (!cancelled) setOrganizationRoster({ orgId, members: [] });
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [canManage, open, orgId]);
+
+    if (!open || !resource) return null;
+
+    const ownerEmail =
+        accessRoster?.owner?.email?.trim().toLowerCase() ??
+        resource.owner_email?.trim().toLowerCase() ??
+        null;
+    const memberByEmail = new Map(
+        (accessRoster?.members ?? []).map((member) => [
+            member.email.toLowerCase(),
+            member,
+        ]),
+    );
+    const recipients = accessRoster
+        ? accessRoster.members.map((member) => ({
+              email: member.email,
+              role: member.role ?? ("editor" as const),
+          }))
+        : grants;
+    const rows: AccessRow[] = [];
+    if (accessRoster?.owner || ownerEmail || resource.owner_display_name) {
+        rows.push({
+            key: "creator",
+            user_id: accessRoster?.owner?.user_id ?? null,
+            profile_photo: accessRoster?.owner?.profile_photo ?? null,
+            email: ownerEmail,
+            display_name:
+                accessRoster?.owner?.display_name ??
+                resource.owner_display_name ??
+                null,
+            role: "owner",
+            isCreator: true,
+        });
+    }
+    for (const recipient of recipients) {
+        const email = recipient.email.trim().toLowerCase();
+        if (ownerEmail && email === ownerEmail) continue;
+        const member = memberByEmail.get(email);
+        rows.push({
+            key: member?.user_id ?? email,
+            user_id: member?.user_id ?? null,
+            profile_photo: member?.profile_photo ?? null,
+            email,
+            display_name:
+                member?.display_name ?? lookupNames.get(email) ?? null,
+            role: recipient.role,
+        });
+    }
+
+    const recipientEmails = recipients.map((entry) =>
+        entry.email.trim().toLowerCase(),
+    );
+    const currentEmail = currentUserEmail?.trim().toLowerCase() ?? null;
+
+    function validateEmail(email: string) {
+        if (recipientEmails.includes(email)) return `${email} already has access.`;
+        if (ownerEmail && email === ownerEmail)
+            return `${email} created this and is already an owner.`;
+        if (currentEmail && email === currentEmail)
+            return "You cannot share this with yourself.";
+        return null;
+    }
+
+    async function add(user: UserLookupResult) {
+        const email = user.email.trim().toLowerCase();
+        setLookupNames((current) =>
+            new Map(current).set(email, user.display_name),
+        );
+        setBusy(true);
+        setError(null);
+        try {
+            await access.onGrant(email, newRole);
+        } catch (cause) {
+            // A refused grant used to escape as an unhandled rejection with no
+            // message; the sibling changeRole/remove paths already report.
+            setError(
+                userFacingApiError(cause, "Could not add this user. Try again."),
+            );
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function changeRole(
+        row: AccessRow,
+        role: AccessAssignmentRole,
+    ) {
+        if (!row.email) return;
+        setBusy(true);
+        setPendingEmail(row.email);
+        setError(null);
+        try {
+            await access.onGrant(row.email, role);
+        } catch (cause) {
+            setError(userFacingApiError(cause, "Could not change that role."));
+        } finally {
+            setBusy(false);
+            setPendingEmail(null);
+        }
+    }
+
+    async function remove(row: AccessRow) {
+        if (!row.email) return;
+        setBusy(true);
+        setPendingEmail(row.email);
+        setError(null);
+        try {
+            await access.onRevoke(row.email);
+        } catch (cause) {
+            setError(userFacingApiError(cause, "Could not remove access."));
+        } finally {
+            setBusy(false);
+            setPendingEmail(null);
+        }
+    }
+
+    if (scope === "organization") {
+        const creatorUserId = accessRoster?.owner?.user_id ?? null;
+        const rosterMembers =
+            organizationRoster?.orgId === orgId
+                ? organizationRoster.members
+                : [];
+        // Candidates for sharing: every member of the organization. Its
+        // owners are marked "owner" so the editor can leave them out of a
+        // public item's pickers — they own those already. A private item is
+        // shared with them like with anyone.
+        const organizationMembers: AccessRow[] = rosterMembers
+            .filter((member) => !!member.email)
+            .map((member) => ({
+                key: member.user_id,
+                user_id: member.user_id,
+                email: member.email,
+                display_name: member.display_name,
+                profile_photo: member.profile_photo ?? null,
+                role: isOrgOwner(member.role) ? "owner" : "editor",
+                isCreator: member.user_id === creatorUserId,
+            }));
+        // Somebody who can change access sees the grants themselves. Anyone
+        // else is not served them, and sees who has access from the roster
+        // instead — without the denials, which are not theirs to read.
+        const sharedWith: { email: string; role: AccessAssignmentRole }[] =
+            canManage
+                ? grants
+                : (accessRoster?.members ?? [])
+                      .filter((member) => member.role !== "deny")
+                      .map((member) => ({
+                          email: member.email,
+                          role: member.role ?? ("editor" as const),
+                      }));
+        const overrideAssignments: OrganizationAccessAssignment[] =
+            sharedWith.map((grant) => {
+                const member = memberByEmail.get(grant.email.toLowerCase());
+                return {
+                    key: member?.user_id ?? grant.email,
+                    user_id: member?.user_id ?? null,
+                    profile_photo: member?.profile_photo ?? null,
+                    email: grant.email,
+                    display_name:
+                        member?.display_name ??
+                        lookupNames.get(grant.email.toLowerCase()) ??
+                        null,
+                    role: grant.role,
+                };
+            });
+        const creatorAssignment: OrganizationAccessAssignment | null =
+            accessRoster?.owner
+                ? {
+                      key: "creator",
+                      user_id: accessRoster.owner.user_id,
+                      email: accessRoster.owner.email,
+                      display_name: accessRoster.owner.display_name,
+                      profile_photo: accessRoster.owner.profile_photo ?? null,
+                      role: "owner",
+                      isCreator: true,
+                  }
+                : ownerEmail || resource.owner_display_name
+                  ? {
+                        key: "creator",
+                        email: ownerEmail,
+                        display_name: resource.owner_display_name ?? null,
+                        role: "owner",
+                        isCreator: true,
+                    }
+                  : null;
+        const organizationAssignments: OrganizationAccessAssignment[] = [
+            ...(creatorAssignment ? [creatorAssignment] : []),
+            ...overrideAssignments.filter(
+                (assignment) =>
+                    assignment.user_id !== creatorAssignment?.user_id &&
+                    (!assignment.email ||
+                        assignment.email.toLowerCase() !==
+                            creatorAssignment?.email?.toLowerCase()),
+            ),
+        ];
+
+        return (
+            <Modal
+                open={open}
+                onClose={onClose}
+                breadcrumbs={[
+                    ...breadcrumb.slice(0, -1),
+                    "People",
+                ]}
+            >
+                <div className="flex min-h-0 flex-1 flex-col pb-5">
+                    <OrganizationAccessEditor
+                        members={organizationMembers}
+                        assignments={organizationAssignments}
+                        organizationName={
+                            organizationLookup?.orgId === orgId
+                                ? organizationLookup.name
+                                : null
+                        }
+                        ownerLabel={access.ownerLabel}
+                        resourceNoun={access.resourceNoun}
+                        currentUserId={currentUserId}
+                        currentUserEmail={currentUserEmail}
+                        loading={
+                            accessLoading || loadedRosterKey !== rosterKey
+                        }
+                        disabled={!canManage || busy}
+                        error={error ?? access.error ?? grantsError}
+                        visibility={access.visibility ?? "private"}
+                        publicMemberRole={access.publicMemberRole}
+                        onAssign={(member, role) =>
+                            changeRole(member, role)
+                        }
+                        onRemove={remove}
+                    />
+                </div>
+            </Modal>
+        );
+    }
+
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            breadcrumbs={[...breadcrumb.slice(0, -1), "Access"]}
+        >
+            <div className="flex min-h-0 flex-1 flex-col pb-5">
+                <AccessEditor
+                    scope={scope}
+                    rows={rows}
+                    loading={accessLoading || loadedRosterKey !== rosterKey}
+                    canManage={canManage}
+                    currentUserEmail={currentUserEmail}
+                    currentUserId={currentUserId}
+                    busy={busy}
+                    pendingEmail={pendingEmail}
+                    newRole={newRole}
+                    onNewRoleChange={setNewRole}
+                    onAdd={scope === "direct" ? add : undefined}
+                    validateEmail={validateEmail}
+                    onRoleChange={changeRole}
+                    onRemove={scope === "direct" ? remove : undefined}
+                    error={error ?? access.error ?? grantsError}
+                />
+            </div>
+        </Modal>
+    );
+}

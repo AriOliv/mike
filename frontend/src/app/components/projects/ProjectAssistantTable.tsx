@@ -1,31 +1,53 @@
 "use client";
 
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { Plus } from "lucide-react";
+import {
+    useMemo,
+    useRef,
+    useState,
+    type ReactNode,
+    type Dispatch,
+    type SetStateAction,
+} from "react";
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import {
     RowActionMenuItems,
     RowActions,
 } from "@/app/components/shared/RowActions";
 import {
     TABLE_CHECKBOX_CLASS,
-    SkeletonDot,
+    SkeletonCheckbox,
     SkeletonLine,
     TableBody,
     TableCell,
     TableEmptyState,
-    TableFilters,
-    type TableFilterOption,
+    TableSortFilter,
     TableHeaderCell,
     TableHeaderRow,
     TablePrimaryCell,
     TableRow,
     TableScrollArea,
+    rowActionSelectionIds,
+    selectedIdsAfterRangeClick,
+    selectedIdsAfterShiftClick,
     type TableSortDirection,
     TableStickyCell,
 } from "@/app/components/shared/TablePrimitive";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+    CreatorLabel,
+    CreatorLabelSkeleton,
+} from "@/app/components/shared/CreatorLabel";
+import {
+    PersonFilter,
+    distinctPeople,
+    localPeople,
+} from "@/app/components/shared/PersonFilter";
+import { EmptyState } from "@/app/components/ui/empty-state";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { ChatSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import type { Chat } from "@/app/components/shared/types";
+import { can, roleFrom } from "@/app/lib/permissions";
+import type { OwnerGate } from "./ProjectWorkspace";
 import { formatDate } from "./ProjectPageParts";
 
 function creatorLabel(chat: Chat, currentUserId?: string | null) {
@@ -35,11 +57,6 @@ function creatorLabel(chat: Chat, currentUserId?: string | null) {
 
 type ProjectChatSortKey = "name" | "created";
 
-const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
-    { value: "asc", label: "Ascending" },
-    { value: "desc", label: "Descending" },
-];
-
 export function ProjectAssistantTable({
     chats,
     filteredChats,
@@ -48,41 +65,99 @@ export function ProjectAssistantTable({
     renameChatValue,
     currentUserId,
     onCreateChat,
+    canCreateChat,
     onOpenChat,
     onDeleteChat,
+    onDeleteSelectedChats,
     onOwnerOnlyAction,
     submitChatRename,
     setSelectedChatIds,
     setRenamingChatId,
     setRenameChatValue,
     loading = false,
+    renderToolbar,
 }: {
     chats: Chat[];
     filteredChats: Chat[];
     selectedChatIds: string[];
-    allChatsSelected: boolean;
-    someChatsSelected: boolean;
     renamingChatId: string | null;
     renameChatValue: string;
     currentUserId?: string | null;
     onCreateChat: () => void;
+    canCreateChat: boolean;
     onOpenChat: (chatId: string) => void;
     onDeleteChat: (chat: Chat) => Promise<void> | void;
-    onOwnerOnlyAction: (action: string) => void;
+    onDeleteSelectedChats: () => Promise<void> | void;
+    onOwnerOnlyAction: (action: OwnerGate) => void;
     submitChatRename: (chatId: string) => Promise<void> | void;
     setSelectedChatIds: Dispatch<SetStateAction<string[]>>;
     setRenamingChatId: Dispatch<SetStateAction<string | null>>;
     setRenameChatValue: Dispatch<SetStateAction<string>>;
     loading?: boolean;
+    renderToolbar?: (actions: ReactNode) => ReactNode;
 }) {
     const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
     const [sort, setSort] = useState<{
         key: ProjectChatSortKey;
         direction: TableSortDirection;
     } | null>(null);
+    const rowSelectionAnchorIdRef = useRef<string | null>(null);
+    const [chatPendingDelete, setChatPendingDelete] = useState<Chat | null>(
+        null,
+    );
+
+    /**
+     * Deleting a chat is destructive and irreversible, and a project admin's
+     * Delete reaches a colleague's thread — so it is confirmed first, the way
+     * every other delete in the app is. The role gate runs BEFORE the
+     * confirmation: asking a viewer to confirm a delete the server will refuse
+     * is two dialogs for one refusal.
+     */
+    function requestDeleteChat(chat: Chat) {
+        if (!can(roleFrom(chat), "container.delete")) {
+            onOwnerOnlyAction("delete this chat");
+            return;
+        }
+        setChatPendingDelete(chat);
+    }
 
     function clearSelection() {
+        rowSelectionAnchorIdRef.current = null;
         setSelectedChatIds([]);
+    }
+
+    function requestRenameChat(chat: Chat) {
+        if (!can(roleFrom(chat), "access.manage")) {
+            onOwnerOnlyAction({ action: "rename this chat", requiredRole: "owner" });
+            return;
+        }
+        setRenameChatValue(chat.title ?? "Untitled Chat");
+        setRenamingChatId(chat.id);
+    }
+
+    function renderChatActions(chat: Chat | undefined, onClose: () => void) {
+        const actionIds = chat
+            ? rowActionSelectionIds(chat.id, selectedChatIds)
+            : selectedChatIds;
+        const appliesToSelection = actionIds.length > 1;
+        const canDeleteSelection = actionIds.length > 0 && actionIds.every((id) => {
+            const selected = chats.find((item) => item.id === id);
+            return selected && can(roleFrom(selected), "container.delete");
+        });
+        return (
+            <RowActionMenuItems
+                onClose={onClose}
+                onView={!appliesToSelection && chat ? () => onOpenChat(chat.id) : undefined}
+                onRename={!appliesToSelection && chat && can(roleFrom(chat), "access.manage") ? () => requestRenameChat(chat) : undefined}
+                onDelete={canDeleteSelection ? () =>
+                    appliesToSelection || !chat
+                        ? onDeleteSelectedChats()
+                        : requestDeleteChat(chat)
+                    : undefined
+                }
+                deleteLabel={appliesToSelection ? `Delete ${actionIds.length} chats` : undefined}
+            />
+        );
     }
 
     function handleCreatorFilterChange(value: string | null) {
@@ -98,21 +173,24 @@ export function ProjectAssistantTable({
         clearSelection();
     }
 
-    const creatorOptions = useMemo(
+    const creatorPeople = useMemo(
         () =>
-            Array.from(
-                new Set(chats.map((chat) => creatorLabel(chat, currentUserId))),
-            )
-                .sort((a, b) => a.localeCompare(b))
-                .map((creator) => ({ value: creator, label: creator })),
+            distinctPeople(
+                chats.map((chat) => ({
+                    user_id: chat.user_id,
+                    display_name:
+                        chat.creator_display_name ||
+                        (chat.user_id === currentUserId ? "Me" : null),
+                    profile_photo: chat.creator_profile_photo,
+                })),
+            ),
         [chats, currentUserId],
     );
 
     const visibleChats = useMemo(() => {
         const rows = filteredChats.filter(
             (chat) =>
-                !creatorFilter ||
-                creatorLabel(chat, currentUserId) === creatorFilter,
+                !creatorFilter || chat.user_id === creatorFilter,
         );
         if (!sort) return rows;
 
@@ -132,7 +210,7 @@ export function ProjectAssistantTable({
                 ) * multiplier
             );
         });
-    }, [creatorFilter, currentUserId, filteredChats, sort]);
+    }, [creatorFilter, filteredChats, sort]);
 
     const allVisibleChatsSelected =
         visibleChats.length > 0 &&
@@ -144,44 +222,49 @@ export function ProjectAssistantTable({
     const createdSortDirection =
         sort?.key === "created" ? sort.direction : null;
     const nameFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by chat name"
             value={nameSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
             align="right"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("name", direction)}
         />
     );
     const creatorFilterButton = (
-        <TableFilters
+        <PersonFilter
             label="Filter by creator"
-            value={creatorFilter}
-            allLabel="All Creators"
-            widthClassName="w-44"
-            options={creatorOptions}
-            onChange={handleCreatorFilterChange}
+            selectedTitle={(name) => `Created by ${name}`}
+            value={
+                creatorPeople.find(
+                    (person) => person.user_id === creatorFilter,
+                ) ?? null
+            }
+            onChange={(person) =>
+                handleCreatorFilterChange(person?.user_id ?? null)
+            }
+            loadPeople={localPeople(creatorPeople)}
         />
     );
     const createdFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by created date"
             value={createdSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("created", direction)}
         />
     );
 
     return (
+        <>
+        {renderToolbar?.(selectedChatIds.length > 0 ? (
+            <SelectionActionsMenu
+                renderItems={(close) => renderChatActions(chats.find((chat) => chat.id === selectedChatIds[0]), close)}
+            />
+        ) : undefined)}
         <TableScrollArea
             header={
                 <TableHeaderRow className="pr-8 md:pr-8">
                     <TableStickyCell header>
                         {loading ? (
-                            <SkeletonDot className="mr-4" />
+                            <SkeletonCheckbox />
                         ) : (
                             <input
                                 type="checkbox"
@@ -192,6 +275,7 @@ export function ProjectAssistantTable({
                                             someVisibleChatsSelected;
                                 }}
                                 onChange={() => {
+                                    rowSelectionAnchorIdRef.current = null;
                                     if (allVisibleChatsSelected)
                                         setSelectedChatIds([]);
                                     else
@@ -225,52 +309,60 @@ export function ProjectAssistantTable({
                 <ProjectAssistantLoadingRows />
             ) : chats.length === 0 ? (
                 <TableEmptyState>
-                    <ChatSkeuoIcon className="mb-4 h-8 w-8" />
-                    <p className="text-2xl font-medium font-serif text-gray-900">
-                        Assistant
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400 max-w-xs">
-                        Ask questions and get answers grounded in the documents
-                        in this project.
-                    </p>
-                    <PillButton
-                        tone="black"
-                        size="sm"
-                        onClick={onCreateChat}
-                        className="mt-4 px-3"
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                        Create
-                    </PillButton>
+                    <EmptyState
+                        icon={<ChatSkeuoIcon />}
+                        title="Assistant"
+                        description="Ask questions and get answers grounded in the documents in this project."
+                        action={
+                            <PillButtonUI
+                                tone="black"
+                                size="sm"
+                                onClick={onCreateChat}
+                                disabled={!canCreateChat}
+                            >
+                                Create
+                            </PillButtonUI>
+                        }
+                    />
                 </TableEmptyState>
             ) : (
                 <TableBody>
-                    {visibleChats.map((chat) => (
+                    {visibleChats.map((chat) => {
+                        return (
                         <TableRow
                             key={chat.id}
                             selected={selectedChatIds.includes(chat.id)}
-                            rightClickDropdown={(close, menuProps) => (
-                                <RowActionMenuItems
-                                    onClose={close}
-                                    surfaceProps={menuProps}
-                                    onRename={() => {
-                                        if (
-                                            currentUserId &&
-                                            chat.user_id !== currentUserId
-                                        ) {
-                                            onOwnerOnlyAction("rename this chat");
-                                            return;
-                                        }
-                                        setRenameChatValue(
-                                            chat.title ?? "Untitled Chat",
-                                        );
-                                        setRenamingChatId(chat.id);
-                                    }}
-                                    onDelete={() => onDeleteChat(chat)}
-                                />
-                            )}
-                            onClick={() => {
+                            rightClickDropdown={(close) => renderChatActions(chat, close)}
+                            onClick={(event) => {
                                 if (renamingChatId === chat.id) return;
+                                if (event.shiftKey) {
+                                    event.preventDefault();
+                                    const anchorId =
+                                        rowSelectionAnchorIdRef.current;
+                                    setSelectedChatIds((current) =>
+                                        selectedIdsAfterRangeClick(
+                                            chat.id,
+                                            visibleChats.map(
+                                                (visibleChat) => visibleChat.id,
+                                            ),
+                                            current,
+                                            anchorId,
+                                        ),
+                                    );
+                                    rowSelectionAnchorIdRef.current = chat.id;
+                                    return;
+                                }
+                                if (event.ctrlKey || event.metaKey) {
+                                    event.preventDefault();
+                                    setSelectedChatIds((current) =>
+                                        selectedIdsAfterShiftClick(
+                                            chat.id,
+                                            current,
+                                        ),
+                                    );
+                                    rowSelectionAnchorIdRef.current = chat.id;
+                                    return;
+                                }
                                 onOpenChat(chat.id);
                             }}
                             className="pr-8 md:pr-8"
@@ -278,11 +370,13 @@ export function ProjectAssistantTable({
                             <TablePrimaryCell
                                 selected={selectedChatIds.includes(chat.id)}
                                 onSelectionChange={() =>
-                                    setSelectedChatIds((prev) =>
-                                        prev.includes(chat.id)
+                                    setSelectedChatIds((prev) => {
+                                        rowSelectionAnchorIdRef.current =
+                                            chat.id;
+                                        return prev.includes(chat.id)
                                             ? prev.filter((x) => x !== chat.id)
-                                            : [...prev, chat.id],
-                                    )
+                                            : [...prev, chat.id];
+                                    })
                                 }
                                 label={chat.title ?? "Untitled Chat"}
                                 editing={renamingChatId === chat.id}
@@ -294,7 +388,11 @@ export function ProjectAssistantTable({
                                 onEditCancel={() => setRenamingChatId(null)}
                             />
                             <TableCell className="ml-auto w-32">
-                                {creatorLabel(chat, currentUserId)}
+                                <CreatorLabel
+                                    label={creatorLabel(chat, currentUserId)}
+                                    photo={chat.creator_profile_photo}
+                                    name={chat.creator_display_name}
+                                />
                             </TableCell>
                             <TableCell className="w-32">
                                 {formatDate(chat.created_at)}
@@ -304,27 +402,31 @@ export function ProjectAssistantTable({
                                 onClick={(e) => e.stopPropagation()}
                             >
                                 <RowActions
-                                    onRename={() => {
-                                        if (
-                                            currentUserId &&
-                                            chat.user_id !== currentUserId
-                                        ) {
-                                            onOwnerOnlyAction("rename this chat");
-                                            return;
-                                        }
-                                        setRenameChatValue(
-                                            chat.title ?? "Untitled Chat",
-                                        );
-                                        setRenamingChatId(chat.id);
-                                    }}
-                                    onDelete={() => onDeleteChat(chat)}
+                                    onView={() => onOpenChat(chat.id)}
+                                    onRename={can(roleFrom(chat), "access.manage") ? () => requestRenameChat(chat) : undefined}
+                                    onDelete={can(roleFrom(chat), "container.delete") ? () => requestDeleteChat(chat) : undefined}
                                 />
                             </div>
                         </TableRow>
-                    ))}
+                        );
+                    })}
                 </TableBody>
             )}
         </TableScrollArea>
+        <ConfirmPopup
+            open={chatPendingDelete !== null}
+            title="Delete chat?"
+            message="This cannot be undone."
+            confirmLabel="Delete"
+            confirmVariant="danger"
+            onCancel={() => setChatPendingDelete(null)}
+            onConfirm={() => {
+                const chat = chatPendingDelete;
+                setChatPendingDelete(null);
+                if (chat) void onDeleteChat(chat);
+            }}
+        />
+        </>
     );
 }
 
@@ -341,14 +443,14 @@ function ProjectAssistantLoadingRows() {
                 >
                     <TableStickyCell hover={false}>
                         <div className="flex min-w-0 items-center">
-                            <SkeletonDot className="mr-4" />
+                            <SkeletonCheckbox />
                             <SkeletonLine
                                 className={`h-3.5 ${titleWidths[i - 1]}`}
                             />
                         </div>
                     </TableStickyCell>
                     <TableCell className="ml-auto w-32">
-                        <SkeletonLine className="w-16" />
+                        <CreatorLabelSkeleton className="w-16" />
                     </TableCell>
                     <TableCell className="w-32">
                         <SkeletonLine className="w-16" />

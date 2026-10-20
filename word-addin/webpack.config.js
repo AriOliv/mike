@@ -1,29 +1,52 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const path = require("path");
+const fs = require("fs");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const webpack = require("webpack");
+
+const frontendShared = (...segments) =>
+  path.resolve(__dirname, "..", "frontend", "src", "shared", ...segments);
+const frontendSharedUi = (filename) => frontendShared("ui", filename);
 
 module.exports = async (_env, options) => {
   const isDev = options.mode !== "production";
 
+  // npm and webpack do not read .env files themselves. Load the add-in's
+  // local development configuration here so `npm run dev`, `bun dev`, and
+  // `npm start` all receive the same values without a shell-specific `source`
+  // step. Node's loader preserves variables already supplied by the shell, so
+  // explicit CI/deployment overrides continue to win.
+  const localEnvPath = path.join(__dirname, ".env");
+  if (isDev && fs.existsSync(localEnvPath)) {
+    if (typeof process.loadEnvFile !== "function") {
+      throw new Error(
+        "The Word add-in requires Node.js 22 or newer to load word-addin/.env.",
+      );
+    }
+    process.loadEnvFile(localEnvPath);
+  }
+
   if (!isDev) {
     const required = [
-      "REACT_APP_API_BASE_URL",
-      "REACT_APP_SUPABASE_URL",
-      "REACT_APP_SUPABASE_ANON_KEY",
       "REACT_APP_WEB_APP_URL",
     ];
     const missing = required.filter((name) => !process.env[name]?.trim());
     if (missing.length > 0) {
       throw new Error(
-        `Production Word build is missing: ${missing.join(", ")}`
+        `Production Word build is missing: ${missing.join(", ")}`,
+      );
+    }
+    const apiBase = process.env.REACT_APP_API_BASE_URL || "/api";
+    if (!apiBase.startsWith("/")) {
+      throw new Error(
+        "Production REACT_APP_API_BASE_URL must be same-origin (for example /api) so HttpOnly auth cookies work in every Word host.",
       );
     }
   }
 
   /** @type {import('webpack-dev-server').Configuration} */
   const devServerConfig = {
-    port: 3000,
+    port: 3200,
     hot: true,
     // compress defaults to true, and the gzip middleware buffers
     // text/event-stream bodies until the response ends — which turns the /chat
@@ -43,7 +66,7 @@ module.exports = async (_env, options) => {
 
   if (isDev) {
     // Dev-only: self-signed HTTPS cert for the webpack-dev-server on
-    // localhost:3000. office-addin-dev-certs installs its CA into the OS
+    // localhost:3200. office-addin-dev-certs installs its CA into the OS
     // keychain, which pops an admin prompt — impossible to approve in
     // automated/headless environments. DEV_HTTPS_CERT/DEV_HTTPS_KEY serve
     // existing cert files directly instead (the driving browser must then
@@ -66,23 +89,18 @@ module.exports = async (_env, options) => {
     }
 
     // Word loads the task pane over HTTPS, and its WebView blocks "mixed content"
-    // (HTTP requests from an HTTPS page). The Mike API and local Supabase only
-    // serve HTTP, so calling them directly fails with "Load failed". Proxy them
-    // through this HTTPS dev server instead, so the pane makes only same-origin
-    // HTTPS calls (REACT_APP_SUPABASE_URL=https://localhost:3000,
-    // REACT_APP_API_BASE_URL=https://localhost:3000/api) that webpack forwards to
-    // the local HTTP backends server-side. Targets are overridable so the proxy
-    // tracks whatever ports the backend is actually on.
-    const supaTarget =
-      process.env.SUPABASE_PROXY_TARGET || "http://127.0.0.1:54321";
+    // (HTTP requests from an HTTPS page). Proxy the local Mike API through this
+    // HTTPS dev server so authentication and API calls stay same-origin and the
+    // HttpOnly session cookie works consistently across Word hosts.
     const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:3001";
+    const objectStorageTarget =
+      process.env.OBJECT_STORAGE_PROXY_TARGET || "http://localhost:9000";
+    const objectStorageBucketName =
+      process.env.OBJECT_STORAGE_BUCKET_NAME || "mike";
+    if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(objectStorageBucketName)) {
+      throw new Error("OBJECT_STORAGE_BUCKET_NAME is not a valid bucket name");
+    }
     devServerConfig.proxy = [
-      {
-        context: ["/auth", "/rest", "/storage"],
-        target: supaTarget,
-        changeOrigin: true,
-        secure: false,
-      },
       {
         context: ["/api"],
         target: apiTarget,
@@ -90,56 +108,154 @@ module.exports = async (_env, options) => {
         secure: false,
         pathRewrite: { "^/api": "" },
       },
+      {
+        // A local signed URL can use https://localhost:3200 as its public
+        // endpoint. Keep the original Host header so it still matches the
+        // SigV4 signature while webpack forwards the bytes to local storage.
+        context: [`/${objectStorageBucketName}`],
+        target: objectStorageTarget,
+        changeOrigin: false,
+        secure: false,
+      },
     ];
   }
 
+  // Optional source-map upload so Sentry shows readable stack traces for
+  // the minified production bundle. Only when the three upload settings are
+  // present: maps are generated as hidden (no sourceMappingURL comment),
+  // sent to Sentry, then deleted so they never ship in dist/.
+  const sentryUploadConfigured =
+    !isDev &&
+    !!process.env.SENTRY_AUTH_TOKEN &&
+    !!process.env.SENTRY_ORG &&
+    !!process.env.SENTRY_PROJECT;
+  const sentryPlugins = sentryUploadConfigured
+    ? [
+        require("@sentry/webpack-plugin").sentryWebpackPlugin({
+          org: process.env.SENTRY_ORG,
+          project: process.env.SENTRY_PROJECT,
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+          release: process.env.REACT_APP_SENTRY_RELEASE
+            ? { name: process.env.REACT_APP_SENTRY_RELEASE }
+            : undefined,
+          telemetry: false,
+          sourcemaps: {
+            filesToDeleteAfterUpload: ["dist/**/*.map"],
+          },
+        }),
+      ]
+    : [];
+
   /** @type {import('webpack').Configuration} */
   const config = {
-    devtool: "source-map",
+    // Keep readable stack traces locally without publishing application source
+    // and embedded source content in production artifacts.
+    devtool: isDev
+      ? "source-map"
+      : sentryUploadConfigured
+        ? "hidden-source-map"
+        : false,
     entry: {
-      // process-shim MUST load first: it installs a browser `process` global so
-      // the shared @mike/api-client's module-eval-time `process?.env?.…` reads
-      // don't throw "process is not defined" (see src/process-shim.ts).
-      taskpane: ["./src/process-shim.ts", "./src/taskpane/index.tsx"],
-      commands: ["./src/process-shim.ts", "./src/commands/commands.ts"],
+      taskpane: "./src/taskpane/index.tsx",
+      commands: "./src/commands/commands.ts",
+      oauthDialog: "./src/oauth-dialog/index.ts",
     },
     output: {
       path: path.resolve(__dirname, "dist"),
-      filename: "[name].js",
+      filename: isDev ? "[name].js" : "[name].[contenthash:8].js",
+      chunkFilename: isDev ? "[id].js" : "[id].[contenthash:8].js",
       clean: true,
     },
     resolve: {
       extensions: [".ts", ".tsx", ".js", ".jsx"],
+      // Resolve each package's nested dependencies before the add-in fallback.
+      // Sentry's build plugin and runtime SDK can require different versions.
+      modules: ["node_modules", path.resolve(__dirname, "node_modules")],
       alias: {
-        // Shared design system (the @mike/shared package). In the fork this
-        // lives in the monorepo's packages/; here the files are vendored under
-        // src/vendor. Same name the fork's web app imports.
-        "@mike/shared": path.resolve(__dirname, "src/vendor/shared"),
-        // Shared typed API client + core types/enums. Point at the TS entry so
-        // ts-loader compiles them (transpileOnly) exactly like @mike/shared
-        // above — these resolve purely by alias (no package.json dependency).
-        // @mike/api-client transitively imports @mike/core, so both are aliased.
-        "@mike/api-client": path.resolve(
-          __dirname,
-          "src/vendor/api-client/index.ts"
+        // Cross-app source files must use the add-in's React runtime so the
+        // bundle never picks up a second copy from frontend/node_modules.
+        "react$": require.resolve("react"),
+        "react/jsx-runtime$": require.resolve("react/jsx-runtime"),
+        "react-dom$": require.resolve("react-dom"),
+        "lucide-react$": require.resolve("lucide-react"),
+        // The frontend's public icon set is canonical. Webpack imports those
+        // same SVGs and emits content-hashed copies for the add-in bundle.
+        "@icons": path.resolve(__dirname, "..", "frontend", "public", "icons"),
+        "@mike/edit-card-ui": frontendSharedUi("EditCardUI.tsx"),
+        "@mike/edit-cards-section-ui": frontendSharedUi(
+          "EditCardsSectionUI.tsx",
         ),
-        "@mike/core": path.resolve(__dirname, "src/vendor/core/index.ts"),
-        // De-dupe React when resolving the shared sources.
-        react: path.resolve(__dirname, "node_modules/react"),
-        "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
+        "@mike/reasoning-disclosure": frontendShared(
+          "hooks",
+          "useReasoningDisclosure.ts",
+        ),
+        "@mike/pre-response-wrapper-ui": frontendSharedUi(
+          "PreResponseWrapperUI.tsx",
+        ),
+        "@mike/document-event-blocks-ui": frontendSharedUi(
+          "DocumentEventBlocksUI.tsx",
+        ),
+        "@mike/input-ui": frontendSharedUi("InputUI.tsx"),
+        "@mike/glass-card-ui": frontendSharedUi("GlassCardUI.tsx"),
+        "@mike/modal-ui": frontendSharedUi("ModalUI.tsx"),
+        "@mike/header-buttons-ui": frontendSharedUi(
+          "HeaderButtonsUI.tsx",
+        ),
+        "@mike/pill-button-ui": frontendSharedUi("PillButtonUI.tsx"),
+        "@mike/tab-pill-button-ui": frontendSharedUi(
+          "TabPillButtonUI.tsx",
+        ),
+        "@mike/toggle-switch-ui": frontendSharedUi("ToggleSwitchUI.tsx"),
+        "@mike/dropdown-ui": frontendSharedUi("dropdown.tsx"),
+        "@mike/citation-pill-ui": frontendSharedUi("CitationPillUI.tsx"),
+        "@mike/model-toggle-ui": frontendSharedUi("ModelToggleUI.tsx"),
+        "@mike/mike-icon-ui": frontendSharedUi("MikeIconUI.tsx"),
+        "@mike/google-icon-ui": frontendSharedUi("GoogleIconUI.tsx"),
+        "@mike/auth-styles-ui": frontendSharedUi("AuthStylesUI.ts"),
+        "@mike/auth-divider-ui": frontendSharedUi("AuthDividerUI.tsx"),
+        "@mike/workflow-slash-command-ui": frontendSharedUi(
+          "WorkflowSlashCommandUI.tsx",
+        ),
+        // Non-UI shared modules: the upload-session client and the UUID helper
+        // it mints client ids with.
+        "@mike/upload-session-client": frontendShared(
+          "api",
+          "uploadSessionClient.ts",
+        ),
+        "@mike/secure-uuid": frontendShared("lib", "secureUuid.ts"),
+        // Sentry event hygiene (PII scrub + console-bridge dedupe) is one
+        // policy for the web app and the add-in.
+        "@mike/sentry-event": frontendShared("lib", "sentryEvent.ts"),
+        // Error presentation: one classifier and one toast stack for both
+        // clients, so a failure reads the same in Word as it does on the web.
+        "@mike/toast-store": frontendShared("lib", "toastStore.ts"),
+        "@mike/error-notifier": frontendShared("lib", "errorNotifier.ts"),
+        "@mike/toast-ui": frontendSharedUi("ToastUI.tsx"),
+        "@mike/user-error": frontendShared("lib", "userError.ts"),
+        // One model catalog (routers, picker rows, key-based availability)
+        // for the web app and the add-in.
+        "@mike/model-catalog": frontendShared("lib", "modelCatalog.ts"),
+        // Quoting and annotating a passage of a response: one wire format,
+        // menu, pill and modal for the web app and the add-in.
+        "@mike/message-excerpts": frontendShared("lib", "messageExcerpts.ts"),
+        "@mike/response-selection-menu-ui": frontendSharedUi(
+          "ResponseSelectionMenuUI.tsx",
+        ),
+        "@mike/excerpt-pill-ui": frontendSharedUi("ExcerptPillUI.tsx"),
+        "@mike/excerpt-modal-ui": frontendSharedUi("ExcerptModalUI.tsx"),
+        "@mike/chat-history-dropdown-ui": frontendSharedUi(
+          "ChatHistoryDropdownUI.tsx",
+        ),
+        "@mike/composer-send-button-ui": frontendSharedUi(
+          "ComposerSendButtonUI.styles.ts",
+        ),
       },
-      // Resolve bare imports (cva, lucide-react, radix, …) from the add-in's
-      // own node_modules; the trailing "node_modules" keeps default walk-up
-      // behaviour.
-      modules: [path.resolve(__dirname, "node_modules"), "node_modules"],
     },
     module: {
       rules: [
         {
           test: /\.tsx?$/,
-          // transpileOnly so ts-loader compiles the shared .tsx sources that
-          // live outside this project's rootDir without cross-project type
-          // errors; type-checking is done separately via `tsc --noEmit`.
+          // Type-checking is done separately via `tsc --noEmit`.
           use: {
             loader: "ts-loader",
             options: { transpileOnly: true },
@@ -149,6 +265,13 @@ module.exports = async (_env, options) => {
         {
           test: /\.css$/,
           use: ["style-loader", "css-loader", "postcss-loader"],
+        },
+        {
+          test: /\.svg$/i,
+          type: "asset/resource",
+          generator: {
+            filename: "icons/[name].[contenthash][ext]",
+          },
         },
       ],
     },
@@ -163,17 +286,42 @@ module.exports = async (_env, options) => {
         template: "./src/commands/commands.html",
         chunks: ["commands"],
       }),
+      new HtmlWebpackPlugin({
+        filename: "oauth-dialog.html",
+        template: "./src/oauth-dialog/index.html",
+        chunks: ["oauthDialog"],
+      }),
       // Expose env vars to the bundle so TypeScript process.env calls compile
       new webpack.EnvironmentPlugin({
-        REACT_APP_API_BASE_URL: isDev ? "http://localhost:3001" : undefined,
-        REACT_APP_SUPABASE_URL: isDev ? "" : undefined,
-        REACT_APP_SUPABASE_ANON_KEY: isDev ? "" : undefined,
-        REACT_APP_DEFAULT_MODEL: "claude-sonnet-4-6",
+        // Development defaults stay on the HTTPS dev-server origin, whose
+        // proxies reach the HTTP backends without mixed-content failures.
+        // Production hosting must reverse-proxy this same-origin path to the
+        // Mike backend so HttpOnly auth cookies are never third-party cookies.
+        REACT_APP_API_BASE_URL:
+          process.env.REACT_APP_API_BASE_URL || "/api",
+        // Deployment override only. Leaving it empty makes DEFAULT_MODEL_ID in
+        // src/taskpane/lib/modelCatalog.ts the single source of the default
+        // model — this config file cannot import that TypeScript constant, so
+        // repeating its value here would be a second copy that silently drifts.
+        REACT_APP_DEFAULT_MODEL: process.env.REACT_APP_DEFAULT_MODEL || "",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.
-        REACT_APP_WEB_APP_URL: isDev ? "http://localhost:3000" : undefined,
-        NODE_ENV: isDev ? "development" : "production",
+        REACT_APP_WEB_APP_URL: isDev
+          ? process.env.REACT_APP_WEB_APP_URL || "https://app.mikeoss.com"
+          : undefined,
+        // Sentry is off unless a DSN is baked in at build time (the pane is
+        // a static bundle; there is no runtime environment to read).
+        REACT_APP_SENTRY_DISABLED: process.env.REACT_APP_SENTRY_DISABLED || "",
+        REACT_APP_SENTRY_DSN: process.env.REACT_APP_SENTRY_DSN || "",
+        REACT_APP_SENTRY_INSTALL: process.env.REACT_APP_SENTRY_INSTALL || "",
+        REACT_APP_SENTRY_ENVIRONMENT:
+          process.env.REACT_APP_SENTRY_ENVIRONMENT || "",
+        REACT_APP_SENTRY_RELEASE: process.env.REACT_APP_SENTRY_RELEASE || "",
+        REACT_APP_GIT_SHA: process.env.REACT_APP_GIT_SHA || "",
+        REACT_APP_SENTRY_TRACES_SAMPLE_RATE:
+          process.env.REACT_APP_SENTRY_TRACES_SAMPLE_RATE || "",
       }),
+      ...sentryPlugins,
     ],
     devServer: devServerConfig,
   };

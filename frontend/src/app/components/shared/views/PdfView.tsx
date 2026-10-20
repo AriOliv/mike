@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, ZoomIn, ZoomOut } from "lucide-react";
-import { useFetchSingleDoc } from "@/app/hooks/useFetchSingleDoc";
+import {
+    useFetchSingleDoc,
+    type DocResult,
+} from "@/app/hooks/useFetchSingleDoc";
 import type { CitationQuote } from "../types";
 import {
     clearHighlights,
@@ -10,9 +13,14 @@ import {
     highlightQuote,
     STANDARD_FONT_DATA_URL,
 } from "./highlightQuote";
+import { orderTextItemLines, type TextItemGeometry } from "./pdfTextOrder";
+import { LIQUID_GLASS_TRANSLUCENT_CLASS } from "@/shared/ui/LiquidGlassUI";
+import { viewRoundingClass, type ViewRounding } from "./viewRounding";
 
 interface Props {
     doc: { document_id: string; version_id?: string | null } | null;
+    displayUrl?: string | null;
+    refetchKey?: number | string;
     /** Preferred: one or more (page, quote) pairs to highlight. */
     quotes?: CitationQuote[];
     /** Changes when the parent wants the current quote re-focused. */
@@ -20,7 +28,7 @@ interface Props {
     /** Back-compat single-quote API. Ignored if `quotes` is provided. */
     quote?: string;
     fallbackPage?: number;
-    rounded?: boolean;
+    rounded?: ViewRounding;
 }
 
 type QuoteEntry = { page?: number; quote: string };
@@ -36,10 +44,164 @@ type RenderedPage = {
     wrapper: HTMLDivElement;
     canvas: HTMLCanvasElement;
     textDivs: HTMLElement[];
+    /** Indices into `textDivs` in reading order; undefined falls back to drawing order. */
+    readingOrder: number[] | undefined;
 };
+
+type PdfTextStreamItem = {
+    str?: string;
+    transform?: number[];
+    width?: number;
+    height?: number;
+};
+
+type CollectedTextItem = { str: string; geometry: TextItemGeometry };
+
+/**
+ * ResizeObserver's content box shrinks when an overflow scrollbar appears.
+ * The border box does not, so it is the stable measurement for deciding when
+ * the viewer's containing panel has actually been resized.
+ */
+export function getObservedPanelWidth(entry: ResizeObserverEntry): number {
+    const borderBoxSize = entry.borderBoxSize as
+        | readonly ResizeObserverSize[]
+        | ResizeObserverSize
+        | undefined;
+    const borderBox = Array.isArray(borderBoxSize)
+        ? borderBoxSize[0]
+        : borderBoxSize;
+    return Math.round(borderBox?.inlineSize ?? entry.contentRect.width);
+}
+
+/**
+ * PDF.js 6 exposes text geometry through CSS custom properties instead of
+ * writing font size and transforms directly onto each text span. Keep our
+ * custom text layer aligned with that contract without importing the full
+ * stock PDF viewer stylesheet.
+ *
+ * `--scale-round-*` matter as much as the scale factors. Constructing a
+ * `TextLayer` overwrites the container's width and height with
+ * `round(down, var(--total-scale-factor) * <page>px, var(--scale-round-x))`,
+ * and PDF.js 6 writes that `var()` with no fallback. Leaving the property
+ * undefined makes the declaration invalid at computed-value time, so the
+ * container falls back to `width: auto` and — since every text span is
+ * absolutely positioned — collapses to 0x0. Text spans are placed with
+ * percentage offsets, so they would all pile up at the origin and get clipped
+ * by the layer's `overflow: hidden`, hiding every citation highlight. The
+ * stock viewer stylesheet declares these on `.page`; we declare them here.
+ */
+export function configurePdfTextLayer(
+    container: HTMLElement,
+    scale: number,
+    textDivs: HTMLElement[] = [],
+) {
+    container.style.setProperty("--scale-factor", String(scale));
+    container.style.setProperty("--total-scale-factor", String(scale));
+    container.style.setProperty("--scale-round-x", "1px");
+    container.style.setProperty("--scale-round-y", "1px");
+    for (const textDiv of textDivs) {
+        textDiv.classList.add("pdf-text-item");
+    }
+}
+
+/**
+ * Read a page's text-content stream for item geometry.
+ *
+ * `TextLayer` consumes the stream and exposes only DOM spans, which carry no
+ * usable coordinates, so the caller tees the stream and passes the second
+ * branch here. Reading the same stream guarantees the same item sequence,
+ * which is what keeps the result index-aligned with `textLayer.textDivs`.
+ *
+ * The x/y/width/height derivation mirrors the extractor's in
+ * `backend/src/lib/pdfText.ts`, so both sides cluster on identical numbers.
+ * Width matters as much as the rest: column detection reads it to tell a
+ * page gutter from the whitespace inside a table.
+ */
+async function collectTextItemGeometry(
+    stream: ReadableStream<{ items: PdfTextStreamItem[] }>,
+): Promise<CollectedTextItem[]> {
+    const collected: CollectedTextItem[] = [];
+    const reader = stream.getReader();
+    try {
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            for (const item of value?.items ?? []) {
+                // TextLayer creates one span per item carrying a `str`, and
+                // skips marked-content boundaries, which carry none.
+                if (item.str === undefined) continue;
+                const transform = Array.isArray(item.transform)
+                    ? item.transform
+                    : [];
+                const scaleY =
+                    typeof transform[3] === "number" ? transform[3] : 0;
+                collected.push({
+                    str: item.str,
+                    geometry: {
+                        x: typeof transform[4] === "number" ? transform[4] : 0,
+                        y: typeof transform[5] === "number" ? transform[5] : 0,
+                        w: typeof item.width === "number" ? item.width : 0,
+                        h:
+                            Math.abs(scaleY) ||
+                            (typeof item.height === "number"
+                                ? item.height
+                                : 0) ||
+                            10,
+                    },
+                });
+            }
+        }
+    } catch (error) {
+        // Zooming or navigating mid-render cancels the stream. Returning what
+        // was collected lets computeReadingOrder see the length mismatch and
+        // fall back to drawing order. Rejecting instead would surface as an
+        // unhandled rejection, because a stale render returns before the
+        // caller ever awaits this promise.
+        console.warn("PDF text geometry read did not complete", error);
+    } finally {
+        reader.releaseLock();
+    }
+    return collected;
+}
+
+/**
+ * Order `textDivs` the way the backend extractor orders the same items, so a
+ * quote taken from the extracted text can be found in the rendered text layer.
+ *
+ * Returns undefined when the collected items are not index-aligned with
+ * `textDivs`, which would make any ordering meaningless; callers then fall
+ * back to drawing order, i.e. the behavior before reading order existed.
+ */
+export function computeReadingOrder(
+    textDivs: HTMLElement[],
+    collected: CollectedTextItem[],
+): number[] | undefined {
+    if (collected.length !== textDivs.length) {
+        console.warn(
+            `PDF text items (${collected.length}) are not aligned with text layer spans (${textDivs.length}); matching citations in drawing order.`,
+        );
+        return undefined;
+    }
+
+    // The extractor drops empty items before clustering, so they must not
+    // influence line grouping here either. They hold no text to match anyway.
+    const divIndices: number[] = [];
+    const geometry: TextItemGeometry[] = [];
+    for (let i = 0; i < collected.length; i++) {
+        if (collected[i].str === "") continue;
+        divIndices.push(i);
+        geometry.push(collected[i].geometry);
+    }
+
+    return orderTextItemLines(geometry)
+        .flat()
+        .map((index) => divIndices[index]);
+}
 
 export function PdfView({
     doc,
+    displayUrl,
+    refetchKey,
     quotes,
     quoteFocusKey,
     quote,
@@ -52,9 +214,16 @@ export function PdfView({
         null,
     );
     const renderedPagesRef = useRef<RenderedPage[]>([]);
+    const renderGenerationRef = useRef(0);
     const quoteListRef = useRef<QuoteEntry[]>([]);
     const zoomRef = useRef(1.0);
     const currentPageRef = useRef(1);
+    // renderPDF wipes the container and rebuilds renderedPagesRef across many
+    // awaits, and several call sites can fire it again mid-flight (rapid zoom
+    // is the easy repro). Every run takes a generation number and bails at each
+    // await once a newer run has started, so two passes can't interleave their
+    // appends into the same container/ref.
+    const renderTaskRef = useRef<import("pdfjs-dist").RenderTask | null>(null);
 
     const quoteList: QuoteEntry[] = useMemo(() => {
         if (quotes?.length)
@@ -72,18 +241,30 @@ export function PdfView({
     const [zoom, setZoom] = useState(1.0);
     const [currentPage, setCurrentPage] = useState(1);
     const [numPages, setNumPages] = useState(0);
+    const [pdfLoadError, setPdfLoadError] = useState<{
+        result: DocResult;
+        message: string;
+    } | null>(null);
 
     const { result, loading, error } = useFetchSingleDoc(
         doc?.document_id ?? null,
         doc?.version_id ?? null,
+        displayUrl,
+        refetchKey,
     );
+    const documentError =
+        error ?? (pdfLoadError?.result === result ? pdfLoadError?.message : null);
 
     // Track container width via ResizeObserver so re-renders fire on resize
     useEffect(() => {
         const el = scrollContainerRef.current;
         if (!el) return;
         const ro = new ResizeObserver((entries) => {
-            setContainerWidth(entries[0]?.contentRect.width ?? 0);
+            const entry = entries[0];
+            const nextWidth = entry ? getObservedPanelWidth(entry) : 0;
+            setContainerWidth((currentWidth) =>
+                currentWidth === nextWidth ? currentWidth : nextWidth,
+            );
         });
         ro.observe(el);
         return () => ro.disconnect();
@@ -135,6 +316,7 @@ export function PdfView({
                         const found = await highlightQuote(
                             target.textDivs,
                             entry.quote,
+                            target.readingOrder,
                         );
                         if (found) hitPage = entry.page;
                     }
@@ -150,6 +332,7 @@ export function PdfView({
                         const found = await highlightQuote(
                             p.textDivs,
                             entry.quote,
+                            p.readingOrder,
                         );
                         if (found) {
                             hitPage = i + 1;
@@ -211,10 +394,23 @@ export function PdfView({
             list: QuoteEntry[],
             scrollToPage?: number,
         ) => {
-            if (!containerRef.current) return;
-            containerRef.current.innerHTML = "";
+            const container = containerRef.current;
+            if (!container) return;
+            const renderGeneration = ++renderGenerationRef.current;
+            const isStale = () =>
+                renderGenerationRef.current !== renderGeneration ||
+                containerRef.current !== container;
+
+            // Stop the in-flight page of any older run so it rejects with
+            // RenderingCancelledException instead of racing us to the canvas.
+            // The generation stamp alone only stops the loop between awaits;
+            // a page already inside page.render() keeps painting.
+            renderTaskRef.current?.cancel();
+            renderTaskRef.current = null;
+            container.innerHTML = "";
             renderedPagesRef.current = [];
             const lib = await getPdfJs();
+            if (isStale()) return;
             lib.TextLayer.cleanup();
 
             setNumPages(doc.numPages);
@@ -231,8 +427,9 @@ export function PdfView({
                     scrollContainerRef.current.style.opacity = "1";
             };
 
-            const panelW = containerRef.current.clientWidth;
+            const panelW = container.clientWidth;
             const firstPage = await doc.getPage(1);
+            if (isStale()) return;
             const naturalWidth = firstPage.getViewport({ scale: 1 }).width;
             const baseScale = Math.max(
                 0.5,
@@ -242,6 +439,7 @@ export function PdfView({
 
             for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
                 const page = await doc.getPage(pageNum);
+                if (isStale()) return;
                 const viewport = page.getViewport({ scale });
 
                 const wrapper = document.createElement("div");
@@ -255,15 +453,22 @@ export function PdfView({
                 canvas.height = viewport.height;
                 canvas.style.display = "block";
                 wrapper.appendChild(canvas);
-                containerRef.current?.appendChild(wrapper);
+                container.appendChild(wrapper);
 
                 const ctx = canvas.getContext("2d");
                 if (!ctx) continue;
 
-                const task = page.render({ canvasContext: ctx, viewport });
+                const task = page.render({
+                    canvas,
+                    canvasContext: ctx,
+                    viewport,
+                });
+                renderTaskRef.current = task;
                 try {
                     await task.promise;
+                    if (isStale()) return;
                 } catch (e: unknown) {
+                    if (isStale()) return;
                     if (
                         (e as { name?: string })?.name !==
                         "RenderingCancelledException"
@@ -271,7 +476,11 @@ export function PdfView({
                         console.error("PDF render error", e);
                     }
                     continue;
+                } finally {
+                    if (renderTaskRef.current === task)
+                        renderTaskRef.current = null;
                 }
+                if (isStale()) return;
 
                 const textLayerDiv = document.createElement("div");
                 textLayerDiv.className = "pdf-text-layer";
@@ -280,16 +489,33 @@ export function PdfView({
                 textLayerDiv.style.top = "0";
                 textLayerDiv.style.width = `${viewport.width}px`;
                 textLayerDiv.style.height = `${viewport.height}px`;
-                textLayerDiv.style.setProperty("--scale-factor", String(scale));
+                configurePdfTextLayer(textLayerDiv, scale);
                 wrapper.appendChild(textLayerDiv);
 
+                // One branch renders the layer, the other yields the item
+                // geometry the layer discards. Both must be consumed or the
+                // tee stalls on backpressure.
+                const [layerStream, geometryStream] = (
+                    page.streamTextContent() as ReadableStream<{
+                        items: PdfTextStreamItem[];
+                    }>
+                ).tee();
+                const geometry = collectTextItemGeometry(geometryStream);
+
                 const textLayer = new lib.TextLayer({
-                    textContentSource: page.streamTextContent(),
+                    textContentSource: layerStream,
                     container: textLayerDiv,
                     viewport,
                 });
                 await textLayer.render();
+                if (isStale()) return;
                 const textDivs = textLayer.textDivs;
+                configurePdfTextLayer(textLayerDiv, scale, textDivs);
+                const readingOrder = computeReadingOrder(
+                    textDivs,
+                    await geometry,
+                );
+                if (isStale()) return;
 
                 renderedPagesRef.current.push({
                     page,
@@ -297,13 +523,17 @@ export function PdfView({
                     wrapper,
                     canvas,
                     textDivs,
+                    readingOrder,
                 });
             }
+
+            if (isStale()) return;
 
             // Apply highlights across all entries, then scroll to the first hit.
             let targetPage: number | null = null;
             if (list.length) {
                 targetPage = await applyHighlights(list);
+                if (isStale()) return;
                 if (targetPage === null) {
                     // Fallback: scroll to the first entry's page hint, even without a highlight
                     const hint = list.find((e) => e.page)?.page ?? null;
@@ -442,6 +672,7 @@ export function PdfView({
     // Clean up PDF.js static font-measurement canvases on unmount
     useEffect(() => {
         return () => {
+            renderGenerationRef.current += 1;
             getPdfJs().then((lib) => lib.TextLayer.cleanup());
         };
     }, []);
@@ -456,25 +687,38 @@ export function PdfView({
         const list = quoteList;
 
         let cancelled = false;
+        let loadingTask: import("pdfjs-dist").PDFDocumentLoadingTask | null =
+            null;
         queueMicrotask(() => {
             if (cancelled) return;
             setZoom(1.0);
             setNumPages(0);
+            setPdfLoadError(null);
         });
 
         (async () => {
             const lib = await getPdfJs();
             if (cancelled) return;
-            const pdfDoc = await lib.getDocument({
-                data: new Uint8Array(result.buffer),
+            loadingTask = lib.getDocument({
+                // PDF.js transfers this buffer to its worker. Keep the fetched
+                // bytes attached so another render can load the same result.
+                data: new Uint8Array(result.buffer.slice(0)),
                 standardFontDataUrl: STANDARD_FONT_DATA_URL,
-            }).promise;
+            });
+            const pdfDoc = await loadingTask.promise;
             if (cancelled) return;
             pdfDocRef.current = pdfDoc;
             await renderPDF(pdfDoc, list);
-        })();
+        })().catch(() => {
+            if (!cancelled)
+                setPdfLoadError({ result, message: "Failed to load document." });
+        });
         return () => {
             cancelled = true;
+            renderGenerationRef.current += 1;
+            pdfDocRef.current = null;
+            renderedPagesRef.current = [];
+            void loadingTask?.destroy().catch(() => {});
         };
     }, [result, renderPDF]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -530,20 +774,21 @@ export function PdfView({
 
     return (
         <div
-            className={`relative flex flex-col bg-gray-100 flex-1 overflow-hidden ${rounded ? "rounded-lg" : ""}`}
+            className={`document-canvas relative flex flex-col flex-1 overflow-hidden ${viewRoundingClass(rounded)}`}
         >
             <div
                 ref={scrollContainerRef}
-                className="flex-1 overflow-auto px-3 pt-5 pb-3"
+                data-document-scroll-viewport
+                className="flex-1 overflow-auto px-3 pt-5 pb-3 [scrollbar-gutter:stable]"
             >
                 {loading && (
                     <div className="flex h-full items-center justify-center">
                         <Loader2 className="h-7 w-7 animate-spin text-gray-400" />
                     </div>
                 )}
-                {error && (
+                {documentError && (
                     <div className="flex h-full items-center justify-center">
-                        <p className="text-sm text-red-500">{error}</p>
+                        <p className="text-sm text-red-500">{documentError}</p>
                     </div>
                 )}
                 <div ref={containerRef} />
@@ -552,13 +797,17 @@ export function PdfView({
                 <>
                     {/* Page counter — bottom left */}
                     <div className="absolute bottom-4 left-4 pointer-events-none">
-                        <span className="flex items-center px-3 py-1.5 rounded-full text-xs font-medium tabular-nums text-gray-700 bg-white/25 backdrop-blur-md border border-white/30 shadow-md">
+                        <span
+                            className={`flex items-center rounded-full px-3 py-1.5 text-xs font-medium tabular-nums text-gray-700 ${LIQUID_GLASS_TRANSLUCENT_CLASS}`}
+                        >
                             {currentPage}/{numPages}
                         </span>
                     </div>
 
                     {/* Zoom controls — bottom right */}
-                    <div className="absolute bottom-4 right-4 flex items-center gap-px rounded-full bg-white/25 backdrop-blur-md border border-white/30 shadow-md px-1 py-1">
+                    <div
+                        className={`absolute bottom-4 right-4 flex items-center gap-px rounded-full px-1 py-1 ${LIQUID_GLASS_TRANSLUCENT_CLASS}`}
+                    >
                         <button
                             onClick={handleZoomOut}
                             disabled={zoom <= ZOOM_MIN}
