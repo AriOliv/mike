@@ -1,6 +1,7 @@
 # One-shot synthetic seed (never real data): creates the two demo users through
 # the GoTrue admin API, records their ids in public._seed_users, then loads
-# seed.sql (12 fictitious cards across the 6 lanes, terms, deadlines).
+# seed.sql (12 fictitious cards across the 6 lanes, terms, deadlines), then any
+# extra-*.sql an overlay merged into the seed-sql configmap.
 # Idempotent: existing users are reused, rows use fixed ids + on conflict.
 apiVersion: batch/v1
 kind: Job
@@ -56,6 +57,11 @@ spec:
               on conflict (email) do update set id = excluded.id, role = excluded.role;
               SQL
               psql "$DB" -v ON_ERROR_STOP=1 -f /seed/seed.sql
+              # overlays add extra-*.sql to seed-sql for tables only they have
+              for f in /seed/extra-*.sql; do
+                [ -e "$f" ] || continue
+                echo "applying $f"; psql "$DB" -v ON_ERROR_STOP=1 -f "$f"
+              done
           env:
             - name: PGPASSWORD
               valueFrom: { secretKeyRef: { name: mike-secrets, key: POSTGRES_PASSWORD } }

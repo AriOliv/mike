@@ -1,0 +1,42 @@
+# preview.34-120-191-197.nip.io — integration preview of the open PRs
+# (branch integration/harvey, scripts/update-preview.sh). Synthetic data only.
+# It has no Gateway of its own: its HTTPRoute attaches to staging's mike-edge
+# (same IP, same IAP), which lists the preview certificate and admits routes
+# from this namespace (see ../staging/kustomization.yaml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: preview
+resources:
+  - namespace.yaml
+  - ../../base
+components:
+  - ../../seed
+  - ../../seed/integration
+configMapGenerator:
+  - name: mike-env
+    literals:
+      - PUBLIC_URL=https://preview.34-120-191-197.nip.io
+images:
+  - name: mike-backend
+    newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend
+    newTag: latest
+  - name: mike-frontend
+    newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/frontend
+    newTag: latest
+patches:
+  # drop this namespace's Gateway; the routes point at staging's
+  - target: { kind: Gateway, name: mike-edge }
+    patch: |-
+      $patch: delete
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata:
+        name: mike-edge
+  - target: { kind: HTTPRoute }
+    patch: |-
+      - op: add
+        path: /spec/parentRefs/0/namespace
+        value: staging
+      - op: add
+        path: /spec/hostnames
+        value: ["preview.34-120-191-197.nip.io"]

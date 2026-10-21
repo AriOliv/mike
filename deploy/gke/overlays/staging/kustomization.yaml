@@ -27,7 +27,14 @@ patches:
     patch: |-
       - op: replace
         path: /spec/listeners/0/tls/options/networking.gke.io~1pre-shared-certs
-        value: mike-staging-clm,mike-staging-nip
+        value: mike-staging-clm,mike-staging-nip,mike-preview-nip
+      # the integration preview (namespace preview) routes through this edge
+      - op: add
+        path: /spec/listeners/0/allowedRoutes
+        value: { namespaces: { from: Selector, selector: { matchLabels: { app.kubernetes.io/part-of: mike } } } }
+      - op: add
+        path: /spec/listeners/1/allowedRoutes
+        value: { namespaces: { from: Selector, selector: { matchLabels: { app.kubernetes.io/part-of: mike } } } }
       - op: replace
         path: /spec/addresses/0/value
         value: mike-staging-ip

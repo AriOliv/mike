@@ -1,0 +1,110 @@
+# Mike no GKE (staging e prévia de integração)
+
+Cluster `mike-gke` (Autopilot, southamerica-east1, nós privados, kubectl só pelo
+DNS endpoint). Dados **só sintéticos**; produção continua na VM `mike-clm`.
+
+| Ambiente | Namespace | URL | O que roda | Atualiza com |
+|---|---|---|---|---|
+| staging | `staging` | https://staging.clm.avenia.tech (provisório: https://34-120-191-197.nip.io) | `infra/gke-staging` | `scripts/deploy.sh staging` |
+| prévia de integração | `preview` | https://preview.34-120-191-197.nip.io | `integration/harvey` = sync + PRs abertos | `scripts/update-preview.sh` |
+
+Os dois passam pelo mesmo HTTPS LB (Gateway `staging/mike-edge`, IP
+`mike-staging-ip`) e pelo mesmo IAP: só contas `@avenia.io` entram. O preview
+não tem Gateway próprio. As rotas dele se penduram no do staging com
+`hostnames: [preview…]`, e o listener aceita rotas de namespaces com o label
+`app.kubernetes.io/part-of: mike`.
+
+## Acesso de pessoas
+
+1. Abra a URL e entre com o Google `@avenia.io` (IAP).
+2. No Mike, entre com uma conta demo:
+   - `legal.demo@avenia.io`: time do Legal (owner da org "Avenia Legal (demo)");
+   - `solicitante.demo@avenia.io`: quem pede.
+   A senha está no Secret do namespace e nunca vai para o git:
+   `kubectl -n <ns> get secret mike-secrets -o jsonpath='{.data.DEMO_PASSWORD}' | base64 -d`
+
+## Acesso de agentes (Playwright/curl atrás do IAP)
+
+A service account `mike-preview-e2e@ari-teste-492120.iam.gserviceaccount.com`:
+- não tem chave;
+- tem `roles/iap.httpsResourceAccessor` só nos backend services do Mike (`scripts/grant-iap.sh`).
+
+Quem roda o teste gera um token curto (1 h) por impersonação. Para isso precisa
+de `roles/iam.serviceAccountTokenCreator` na SA. Peça ao Ari; hoje só ele tem.
+
+```bash
+URL=https://preview.34-120-191-197.nip.io
+export IAP_TOKEN=$(deploy/gke/scripts/iap-token.sh $URL)   # JWT assinado pela SA, aud = $URL/*
+curl -s -o /dev/null -w '%{http_code}\n' -H "Proxy-Authorization: Bearer $IAP_TOKEN" $URL/login   # 200
+```
+
+Use **`Proxy-Authorization`**, não `Authorization`. O IAP aceita os dois, mas
+consome o `Proxy-Authorization` e não o repassa. Assim o `Authorization` fica
+livre para a sessão do Mike. O token só vale para o host do `aud`: um token do
+preview não abre o staging.
+
+Playwright (`playwright.config.ts`):
+
+```ts
+export default defineConfig({
+  use: {
+    baseURL: process.env.MIKE_URL ?? "https://preview.34-120-191-197.nip.io",
+    extraHTTPHeaders: { "Proxy-Authorization": `Bearer ${process.env.IAP_TOKEN}` },
+  },
+});
+```
+
+Depois faça o login no Mike normalmente, pela tela `/login`, com uma conta demo
+(`DEMO_PASSWORD` no env do teste, lida do Secret como acima). O token expira em
+1 h: gere um novo por rodada, nunca o salve em arquivo versionado.
+
+## Prévia de integração: um comando
+
+```bash
+deploy/gke/scripts/update-preview.sh
+```
+
+1. Recria `integration/harvey` a partir de `origin/sync/upstream-2026-10` com merge, em ordem:
+   - `infra/gke-staging`
+   - `feat/card-events`
+   - `feat/ui-verdict`
+   - `feat/ui-agent-suggestion`
+   - `feat/intake-orquestracao`
+   - `feat/radar-regulatorio`
+   - `feat/inicio-contract-intelligence`
+   - `feat/revisao-playbook`
+
+   Usa a branch do `origin`. Se não estiver pushada, cai para a branch local e
+   avisa. Se não existir, pula.
+2. Resolve sozinho só os conflitos de "os dois lados acrescentaram uma linha" em
+   `backend/schema.sql`, `backend/src/app.ts` e `backend/src/jobs/registry.ts`.
+   Em qualquer outro conflito ele para, sem push, e diz qual branch conflitou com qual.
+3. Faz push de `integration/harvey`, que é gerada e nunca editada à mão.
+4. Faz o Cloud Build do commit, o apply no namespace `preview` e roda as migrações
+   (db-init), o rollout e o seed.
+
+Variáveis: `BRANCHES="..."` troca a lista, `SKIP_MERGE=1` redeploya a branch como
+está, `SKIP_BUILD=1` reaproveita a imagem do commit.
+
+## Seed
+
+- `seed/`, nos dois ambientes:
+  - 2 usuários demo;
+  - 12 cards nas 6 lanes;
+  - termos de contratos vigentes;
+  - 7 prazos com data relativa a hoje.
+- `seed/integration/`, só no preview:
+  - org do time do Legal;
+  - 6 pedidos LEG-0001..0006 em todos os status;
+  - 2 varreduras do radar e 4 achados (alto/médio/baixo, cruzados com os cards);
+  - `agent_runs` e o log `card_events`.
+
+Tudo fictício, com ids fixos e idempotente. Os atos regulatórios são inventados
+e as URLs apontam para `example.invalid`.
+
+## Segredos
+
+`scripts/bootstrap-secrets.sh <ns>` gera os segredos de cada namespace (JWT do
+Supabase, senha do Postgres, chaves de assinatura do backend, senha demo). Os
+valores ficam só no Secret do namespace: nada em git, nada impresso. `ROTATE=1`
+regenera e derruba as sessões.
