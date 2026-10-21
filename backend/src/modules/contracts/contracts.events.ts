@@ -163,32 +163,3 @@ export async function finishAgentRun(
     }
 }
 
-/** The agents whose finished runs count as "a contract the agents reviewed". */
-export const REVIEW_AGENTS = ["revisor"] as const;
-
-/**
- * How many distinct contracts an agent reviewed: succeeded runs of a review
- * agent among the given cards, finished after `since` (all time when null).
- * The single source for "Revisei N contratos" on the home screen and for the
- * reviewed-by-agents tile on the legal dashboard, so the two never disagree.
- */
-export async function countAgentReviews(
-    db: Db,
-    projectIds: string[],
-    since: string | null,
-): Promise<number> {
-    const reviewed = new Set<string>();
-    for (let i = 0; i < projectIds.length; i += 200) {
-        let query = db
-            .from("agent_runs")
-            .select("project_id")
-            .in("project_id", projectIds.slice(i, i + 200))
-            .in("agent", [...REVIEW_AGENTS])
-            .eq("status", "succeeded");
-        if (since) query = query.gte("finished_at", since);
-        const { data, error } = await query;
-        if (error) throw error;
-        for (const row of (data ?? []) as { project_id: string }[]) reviewed.add(row.project_id);
-    }
-    return reviewed.size;
-}
