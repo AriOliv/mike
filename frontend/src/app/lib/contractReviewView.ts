@@ -87,3 +87,26 @@ export function fichaStateLabel(state: string): string {
             return "a conferir";
     }
 }
+
+const URL_VERDICTS = new Set(["diverge", "precisa_revisao", "alinhado"]);
+
+/** ?veredito= → the filter; an unknown value is ignored, never an error. */
+export function verdictFromParam(value: string | null | undefined): VerdictFilter {
+    return value && URL_VERDICTS.has(value) ? (value as VerdictFilter) : null;
+}
+
+/**
+ * The review's URL for the current run and filter, keeping any other
+ * parameter (such as ?quote=). The shared contract: ?run=<runId> and
+ * ?veredito=diverge|precisa_revisao|alinhado.
+ */
+export function reviewSearch(current: string, runId: string | null, filter: VerdictFilter): string {
+    const params = new URLSearchParams(current);
+    if (runId) params.set("run", runId);
+    else params.delete("run");
+    if (filter) params.set("veredito", filter);
+    else params.delete("veredito");
+    const text = params.toString();
+    return text ? `?${text}` : "";
+}
+

@@ -143,6 +143,23 @@ describe("ContractReviewWorkspace", () => {
         expect(screen.getByRole("button", { name: "1 diverge: filtrar" })).toBeInTheDocument();
     });
 
+    it("opens the run and filter from the URL and keeps the URL in step", async () => {
+        const onUrlStateChange = vi.fn();
+        render(<ContractReviewWorkspace {...props()} initialRunId="run-1" initialVerdict="diverge" onUrlStateChange={onUrlStateChange} />);
+        await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(1));
+        expect(screen.getByRole("button", { name: "1 diverge: filtrar" })).toHaveAttribute("aria-pressed", "true");
+        fireEvent.click(screen.getByRole("button", { name: "1 diverge: filtrar" }));
+        await waitFor(() => expect(onUrlStateChange).toHaveBeenLastCalledWith({ runId: "run-1", filter: null }));
+    });
+
+    it("falls back to the newest review when the linked one is not this contract's", async () => {
+        const onUrlStateChange = vi.fn();
+        render(<ContractReviewWorkspace {...props()} initialRunId="de-outro" onUrlStateChange={onUrlStateChange} />);
+        await screen.findAllByRole("article");
+        await waitFor(() => expect(onUrlStateChange).toHaveBeenLastCalledWith({ runId: "run-1", filter: null }));
+        expect(api.getContractReview).toHaveBeenLastCalledWith("p1", "run-1");
+    });
+
     it("filters by the traffic light", async () => {
         render(<ContractReviewWorkspace {...props()} />);
         fireEvent.click(await screen.findByRole("button", { name: "1 alinhado: filtrar" }));

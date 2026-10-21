@@ -7,6 +7,8 @@ import {
     orderClauses,
     pendingAligned,
     precedentSentence,
+    reviewSearch,
+    verdictFromParam,
     relativeTime,
     sourceCount,
     stepFocus,
@@ -112,3 +114,22 @@ describe("contract review view", () => {
         expect(fichaStateLabel("pendente")).toBe("a conferir");
     });
 });
+
+describe("review URL", () => {
+    it("reads ?veredito= and ignores an unknown value", () => {
+        expect(verdictFromParam("diverge")).toBe("diverge");
+        expect(verdictFromParam("precisa_revisao")).toBe("precisa_revisao");
+        expect(verdictFromParam("alinhado")).toBe("alinhado");
+        expect(verdictFromParam("nao_aplica")).toBeNull();
+        expect(verdictFromParam("xyz")).toBeNull();
+        expect(verdictFromParam(null)).toBeNull();
+        expect(verdictFromParam(undefined)).toBeNull();
+    });
+
+    it("writes run and filter, keeping other parameters", () => {
+        expect(reviewSearch("quote=abc", "run-1", "diverge")).toBe("?quote=abc&run=run-1&veredito=diverge");
+        expect(reviewSearch("?run=old&veredito=alinhado", "run-2", null)).toBe("?run=run-2");
+        expect(reviewSearch("run=x", null, null)).toBe("");
+    });
+});
+

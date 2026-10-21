@@ -78,6 +78,9 @@ export function ContractReviewWorkspace({
     canEdit,
     onShare,
     initialQuote = null,
+    initialRunId = null,
+    initialVerdict = null,
+    onUrlStateChange,
 }: {
     projectId: string;
     projectName: string;
@@ -85,9 +88,15 @@ export function ContractReviewWorkspace({
     onShare: () => void;
     /** A clause to show on arrival, e.g. from a cited answer in Perguntar. */
     initialQuote?: string | null;
+    /** ?run=: the review to open, e.g. from the Início table. */
+    initialRunId?: string | null;
+    /** ?veredito=: the traffic-light filter to open with. */
+    initialVerdict?: VerdictFilter;
+    /** Keeps ?run= and ?veredito= in step with what is on screen. */
+    onUrlStateChange?: (state: { runId: string | null; filter: VerdictFilter }) => void;
 }) {
     const [reviews, setReviews] = useState<ContractReviewSummary[] | null>(null);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [selectedId, setSelectedId] = useState<string | null>(initialRunId);
     const [review, setReview] = useState<ContractReview | null>(null);
     const [ficha, setFicha] = useState<ContractFicha | null>(null);
     const [fichaLoading, setFichaLoading] = useState(true);
@@ -96,7 +105,7 @@ export function ContractReviewWorkspace({
     const [loadError, setLoadError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
     const [tab, setTab] = useState<"revisao" | "ficha">("revisao");
-    const [filter, setFilter] = useState<VerdictFilter>(null);
+    const [filter, setFilter] = useState<VerdictFilter>(initialVerdict);
     const [focus, setFocus] = useState(-1);
     const [busy, setBusy] = useState<string | null>(null);
     const [optimistic, setOptimistic] = useState<Record<string, ReviewClause["decision"]>>({});
@@ -123,7 +132,8 @@ export function ContractReviewWorkspace({
                 if (!current) return;
                 setReviews(items);
                 setLoadError(null);
-                setSelectedId((id) => id ?? items[0]?.id ?? null);
+                // A linked run that is not this contract's falls back to the newest.
+                setSelectedId((id) => (id && items.some((item) => item.id === id) ? id : (items[0]?.id ?? null)));
             },
             (error) => {
                 if (!current) return;
@@ -177,6 +187,10 @@ export function ContractReviewWorkspace({
         }
         wasRunning.current = running;
     }, [running]);
+
+    useEffect(() => {
+        onUrlStateChange?.({ runId: selectedId, filter });
+    }, [selectedId, filter, onUrlStateChange]);
 
     // ── derived ──────────────────────────────────────────────────────────────
     const clauses = useMemo(
