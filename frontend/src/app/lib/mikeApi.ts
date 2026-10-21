@@ -4565,6 +4565,217 @@ export async function getCardActivity(projectId: string, limit = 50): Promise<Ca
     return apiRequest(`/projects/${projectId}/activity?limit=${limit}`);
 }
 
+// ── Requests to the legal team ("pedidos") ─────────────────────────────────
+export type RequestKind = "contrato_novo" | "revisao" | "aditivo" | "nda" | "parecer" | "outro";
+export type RequestUrgency = "normal" | "alta" | "urgente";
+export type RequestStatus =
+    | "novo"
+    | "em_triagem"
+    | "em_andamento"
+    | "aguardando_solicitante"
+    | "entregue"
+    | "cancelado";
+export type RequestSla = "no_prazo" | "estourando" | "estourado" | "pausado" | "encerrado";
+export type RequesterStep = "recebido" | "em_analise" | "assinatura" | "concluido";
+
+export interface RequestMessage {
+    id: string;
+    kind: "question" | "answer" | "note";
+    body: string;
+    author_name: string | null;
+    author_email: string;
+    created_at: string;
+}
+
+export interface RequestParticipant {
+    id: string;
+    email: string;
+    role: "external" | "viewer";
+    label: string | null;
+    expires_at: string;
+    revoked_at: string | null;
+}
+
+export interface RequestTriage {
+    kind?: RequestKind;
+    kind_changed?: boolean;
+    counterparty?: string | null;
+    area?: string | null;
+    missing?: string[];
+    assignee_id?: string | null;
+    assignee_name?: string | null;
+    assignee_reason?: string | null;
+    playbook_id?: string | null;
+    playbook_name?: string | null;
+    ai?: boolean;
+    suggested_at?: string;
+    decision?: "accepted" | "edited" | "rejected" | null;
+    decided_at?: string;
+    decided_by?: string;
+}
+
+export interface LegalRequest {
+    id: string;
+    code: string;
+    title: string;
+    kind: RequestKind;
+    kind_label: string;
+    counterparty: string | null;
+    context: string;
+    urgency: RequestUrgency;
+    needed_by: string | null;
+    status: RequestStatus;
+    step: RequesterStep;
+    due_at: string;
+    sla: RequestSla;
+    summary: string | null;
+    assignee_name: string | null;
+    requester_name: string | null;
+    requester_email: string;
+    requester_area: string | null;
+    delivery: {
+        message: string | null;
+        delivered_at: string | null;
+        documents: { id: string; filename: string }[];
+    } | null;
+    messages: RequestMessage[];
+    created_at: string;
+    updated_at: string;
+    audience: "team" | "requester" | "guest";
+    // Team only.
+    number?: number;
+    project_id?: string | null;
+    lane?: string | null;
+    assignee_id?: string | null;
+    triage?: RequestTriage | null;
+    participants?: RequestParticipant[];
+    source?: { channel?: string; permalink?: string };
+    can_decide?: boolean;
+}
+
+export interface RequestListItem {
+    id: string;
+    code: string;
+    title: string;
+    kind: RequestKind;
+    kind_label: string;
+    counterparty: string | null;
+    status: RequestStatus;
+    sla: RequestSla;
+    due_at: string;
+    requester_name: string | null;
+    requester_email: string;
+    requester_area: string | null;
+    assignee_id: string | null;
+    assignee_name: string | null;
+    suggested_assignee_name: string | null;
+    triaged: boolean;
+    triage_pending: boolean;
+    channel: string;
+    project_id: string | null;
+    external: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RequestList {
+    scope: "team" | "requester";
+    is_head: boolean;
+    items: RequestListItem[];
+    counts: {
+        sem_dono: number;
+        sla_estourando: number;
+        aguardando_solicitante: number;
+        concluidos_semana: number;
+        meus: number;
+    };
+    team: { id: string; name: string; email: string }[];
+}
+
+export interface NewRequest {
+    kind: RequestKind;
+    title?: string;
+    counterparty?: string;
+    context?: string;
+    urgency?: RequestUrgency;
+    needed_by?: string | null;
+    document_ids?: string[];
+    requester_area?: string;
+}
+
+const jsonPost = (body: unknown): RequestInit => ({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+});
+
+export async function getRequestRole(): Promise<{
+    configured: boolean;
+    role: "head" | "team" | "requester";
+    /** The caller's remembered requesting area; null until they first say it. */
+    area: string | null;
+    areas: string[];
+}> {
+    return apiRequest("/requests/me");
+}
+
+export async function listRequests(options: { mine?: boolean } = {}): Promise<RequestList> {
+    return apiRequest(options.mine ? "/requests?mine=1" : "/requests");
+}
+
+export async function getRequest(id: string): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}`);
+}
+
+export async function createRequest(
+    body: NewRequest,
+): Promise<{ request: LegalRequest; deduplicated: boolean }> {
+    return apiRequest("/requests", jsonPost(body));
+}
+
+export async function assignRequest(id: string, assigneeId: string | null): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/assign`, jsonPost({ assignee_id: assigneeId }));
+}
+
+export async function decideRequestTriage(
+    id: string,
+    body: {
+        decision: "accepted" | "edited" | "rejected" | "reopened";
+        kind?: RequestKind;
+        counterparty?: string | null;
+        assignee_id?: string | null;
+        reason?: string;
+    },
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/triage`, jsonPost(body));
+}
+
+export async function postRequestMessage(
+    id: string,
+    body: string,
+    kind: "question" | "note" = "note",
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/messages`, jsonPost({ body, kind }));
+}
+
+export async function deliverRequest(
+    id: string,
+    body: { message?: string; document_ids?: string[] },
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/deliver`, jsonPost(body));
+}
+
+export async function inviteRequestParticipant(
+    id: string,
+    body: { email: string; role?: "external" | "viewer"; label?: string; days?: number },
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/participants`, jsonPost(body));
+}
+
+export async function revokeRequestParticipant(id: string, participantId: string): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/participants/${participantId}`, { method: "DELETE" });
+}
+
 // ── Home ("Início"): automatic review of watched folders ────────────────────
 export type ContractReviewStatus = "queued" | "running" | "ready" | "done" | "failed";
 

@@ -31,6 +31,7 @@ export type NavItem = {
 
 export const NAV_MAIN: readonly NavItem[] = [
     { href: DEFAULT_HOME, label: "Início", icon: "tabular" },
+    { href: "/pedidos", label: "Pedidos", icon: "chat" },
     { href: "/pipeline", label: "Esteira", icon: "folder" },
     { href: "/contratos", label: "Contratos", icon: "tabular" },
     { href: "/radar", label: "Prazos", icon: "workflow" },

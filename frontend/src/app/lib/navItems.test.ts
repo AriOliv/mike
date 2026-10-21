@@ -5,6 +5,7 @@ describe("navItems", () => {
     it("lists the Legal workstation first, in Portuguese", () => {
         expect(NAV_MAIN.map((item) => item.label)).toEqual([
             "Início",
+            "Pedidos",
             "Esteira",
             "Contratos",
             "Prazos",

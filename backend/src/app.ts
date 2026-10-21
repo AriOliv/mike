@@ -41,6 +41,7 @@ import {
   projectContractRouter,
   watchedFoldersRouter,
 } from "./modules/contracts/contracts.routes";
+import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
@@ -367,6 +368,7 @@ app.use("/pipeline", pipelineRouter);
 app.use("/obligations", obligationsRouter);
 app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
+app.use("/requests", requestsRouter);
 app.use("/home", homeRouter);
 app.use("/watched-folders", watchedFoldersRouter);
 app.use("/contract-reviews", contractReviewsRouter);
