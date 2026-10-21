@@ -49,7 +49,7 @@ import {
     changeMeta,
     impactVerdict,
     relativeRun,
-    plural,
+    radarHeadline,
 } from "@/app/lib/regulatoryRadar";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
 import { cn } from "@/app/lib/utils";
@@ -326,10 +326,7 @@ export function RegulatoryRadarView() {
 
     const loading = scans === null && !error;
     const usedPresets = new Set((scans ?? []).map((s) => s.preset).filter(Boolean));
-    const freshest = useMemo(() => {
-        const withNew = (scans ?? []).filter((s) => s.counts.novas > 0);
-        return withNew.sort((a, b) => b.counts.novas - a.counts.novas)[0] ?? null;
-    }, [scans]);
+    const headline = useMemo(() => radarHeadline(scans ?? [], scanId), [scans, scanId]);
 
     const presetPicker = (compact: boolean) => (
         <div className={cn("grid gap-2", compact ? "sm:grid-cols-2 lg:grid-cols-4" : "max-w-3xl sm:grid-cols-2")}>
@@ -456,16 +453,26 @@ export function RegulatoryRadarView() {
                         <section aria-label="Resumo" className="pt-2">
                             <p className="flex items-start gap-2 font-serif text-xl text-gray-900">
                                 <Diamond aria-hidden="true" className="mt-1.5 h-3.5 w-3.5 shrink-0 fill-violet-600 text-violet-600" />
-                                {freshest ? (
+                                {headline ? (
                                     <span>
-                                        Sua varredura <strong className="font-semibold">{freshest.name}</strong> encontrou{" "}
-                                        <strong className="font-semibold">
-                                            {plural(freshest.counts.novas, "mudança", "mudanças")}
-                                        </strong>
-                                        .
+                                        {headline.lead}
+                                        {headline.name ? (
+                                            <>
+                                                {" "}
+                                                <strong className="font-semibold">{headline.name}</strong>
+                                            </>
+                                        ) : null}{" "}
+                                        {headline.verb}
+                                        {headline.count ? (
+                                            <>
+                                                {" "}
+                                                <strong className="font-semibold">{headline.count}</strong>
+                                            </>
+                                        ) : null}
+                                        {headline.tail}
                                     </span>
                                 ) : (
-                                    <span>Nenhuma mudança nova desde a sua última visita.</span>
+                                    <span>Nenhuma mudança em aberto.</span>
                                 )}
                             </p>
                         </section>

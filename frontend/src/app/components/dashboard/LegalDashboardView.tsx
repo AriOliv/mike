@@ -136,7 +136,7 @@ export function LegalDashboardView() {
                             />
                             <HorizontalBars
                                 title="Pedidos por área"
-                                subtitle="Quem pediu no período"
+                                subtitle="Área que pediu, no período"
                                 rows={data.volume.by_requester.slice(0, 7).map((r) => ({ label: r.label, value: r.count }))}
                                 unit="ped."
                                 empty="Nenhum pedido no período."

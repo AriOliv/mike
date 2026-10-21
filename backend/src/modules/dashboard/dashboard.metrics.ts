@@ -34,9 +34,19 @@ const PERIODS = [30, 90, 365] as const;
 type DossierRow = { project_id: string; source: string | null; created_at: string; user_id: string | null };
 type TermsRow = { project_id: string; notice_deadline: string | null; extracted_at: string };
 type RunRow = { document_id: string | null; user_id: string; status: string; started_at: string; completed_at: string | null };
+type ReviewRow = { project_id: string; status: string; finished_at: string | null };
+type RequestAreaRow = { project_id: string | null; requester_area?: string | null; triage: { area?: unknown } | null };
+type ProjectAreaRow = { id: string; requester_area: string | null };
 type FichaRow = { project_id: string; ficha: Record<string, unknown> | null };
 type LaneEventRow = { project_id: string; at: string; before: unknown; after: unknown };
-type AgentRunRow = { project_id: string; agent: string; status: string; cost_usd: number | string | null; started_at: string };
+type AgentRunRow = {
+    project_id: string;
+    agent: string;
+    status: string;
+    cost_usd: number | string | null;
+    started_at: string;
+    finished_at?: string | null;
+};
 type ChangeRow = { status: string; impact: string; request_project_id: string | null; obligation_id: string | null; created_at: string };
 
 export type DashboardInputs = {
@@ -48,12 +58,46 @@ export type DashboardInputs = {
     laneEvents: LaneEventRow[];
     /** null when the Ficha is not installed on this database yet. */
     fichas: FichaRow[] | null;
+    /** Automatic reviews (contract_reviews); null when not installed yet. */
+    reviews: ReviewRow[] | null;
+    /** project id → the requesting area from intake triage; empty when not installed. */
+    requestArea: Map<string, string>;
     agentRuns: AgentRunRow[];
     /** document id → project id, for runs over contract documents */
     documentProject: Map<string, string>;
 };
 
 const DAY = 86_400_000;
+
+export const NO_AREA = "Área não informada";
+
+/** The agents whose finished run counts as a contract reviewed. */
+export const REVIEW_AGENTS = ["revisor"];
+
+/**
+ * "Contratos revisados por agentes" — the SAME rule as the home screen's
+ * "Revisei N contratos" (Beacon's countAgentReviews): distinct contracts with
+ * a reviewer run that succeeded, or an automatic review that is ready or
+ * done, finished inside [since, until). Kept row-based here until PR #11
+ * lands; then this is replaced by the contracts facade's countAgentReviews.
+ */
+export function countAgentReviewsFromRows(
+    runs: Pick<AgentRunRow, "project_id" | "agent" | "status" | "finished_at">[],
+    reviews: ReviewRow[] | null,
+    since: string | null,
+    until: string | null = null,
+): Set<string> {
+    const inWindow = (iso: string | null | undefined) =>
+        !!iso && (since === null || iso >= since) && (until === null || iso < until);
+    const out = new Set<string>();
+    for (const r of runs) {
+        if (REVIEW_AGENTS.includes(r.agent) && r.status === "succeeded" && inWindow(r.finished_at)) out.add(r.project_id);
+    }
+    for (const r of reviews ?? []) {
+        if ((r.status === "ready" || r.status === "done") && inWindow(r.finished_at)) out.add(r.project_id);
+    }
+    return out;
+}
 
 function daysBetween(fromIso: string, toIso: string): number {
     return (new Date(toIso).getTime() - new Date(fromIso).getTime()) / DAY;
@@ -118,9 +162,10 @@ export function computeDashboard(
         const key = (c.contract_type as string | null) || "Sem tipo";
         byType.set(key, (byType.get(key) ?? 0) + 1);
     }
+    // By the requesting AREA from intake triage, never by the person.
     const byRequester = new Map<string, number>();
     for (const c of opened) {
-        const key = (c.requester_name as string | null) || "Sem solicitante";
+        const key = input.requestArea.get(c.id) || NO_AREA;
         byRequester.set(key, (byRequester.get(key) ?? 0) + 1);
     }
 
@@ -178,15 +223,15 @@ export function computeDashboard(
     const runsDone = input.runs.filter(
         (r) => r.status === "completed" && inPeriod(r.completed_at ?? r.started_at),
     );
-    const agentReviewed = new Set<string>();
+    // Same rule as the home screen's "Revisei N contratos" (one function, see
+    // countAgentReviewsFromRows). Generated analyses and playbook runs on the
+    // contract's documents are agent reviews too, counted once per contract.
+    const agentRunsInPeriod = input.agentRuns.filter((r) => inPeriod(r.started_at));
+    const agentReviewed = countAgentReviewsFromRows(input.agentRuns, input.reviews, since, nowIso);
     for (const d of generated) agentReviewed.add(d.project_id);
     for (const r of runsDone) {
         const p = r.document_id ? input.documentProject.get(r.document_id) : undefined;
         if (p) agentReviewed.add(p);
-    }
-    const agentRunsInPeriod = input.agentRuns.filter((r) => inPeriod(r.started_at));
-    for (const r of agentRunsInPeriod) {
-        if (r.status === "succeeded" && /revis|risco|extrator/.test(r.agent)) agentReviewed.add(r.project_id);
     }
     const humanReviewed = new Set<string>(imported.map((d) => d.project_id));
     for (const p of agentReviewed) humanReviewed.delete(p);
@@ -335,14 +380,69 @@ export function parseDashboardQuery(query: Record<string, unknown>): { periodDay
 
 const ID_CHUNK = 200;
 
-/** Postgres "undefined_table" or PostgREST "relation not in the schema cache". */
+/**
+ * A table or column another module's migration adds, not on this database
+ * yet: Postgres undefined_table / undefined_column, or PostgREST's schema
+ * cache misses for either.
+ */
 function isMissingTable(error: { code?: string }): boolean {
-    return error.code === "42P01" || error.code === "PGRST205";
+    return ["42P01", "42703", "PGRST205", "PGRST204"].includes(error.code ?? "");
+}
+
+type SliceQuery<T> = (slice: string[]) => PromiseLike<{ data: unknown; error: { code?: string } | null }>;
+
+/**
+ * Rows of a table another module's migration adds. Null while this database
+ * does not have it yet, so the dashboard shows "not available" instead of
+ * failing whole.
+ */
+async function optionalInChunks<T>(ids: string[], read: SliceQuery<T>): Promise<T[] | null> {
+    const out: T[] = [];
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+        const { data, error } = await read(ids.slice(i, i + ID_CHUNK));
+        if (error && isMissingTable(error)) return null;
+        if (error) throw error;
+        out.push(...((data ?? []) as T[]));
+    }
+    return out;
 }
 
 async function inChunks<T>(ids: string[], read: (slice: string[]) => Promise<T[]>): Promise<T[]> {
     const out: T[] = [];
     for (let i = 0; i < ids.length; i += ID_CHUNK) out.push(...(await read(ids.slice(i, i + ID_CHUNK))));
+    return out;
+}
+
+const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+/**
+ * The requesting area of each card: the area mirrored on the card, else the
+ * request's own, else what intake triage read. Each source is read only if
+ * this database has it; a card with none is left out (it shows as "Área não
+ * informada"), never filled with the requester's name.
+ */
+async function requestAreas(db: Db, ids: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const mirrored = await optionalInChunks<ProjectAreaRow>(ids, (slice) =>
+        db.from("projects").select("id, requester_area").in("id", slice),
+    );
+    for (const p of mirrored ?? []) if (text(p.requester_area)) out.set(p.id, text(p.requester_area));
+
+    const missing = ids.filter((id) => !out.has(id));
+    if (missing.length === 0) return out;
+    let requests = await optionalInChunks<RequestAreaRow>(missing, (slice) =>
+        db.from("legal_requests").select("project_id, requester_area, triage").in("project_id", slice),
+    );
+    // Before the area columns exist, the triage's reading is all there is.
+    if (requests === null) {
+        requests = await optionalInChunks<RequestAreaRow>(missing, (slice) =>
+            db.from("legal_requests").select("project_id, triage").in("project_id", slice),
+        );
+    }
+    for (const r of requests ?? []) {
+        const area = text(r.requester_area) || text(r.triage?.area);
+        if (r.project_id && area && !out.has(r.project_id)) out.set(r.project_id, area);
+    }
     return out;
 }
 
@@ -401,23 +501,20 @@ export async function getDashboard(
         const agentRuns = await inChunks(ids, async (slice) => {
             const { data, error } = await db
                 .from("agent_runs")
-                .select("project_id, agent, status, cost_usd, started_at")
+                .select("project_id, agent, status, cost_usd, started_at, finished_at")
                 .in("project_id", slice);
             if (error) throw error;
             return (data ?? []) as AgentRunRow[];
         });
         // The Ficha ships in another module's migration; until a database has
         // it, the tile says so instead of failing the whole dashboard.
-        let fichas: FichaRow[] | null = [];
-        for (let i = 0; i < ids.length && fichas !== null; i += ID_CHUNK) {
-            const { data, error } = await db
-                .from("contract_fichas")
-                .select("project_id, ficha")
-                .in("project_id", ids.slice(i, i + ID_CHUNK));
-            if (error && isMissingTable(error)) fichas = null;
-            else if (error) throw error;
-            else fichas.push(...((data ?? []) as FichaRow[]));
-        }
+        const fichas = await optionalInChunks<FichaRow>(ids, (slice) =>
+            db.from("contract_fichas").select("project_id, ficha").in("project_id", slice),
+        );
+        const reviews = await optionalInChunks<ReviewRow>(ids, (slice) =>
+            db.from("contract_reviews").select("project_id, status, finished_at").in("project_id", slice),
+        );
+        const requestArea = await requestAreas(db, ids);
         const scanIds = await visibleScanIds(db, caller);
         const changes = await inChunks(scanIds, async (slice) => {
             const { data, error } = await db
@@ -430,7 +527,7 @@ export async function getDashboard(
 
         return ok(
             computeDashboard(
-                { cards, dossiers, terms, runs, changes, laneEvents, agentRuns, fichas, documentProject },
+                { cards, dossiers, terms, runs, changes, laneEvents, agentRuns, fichas, reviews, requestArea, documentProject },
                 { now, periodDays: opts.periodDays, assumptions: opts.assumptions },
             ),
         );

@@ -10,7 +10,7 @@ const regulatory = vi.hoisted(() => ({ visibleScanIds: vi.fn() }));
 vi.mock("../../regulatory/regulatory.service", () => regulatory);
 
 import { computeDashboard, DEFAULT_ASSUMPTIONS, getDashboard, parseDashboardQuery } from "../dashboard.service";
-import { weekOf } from "../dashboard.metrics";
+import { countAgentReviewsFromRows, weekOf } from "../dashboard.metrics";
 
 const NOW = new Date("2026-10-20T12:00:00Z");
 const caller = { userId: "u1", userEmail: "ana@avenia.io" };
@@ -31,11 +31,11 @@ const card = (over: Record<string, unknown>) => ({
 
 const cards = [
     // closed on time in 9 days
-    card({ id: "a", lane: "arquivado", status: "concluido", completed_at: "2026-10-10", deadline: "2026-10-12", assignee_email: "duda@avenia.io", contract_type: "NDA", requester_name: "Comercial" }),
+    card({ id: "a", lane: "arquivado", status: "concluido", completed_at: "2026-10-10", deadline: "2026-10-12", assignee_email: "duda@avenia.io", contract_type: "NDA", requester_name: "Ana Souza" }),
     // closed late in 19 days
-    card({ id: "b", lane: "assinatura", status: "concluido", completed_at: "2026-10-20", deadline: "2026-10-15", assignee_email: "teo@avenia.io", contract_type: "NDA", requester_name: "Produto" }),
+    card({ id: "b", lane: "assinatura", status: "concluido", completed_at: "2026-10-20", deadline: "2026-10-15", assignee_email: "teo@avenia.io", contract_type: "NDA", requester_name: "Bruno Lima" }),
     // open in revision for 5 days, overdue
-    card({ id: "c", lane: "revisao", lane_updated_at: "2026-10-15T12:00:00Z", deadline: "2026-10-18", assignee_email: "duda@avenia.io", contract_type: "MSA", requester_name: "Comercial" }),
+    card({ id: "c", lane: "revisao", lane_updated_at: "2026-10-15T12:00:00Z", deadline: "2026-10-18", assignee_email: "duda@avenia.io", contract_type: "MSA", requester_name: "Ana Souza" }),
     // open in entrada, created long ago (out of period for "opened")
     card({ id: "d", lane: "entrada", created_at: "2026-01-01T00:00:00Z", lane_updated_at: "2026-10-19T12:00:00Z" }),
 ];
@@ -70,7 +70,7 @@ const inputs = {
         { project_id: "b", at: "2026-10-01T09:00:00Z", before: null, after: "entrada" },
     ],
     agentRuns: [
-        { project_id: "d", agent: "revisor", status: "succeeded", cost_usd: "0.25", started_at: "2026-10-09T00:00:00Z" },
+        { project_id: "d", agent: "revisor", status: "succeeded", cost_usd: "0.25", started_at: "2026-10-09T00:00:00Z", finished_at: "2026-10-09T00:04:00Z" },
         { project_id: "d", agent: "extrator", status: "succeeded", cost_usd: 0.1, started_at: "2026-10-09T00:00:00Z" },
         { project_id: "a", agent: "notificador", status: "succeeded", cost_usd: null, started_at: "2026-10-09T00:00:00Z" },
         { project_id: "a", agent: "revisor", status: "failed", cost_usd: 0.05, started_at: "2025-01-01T00:00:00Z" },
@@ -88,6 +88,20 @@ const inputs = {
         },
         { project_id: "b", ficha: null },
     ],
+    reviews: [
+        // b: reviewed automatically inside the period — counts, like the home screen's greeting
+        { project_id: "b", status: "ready", finished_at: "2026-10-12T00:00:00Z" },
+        // d: a failed review does not count (d still counts through its reviewer run)
+        { project_id: "d", status: "failed", finished_at: "2026-10-12T00:00:00Z" },
+        // a review that finished before the period does not count
+        { project_id: "c", status: "done", finished_at: "2026-08-01T00:00:00Z" },
+        // still running: no finished_at
+        { project_id: "c", status: "running", finished_at: null },
+    ],
+    requestArea: new Map([
+        ["a", "Comercial"],
+        ["c", "Comercial"],
+    ]),
     documentProject: new Map([["doc-c", "c"]]),
 };
 
@@ -100,7 +114,12 @@ describe("computeDashboard", () => {
             { label: "NDA", count: 2 },
             { label: "MSA", count: 1 },
         ]);
-        expect(d.volume.by_requester[0]).toEqual({ label: "Comercial", count: 2 });
+        expect(d.volume.by_requester).toEqual([
+            { label: "Comercial", count: 2 },
+            { label: "Área não informada", count: 1 },
+        ]);
+        // The requester's name is never used as an area.
+        expect(JSON.stringify(d.volume.by_requester)).not.toMatch(/Ana Souza|Bruno Lima/);
         expect(d.volume.weekly.reduce((n, w) => n + w.opened, 0)).toBe(3);
         expect(d.volume.weekly.reduce((n, w) => n + w.closed, 0)).toBe(2);
     });
@@ -123,8 +142,8 @@ describe("computeDashboard", () => {
 
     it("separates contracts reviewed by agents from those reviewed by people", () => {
         expect(d.agents).toEqual({
-            contracts_reviewed_by_agents: 3,
-            contracts_reviewed_by_people: 1,
+            contracts_reviewed_by_agents: 4,
+            contracts_reviewed_by_people: 0,
             playbook_runs: 1,
             terms_extracted: 2,
             regulatory_changes_triaged: 2,
@@ -133,9 +152,9 @@ describe("computeDashboard", () => {
     });
 
     it("shows hours saved with the formula it used", () => {
-        expect(d.hours_saved.hours).toBe(5.7);
+        expect(d.hours_saved.hours).toBe(7.2);
         expect(d.hours_saved.formula).toBe(
-            "3 revisões × 90 min + 2 extrações de prazos × 20 min + 2 mudanças regulatórias × 15 min",
+            "4 revisões × 90 min + 2 extrações de prazos × 20 min + 2 mudanças regulatórias × 15 min",
         );
     });
 
@@ -159,7 +178,7 @@ describe("computeDashboard", () => {
 
     it("handles an empty base", () => {
         const empty = computeDashboard(
-            { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], fichas: null, documentProject: new Map() },
+            { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], fichas: null, reviews: null, requestArea: new Map(), documentProject: new Map() },
             { now: NOW, periodDays: 90, assumptions: DEFAULT_ASSUMPTIONS },
         );
         expect(empty.cycle.median_days_to_close).toBeNull();
@@ -174,6 +193,29 @@ describe("computeDashboard", () => {
     it("weeks start on Monday", () => {
         expect(weekOf("2026-10-20T12:00:00Z")).toBe("2026-10-19");
         expect(weekOf("2026-10-25T23:00:00Z")).toBe("2026-10-19");
+    });
+});
+
+describe("countAgentReviewsFromRows", () => {
+    it("is the home screen's rule: distinct contracts a reviewer run or an automatic review finished in the window", () => {
+        const runs = [
+            { project_id: "a", agent: "revisor", status: "succeeded", finished_at: "2026-10-10T00:00:00Z" },
+            { project_id: "a", agent: "revisor", status: "succeeded", finished_at: "2026-10-11T00:00:00Z" },
+            { project_id: "b", agent: "extrator", status: "succeeded", finished_at: "2026-10-10T00:00:00Z" },
+            { project_id: "c", agent: "revisor", status: "failed", finished_at: "2026-10-10T00:00:00Z" },
+            { project_id: "d", agent: "revisor", status: "running", finished_at: null },
+            { project_id: "e", agent: "revisor", status: "succeeded", finished_at: "2026-09-01T00:00:00Z" },
+            { project_id: "f", agent: "revisor", status: "succeeded", finished_at: "2026-10-20T00:00:00Z" },
+        ];
+        const reviews = [
+            { project_id: "a", status: "done", finished_at: "2026-10-12T00:00:00Z" },
+            { project_id: "g", status: "ready", finished_at: "2026-10-12T00:00:00Z" },
+            { project_id: "h", status: "failed", finished_at: "2026-10-12T00:00:00Z" },
+        ];
+        const window = countAgentReviewsFromRows(runs, reviews, "2026-10-01T00:00:00Z", "2026-10-20T00:00:00Z");
+        expect([...window].sort()).toEqual(["a", "g"]);
+        // since = null counts everything up to `until`; no until counts to now.
+        expect([...countAgentReviewsFromRows(runs, null, null)].sort()).toEqual(["a", "e", "f"]);
     });
 });
 
@@ -193,6 +235,9 @@ describe("getDashboard", () => {
         regulatory.visibleScanIds.mockReset();
     });
 
+    const MISSING = { code: "PGRST205", message: "missing" };
+    const NO_COLUMN = { code: "42703", message: "column does not exist" };
+
     it("reads only what belongs to the contracts and scans the caller sees", async () => {
         contracts.listPipeline.mockResolvedValue({ ok: true, data: { cards: [card({ id: "p1" })] } });
         regulatory.visibleScanIds.mockResolvedValue(["s1"]);
@@ -203,16 +248,114 @@ describe("getDashboard", () => {
             { table: "playbook_runs", data: [] },
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
-            { table: "contract_fichas", error: { code: "PGRST205", message: "missing" } },
+            { table: "contract_fichas", error: MISSING },
+            { table: "contract_reviews", error: MISSING },
+            { table: "projects", error: NO_COLUMN },
+            { table: "legal_requests", error: MISSING },
+            { table: "legal_requests", error: MISSING },
             { table: "regulatory_changes", data: [] },
         ]);
         const result = await getDashboard(fake.db, caller, { period: "30" }, NOW);
-        expect(result).toMatchObject({ ok: true, data: { period_days: 30, volume: { opened: 1 }, ficha: null } });
+        // Tables other modules add, missing here: the dashboard still answers.
+        expect(result).toMatchObject({
+            ok: true,
+            data: { period_days: 30, volume: { opened: 1, by_requester: [{ label: "Área não informada", count: 1 }] }, ficha: null },
+        });
         expect(fake.calls[0].filters).toContainEqual(["in", "project_id", ["p1"]]);
         expect(fake.calls[3].filters).toContainEqual(["in", "document_id", ["doc1"]]);
         expect(fake.calls[4].filters).toContainEqual(["eq", "action", "lane.changed"]);
-        expect(fake.calls[7].filters).toContainEqual(["in", "scan_id", ["s1"]]);
+        expect(fake.calls[11].filters).toContainEqual(["in", "scan_id", ["s1"]]);
         fake.done();
+    });
+
+    it("counts reviews like the home screen and groups requests by area, in fallback order", async () => {
+        contracts.listPipeline.mockResolvedValue({
+            ok: true,
+            data: {
+                cards: [
+                    card({ id: "p1", requester_name: "Ana Souza" }),
+                    card({ id: "p2", requester_name: "Bruno Lima" }),
+                    card({ id: "p3", requester_name: "Carla Dias" }),
+                    card({ id: "p4", requester_name: "Davi Reis" }),
+                ],
+            },
+        });
+        regulatory.visibleScanIds.mockResolvedValue([]);
+        const fake = scriptedDb([
+            { table: "dossiers", data: [] },
+            { table: "contract_terms", data: [] },
+            { table: "documents", data: [] },
+            { table: "card_events", data: [] },
+            { table: "agent_runs", data: [] },
+            { table: "contract_fichas", data: [] },
+            {
+                table: "contract_reviews",
+                data: [
+                    { project_id: "p1", status: "done", finished_at: "2026-10-15T00:00:00Z" },
+                    { project_id: "p2", status: "ready", finished_at: "2026-10-16T00:00:00Z" },
+                ],
+            },
+            // The card's mirrored area wins.
+            { table: "projects", data: [{ id: "p1", requester_area: "Comercial" }, { id: "p2", requester_area: null }] },
+            // Then the request's area, then what triage read; "Outra" stays "Outra".
+            {
+                table: "legal_requests",
+                data: [
+                    { project_id: "p2", requester_area: "Outra", triage: { area: "Produto" } },
+                    { project_id: "p3", requester_area: null, triage: { area: " Financeiro " } },
+                    { project_id: "p4", requester_area: "", triage: null },
+                ],
+            },
+        ]);
+        const result = await getDashboard(fake.db, caller, { period: "30" }, NOW);
+        if (!result.ok) throw new Error("expected ok");
+        expect(result.data.agents.contracts_reviewed_by_agents).toBe(2);
+        expect(result.data.volume.by_requester).toEqual(
+            expect.arrayContaining([
+                { label: "Comercial", count: 1 },
+                { label: "Outra", count: 1 },
+                { label: "Financeiro", count: 1 },
+                { label: "Área não informada", count: 1 },
+            ]),
+        );
+        expect(JSON.stringify(result.data.volume.by_requester)).not.toMatch(/Ana|Bruno|Carla|Davi/);
+        // Only the cards without a mirrored area are looked up in requests.
+        expect(fake.calls[8].filters).toContainEqual(["in", "project_id", ["p2", "p3", "p4"]]);
+        fake.done();
+    });
+
+    it("skips the request lookup when every card has its area, and falls back to triage before the area columns exist", async () => {
+        contracts.listPipeline.mockResolvedValue({ ok: true, data: { cards: [card({ id: "p1" })] } });
+        regulatory.visibleScanIds.mockResolvedValue([]);
+        const mirrored = scriptedDb([
+            { table: "dossiers", data: [] },
+            { table: "contract_terms", data: [] },
+            { table: "documents", data: [] },
+            { table: "card_events", data: [] },
+            { table: "agent_runs", data: [] },
+            { table: "contract_fichas", data: [] },
+            { table: "contract_reviews", data: [] },
+            { table: "projects", data: [{ id: "p1", requester_area: "Produto" }] },
+        ]);
+        const first = await getDashboard(mirrored.db, caller, {}, NOW);
+        expect(first).toMatchObject({ ok: true, data: { volume: { by_requester: [{ label: "Produto", count: 1 }] } } });
+        mirrored.done();
+
+        const triageOnly = scriptedDb([
+            { table: "dossiers", data: [] },
+            { table: "contract_terms", data: [] },
+            { table: "documents", data: [] },
+            { table: "card_events", data: [] },
+            { table: "agent_runs", data: [] },
+            { table: "contract_fichas", data: [] },
+            { table: "contract_reviews", data: [] },
+            { table: "projects", error: NO_COLUMN },
+            { table: "legal_requests", error: { code: "PGRST204", message: "no column" } },
+            { table: "legal_requests", data: [{ project_id: "p1", triage: { area: "Compras" } }] },
+        ]);
+        const second = await getDashboard(triageOnly.db, caller, {}, NOW);
+        expect(second).toMatchObject({ ok: true, data: { volume: { by_requester: [{ label: "Compras", count: 1 }] } } });
+        triageOnly.done();
     });
 
     it("reads the Ficha when the database has it", async () => {
@@ -225,6 +368,8 @@ describe("getDashboard", () => {
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
             { table: "contract_fichas", data: [{ project_id: "p1", ficha: { x: { status: "preenchido", review: { state: "confirmado" } } } }] },
+            { table: "contract_reviews", data: [] },
+            { table: "projects", data: [{ id: "p1", requester_area: "Produto" }] },
         ]);
         expect(await getDashboard(fake.db, caller, {}, NOW)).toMatchObject({
             ok: true,
@@ -233,13 +378,25 @@ describe("getDashboard", () => {
         fake.done();
     });
 
-    it("passes on a pipeline failure and reports a read error", async () => {
+    it("passes on a pipeline failure and reports a real read error", async () => {
         contracts.listPipeline.mockResolvedValue({ ok: false, kind: "error", error: new Error("x") });
         expect(await getDashboard(scriptedDb([]).db, caller, {})).toMatchObject({ ok: false });
 
         contracts.listPipeline.mockResolvedValue({ ok: true, data: { cards: [card({ id: "p1" })] } });
         regulatory.visibleScanIds.mockResolvedValue([]);
-        const order = ["dossiers", "contract_terms", "documents", "playbook_runs", "card_events", "agent_runs", "contract_fichas", "regulatory_changes"];
+        const order = [
+            "dossiers",
+            "contract_terms",
+            "documents",
+            "playbook_runs",
+            "card_events",
+            "agent_runs",
+            "contract_fichas",
+            "contract_reviews",
+            "projects",
+            "legal_requests",
+            "regulatory_changes",
+        ];
         for (const failAt of order) {
             const steps = order.slice(0, order.indexOf(failAt) + 1).map((table) =>
                 table === failAt

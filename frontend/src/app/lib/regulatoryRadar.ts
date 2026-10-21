@@ -116,10 +116,36 @@ export function deadlineTooltip(args: {
     return `aviso até ${when}`;
 }
 
-/** "Sua varredura LGPD encontrou 3 mudanças." — the fixed microcopy. */
-export function scanHeadline(name: string, found: number): { lead: string; name: string; tail: string } {
-    if (found === 0) return { lead: "Sua varredura", name, tail: "não encontrou mudanças novas." };
-    return { lead: "Sua varredura", name, tail: `encontrou ${plural(found, "mudança", "mudanças")}.` };
+/**
+ * The line that opens the radar, in parts so the screen can bold the name
+ * and the count. One scan, or one selected: "Sua varredura LGPD encontrou 3
+ * mudanças." Several, with no filter: "Suas 2 varreduras encontraram 4
+ * mudanças." The count is what is open (not archived), the same number each
+ * scan's tile shows, so the line and the tiles always add up.
+ */
+export type RadarHeadline = { lead: string; name: string | null; verb: string; count: string | null; tail: string };
+
+export function radarHeadline(
+    scans: { id: string; name: string; counts: { abertas: number } }[],
+    selectedId: string | null,
+): RadarHeadline | null {
+    const picked = selectedId ? scans.filter((s) => s.id === selectedId) : scans;
+    if (picked.length === 0) return null;
+    const open = picked.reduce((n, s) => n + s.counts.abertas, 0);
+    if (picked.length === 1) {
+        return open === 0
+            ? { lead: "Sua varredura", name: picked[0].name, verb: "não encontrou mudanças em aberto", count: null, tail: "." }
+            : { lead: "Sua varredura", name: picked[0].name, verb: "encontrou", count: plural(open, "mudança", "mudanças"), tail: "." }
+    }
+    return open === 0
+        ? { lead: `Suas ${picked.length} varreduras`, name: null, verb: "não encontraram mudanças em aberto", count: null, tail: "." }
+        : {
+              lead: `Suas ${picked.length} varreduras`,
+              name: null,
+              verb: "encontraram",
+              count: plural(open, "mudança", "mudanças"),
+              tail: ".",
+          };
 }
 
 /** The one line under a change's title in the list. */

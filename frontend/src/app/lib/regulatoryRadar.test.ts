@@ -9,8 +9,8 @@ import {
     deadlineTooltip,
     impactVerdict,
     plural,
+    radarHeadline,
     relativeRun,
-    scanHeadline,
 } from "./regulatoryRadar";
 
 describe("plural", () => {
@@ -80,10 +80,34 @@ describe("deadline badge", () => {
 });
 
 describe("copy", () => {
-    it("says what a scan found", () => {
-        expect(scanHeadline("LGPD", 3)).toEqual({ lead: "Sua varredura", name: "LGPD", tail: "encontrou 3 mudanças." });
-        expect(scanHeadline("LGPD", 1).tail).toBe("encontrou 1 mudança.");
-        expect(scanHeadline("LGPD", 0).tail).toBe("não encontrou mudanças novas.");
+    it("opens with what the scans found, adding up to the tiles", () => {
+        const bcb = { id: "s1", name: "BCB", counts: { abertas: 3 } };
+        const lgpd = { id: "s2", name: "LGPD", counts: { abertas: 1 } };
+        expect(radarHeadline([bcb, lgpd], null)).toEqual({
+            lead: "Suas 2 varreduras",
+            name: null,
+            verb: "encontraram",
+            count: "4 mudanças",
+            tail: ".",
+        });
+        expect(radarHeadline([bcb, lgpd], "s2")).toEqual({
+            lead: "Sua varredura",
+            name: "LGPD",
+            verb: "encontrou",
+            count: "1 mudança",
+            tail: ".",
+        });
+        expect(radarHeadline([bcb], null)?.count).toBe("3 mudanças");
+        expect(radarHeadline([{ ...bcb, counts: { abertas: 0 } }], null)).toMatchObject({
+            verb: "não encontrou mudanças em aberto",
+            count: null,
+        });
+        expect(radarHeadline([{ ...bcb, counts: { abertas: 0 } }, { ...lgpd, counts: { abertas: 0 } }], null)).toMatchObject({
+            verb: "não encontraram mudanças em aberto",
+            count: null,
+        });
+        expect(radarHeadline([], null)).toBeNull();
+        expect(radarHeadline([bcb], "nope")).toBeNull();
     });
 
     it("summarises where a change came from", () => {

@@ -140,7 +140,8 @@ describe("RegulatoryRadarView", () => {
 
     it("leads with what the scan found and orders the changes it lists", async () => {
         render(<RegulatoryRadarView />);
-        expect(await screen.findByText("2 mudanças")).toBeInTheDocument();
+        // One scan: its name and what is open in it, the same number as its tile.
+        expect(await screen.findByText("3 mudanças")).toBeInTheDocument();
         expect(screen.getByText("BCB — pagamentos, cripto e câmbio", { selector: "strong" })).toBeInTheDocument();
         const rows = screen.getAllByRole("listitem");
         expect(within(rows[0]).getByText("Resolução BCB nº 999")).toBeInTheDocument();
@@ -290,6 +291,19 @@ describe("RegulatoryRadarView", () => {
         await screen.findByText("Resolução BCB nº 999");
         fireEvent.keyDown(window, { key: "j" });
         expect(nav.replace).toHaveBeenLastCalledWith("?mudanca=c1", { scroll: false });
+    });
+
+    it("adds up every scan when there are several and none is selected", async () => {
+        api.listRegulatoryScans.mockResolvedValue([
+            scan(),
+            scan({ id: "s2", name: "LGPD / ANPD", preset: "lgpd_anpd", counts: { novas: 1, abertas: 1, alto: 0 } }),
+        ]);
+        render(<RegulatoryRadarView />);
+        expect(await screen.findByText("4 mudanças")).toBeInTheDocument();
+        expect(screen.getByText(/Suas 2 varreduras/)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: /1\s*LGPD/ }));
+        expect(await screen.findByText("1 mudança")).toBeInTheDocument();
+        expect(screen.getByText("LGPD / ANPD", { selector: "strong" })).toBeInTheDocument();
     });
 
     it("filters by scan and lets the scan be re-run or paused", async () => {
