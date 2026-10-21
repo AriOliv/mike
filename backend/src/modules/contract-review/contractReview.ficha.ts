@@ -298,3 +298,51 @@ export function isFichaPath(path: unknown): path is FichaPath {
 export function fieldLabel(path: FichaPath): string {
     return FICHA_FIELDS.find((field) => field.path === path)!.label;
 }
+
+// ── corrections typed by a person ────────────────────────────────────────────
+const ENUMS: Partial<Record<FichaPath, { key?: string; values: string[] }[]>> = {
+    "identificacao.papel_avenia": [{ values: ["contratante", "contratada", "mutuo", "outro"] }],
+    "vigencia.prazo": [{ key: "tipo", values: ["determinado", "indeterminado"] }],
+    "vigencia.renovacao": [
+        { key: "tipo", values: ["automatica", "mediante_aditivo", "opcao_unilateral", "sem_renovacao", "nao_regulada"] },
+    ],
+    "rescisao.imotivada": [{ key: "permitida_para", values: ["ambas", "somente_avenia", "somente_contraparte", "nenhuma"] }],
+    "alteracao_parte.cessao": [
+        { key: "regime", values: ["livre", "notificacao", "consentimento_previo", "vedada", "nao_regulada"] },
+        { key: "aplica_a", values: ["avenia", "contraparte", "ambas"] },
+    ],
+    "alteracao_parte.mudanca_controle": [
+        { key: "regime", values: ["livre", "notificacao", "consentimento_previo", "vedada", "nao_regulada"] },
+        { key: "aplica_a", values: ["avenia", "contraparte", "ambas"] },
+    ],
+    "dados_pessoais.papel_avenia": [
+        { values: ["controlador", "operador", "controlador_conjunto", "suboperador", "nao_definido"] },
+    ],
+    "dados_pessoais.dpa": [{ values: ["no_corpo", "anexo", "por_referencia", "ausente"] }],
+};
+const BOOLEAN_FIELDS = new Set<FichaPath>(["dados_pessoais.compartilhamento"]);
+
+/**
+ * A corrected value in the shape the rules read, or null when it is not. A
+ * correction the rules cannot read would switch them off while the field
+ * shows as validated, so it is refused instead.
+ */
+export function validCorrection(path: FichaPath, value: unknown): boolean {
+    if (value === null) return true;
+    if (BOOLEAN_FIELDS.has(path)) return typeof value === "boolean";
+    const enums = ENUMS[path];
+    if (!enums) return value !== undefined && (typeof value !== "object" || !Array.isArray(value));
+    for (const { key, values } of enums) {
+        const v = key ? (value as Record<string, unknown> | null)?.[key] : value;
+        if (key && (typeof value !== "object" || Array.isArray(value))) return false;
+        if (!(key && v === undefined) && !values.includes(v as string)) return false;
+    }
+    return true;
+}
+
+/** The field's choices, for the correction form: [key or "", options]. */
+export function correctionChoices(path: FichaPath): { key: string; values: string[] }[] | "boolean" | null {
+    if (BOOLEAN_FIELDS.has(path)) return "boolean";
+    return ENUMS[path]?.map(({ key, values }) => ({ key: key ?? "", values })) ?? null;
+}
+

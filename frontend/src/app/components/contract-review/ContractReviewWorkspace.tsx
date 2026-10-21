@@ -26,9 +26,8 @@ import {
     visibleClauses,
     type VerdictFilter,
 } from "@/app/lib/contractReviewView";
-import { parseCorrection } from "@/app/lib/contractFichaView";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
-import { showToast } from "@/shared/ui/ToastUI";
+import { dismissToast, showToast } from "@/shared/ui/ToastUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TextButtonUI } from "@/shared/ui/TextButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
@@ -57,6 +56,7 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 
 type Pending = {
     timer: ReturnType<typeof setTimeout>;
+    toastId: string;
     /** Enough to send the decision without the component, when it unmounts. */
     send: () => Promise<unknown>;
 };
@@ -69,6 +69,8 @@ type Pending = {
  *
  * A decision shows at once and is sent after the 10-second undo window, so
  * "Desfazer" never has to reverse a change already made in the document.
+ * Decisions are sent one at a time: each one writes a new version of the
+ * same Word document, and two at once could lose one.
  */
 export function ContractReviewWorkspace({
     projectId,
@@ -103,6 +105,15 @@ export function ContractReviewWorkspace({
         initialQuote ? { quote: initialQuote, key: 0 } : null,
     );
     const pending = useRef(new Map<string, Pending>());
+    // Every send waits for the previous one.
+    const sendQueue = useRef<Promise<unknown>>(Promise.resolve());
+    const enqueue = useCallback((send: () => Promise<unknown>) => {
+        const next = sendQueue.current.then(send, send);
+        sendQueue.current = next.catch(() => undefined);
+        return next;
+    }, []);
+    // The review on screen: a slow answer for another one is dropped.
+    const shownRun = useRef<string | null>(null);
 
     // ── loading ──────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -129,27 +140,35 @@ export function ContractReviewWorkspace({
         };
     }, [projectId, attempt]);
 
+    const [polls, setPolls] = useState(0);
     const loadReview = useCallback(
         async (runId: string) => {
             try {
-                setReview(await getContractReview(projectId, runId));
+                const loaded = await getContractReview(projectId, runId);
+                if (shownRun.current === runId) setReview(loaded);
             } catch (error) {
-                setLoadError(describeError(error, { action: "abrir a revisão" }).message);
+                if (shownRun.current === runId)
+                    setLoadError(describeError(error, { action: "abrir a revisão" }).message);
+            } finally {
+                setPolls((n) => n + 1);
             }
         },
         [projectId],
     );
     useEffect(() => {
+        shownRun.current = selectedId;
         if (selectedId) void loadReview(selectedId);
     }, [selectedId, loadReview]);
 
-    // A review drafts its edits on the server: poll until it is done.
+    // A review drafts its edits on the server: poll until it is done. Each
+    // load, failed or not, re-arms the timer, so one network error does not
+    // leave the screen on "Redigindo edições…".
     const running = isRunning(review);
     useEffect(() => {
         if (!running || !selectedId) return;
         const timer = setTimeout(() => void loadReview(selectedId), 3000);
         return () => clearTimeout(timer);
-    }, [running, selectedId, review, loadReview]);
+    }, [running, selectedId, polls, loadReview]);
     const wasRunning = useRef(false);
     useEffect(() => {
         if (wasRunning.current && !running) {
@@ -199,13 +218,13 @@ export function ContractReviewWorkspace({
         }
     }
 
-    async function decideField(path: string, action: "confirmar" | "corrigir", text?: string) {
+    async function decideField(path: string, action: "confirmar" | "corrigir", value?: unknown) {
         try {
             setFicha(
                 await decideFichaField(projectId, {
                     path,
                     action,
-                    ...(action === "corrigir" ? { value: parseCorrection(text ?? "") } : {}),
+                    ...(action === "corrigir" ? { value: value ?? null } : {}),
                 }),
             );
             if (selectedId) void loadReview(selectedId);
@@ -220,26 +239,39 @@ export function ContractReviewWorkspace({
     }
 
     const commit = useCallback(
-        async (clause: ReviewClause, input: Parameters<typeof decideReviewClause>[3]) => {
-            if (!review) return;
+        (clause: ReviewClause, input: Parameters<typeof decideReviewClause>[3]) => {
+            const runId = review?.id;
+            if (!runId) return Promise.resolve();
             setBusy(clause.id);
-            try {
-                await decideReviewClause(projectId, review.id, clause.id, input);
-                setDocRevision((n) => n + 1);
-                await loadReview(review.id);
-            } catch (error) {
-                notifyError(error, { action: "registrar a decisão" });
-            } finally {
-                setOptimistic((current) => without(current, clause.id));
-                setBusy(null);
-            }
+            return enqueue(async () => {
+                try {
+                    await decideReviewClause(projectId, runId, clause.id, input);
+                    setDocRevision((n) => n + 1);
+                } catch (error) {
+                    notifyError(error, { action: "registrar a decisão" });
+                } finally {
+                    await loadReview(runId);
+                    setOptimistic((current) => without(current, clause.id));
+                    setBusy((id) => (id === clause.id ? null : id));
+                }
+            });
         },
-        [projectId, review, loadReview],
+        [projectId, review, loadReview, enqueue],
     );
 
+    /** Drops a decision still in its undo window; true when there was one. */
+    function cancelPending(clauseId: string): boolean {
+        const queued = pending.current.get(clauseId);
+        if (!queued) return false;
+        clearTimeout(queued.timer);
+        dismissToast(queued.toastId);
+        pending.current.delete(clauseId);
+        setOptimistic((current) => without(current, clauseId));
+        return true;
+    }
+
     function decide(clause: ReviewClause, input: { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string }) {
-        const previous = pending.current.get(clause.id);
-        if (previous) clearTimeout(previous.timer);
+        cancelPending(clause.id);
         setOptimistic((current) => ({
             ...current,
             [clause.id]: {
@@ -252,39 +284,41 @@ export function ContractReviewWorkspace({
             },
         }));
         const label = input.decision === "aceito" ? "Aceito" : input.decision === "editado" ? "Editado" : "Rejeitado";
-        const timer = setTimeout(() => {
-            pending.current.delete(clause.id);
-            void commit(clause, input);
-        }, UNDO_MS);
-        showToast({
+        const runId = review?.id;
+        const entry: Pending = {
+            timer: setTimeout(() => {
+                if (pending.current.get(clause.id) !== entry) return;
+                pending.current.delete(clause.id);
+                void commit(clause, input);
+            }, UNDO_MS),
+            toastId: "",
+            send: () => (runId ? decideReviewClause(projectId, runId, clause.id, input) : Promise.resolve()),
+        };
+        entry.toastId = showToast({
             tone: "success",
             message: `${label}: ${clause.ruleName}`,
             durationMs: UNDO_MS,
             actions: [
                 {
                     label: "Desfazer",
+                    // Only this toast's own decision, and only while it is still queued.
                     onClick: () => {
-                        clearTimeout(timer);
-                        pending.current.delete(clause.id);
-                        setOptimistic((current) => without(current, clause.id));
+                        if (pending.current.get(clause.id) === entry) cancelPending(clause.id);
                     },
                 },
             ],
         });
-        const runId = review?.id;
-        pending.current.set(clause.id, {
-            timer,
-            send: () => (runId ? decideReviewClause(projectId, runId, clause.id, input) : Promise.resolve()),
-        });
+        pending.current.set(clause.id, entry);
         setFocus((index) => stepFocus(index, 1, shown.length));
     }
 
     function reopen(clause: ReviewClause) {
-        const queued = pending.current.get(clause.id);
-        if (queued) {
-            clearTimeout(queued.timer);
-            pending.current.delete(clause.id);
-            setOptimistic((current) => without(current, clause.id));
+        if (cancelPending(clause.id) || busy === clause.id) return;
+        if (clause.decision && clause.decision.decision !== "aceito") {
+            showToast({
+                tone: "info",
+                message: "Esta decisão já foi aplicada ao documento. Ajuste a alteração direto no documento, na aba Documentos.",
+            });
             return;
         }
         void commit(clause, { decision: "desfeito" });
@@ -294,17 +328,19 @@ export function ContractReviewWorkspace({
         for (const clause of aligned) decide(clause, { decision: "aceito" });
     }
 
-    // Leaving the page sends what is still in its undo window, so no decision is lost.
+    // Leaving the page sends what is still in its undo window, one at a
+    // time, so no decision is lost and none overwrites another.
     useEffect(() => {
         const queue = pending.current;
         return () => {
             for (const item of queue.values()) {
                 clearTimeout(item.timer);
-                item.send().catch((error: unknown) => notifyError(error, { action: "registrar a decisão" }));
+                dismissToast(item.toastId);
+                enqueue(item.send).catch((error: unknown) => notifyError(error, { action: "registrar a decisão" }));
             }
             queue.clear();
         };
-    }, []);
+    }, [enqueue]);
 
     async function exportDocx() {
         const documentId = review?.document.id;
@@ -322,14 +358,16 @@ export function ContractReviewWorkspace({
         }
     }
 
-    // j/k move between clauses, Enter shows the clause in the document.
+    // j/k move between clauses, Enter on a focused card shows it in the document.
     function onListKey(event: React.KeyboardEvent<HTMLDivElement>) {
-        const typing = (event.target as HTMLElement).closest("input, textarea");
-        if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+        const target = event.target as HTMLElement;
+        if (target.closest("input, textarea, select") || target.isContentEditable) return;
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
         if (event.key === "j" || event.key === "k") {
             event.preventDefault();
             setFocus((index) => stepFocus(index, event.key === "j" ? 1 : -1, shown.length));
-        } else if (event.key === "Enter" && focus >= 0 && shown[focus] && event.target === event.currentTarget) {
+        } else if (event.key === "Enter" && target.tagName === "ARTICLE" && focus >= 0 && shown[focus]) {
+            event.preventDefault();
             locate(shown[focus]);
         }
     }
@@ -569,7 +607,7 @@ export function ContractReviewWorkspace({
                                 canEdit={canEdit}
                                 onExtract={extract}
                                 onConfirm={(path) => void decideField(path, "confirmar")}
-                                onCorrect={(path, text) => void decideField(path, "corrigir", text)}
+                                onCorrect={(path, value) => void decideField(path, "corrigir", value)}
                                 onLocate={(quote) => setHighlight((current) => ({ quote, key: (current?.key ?? 0) + 1 }))}
                             />
                         )}

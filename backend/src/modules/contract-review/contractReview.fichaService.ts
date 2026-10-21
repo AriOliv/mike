@@ -12,7 +12,10 @@ import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serv
 import { getUserModelSettings } from "../user/user.service";
 import {
     applyFieldDecision,
+    correctionChoices,
     extractionPrompt,
+    FICHA_FIELDS,
+    validCorrection,
     fichaProgress,
     isFichaPath,
     mergeExtraction,
@@ -30,6 +33,8 @@ import {
     type ContractDocument,
 } from "./contractReview.shared";
 
+class FichaChangedError extends Error {}
+
 export const FICHA_PROMPT_VERSION = "ficha-revisao-v1";
 
 export const MODEL_REQUIRED =
@@ -37,6 +42,8 @@ export const MODEL_REQUIRED =
 
 export type FichaView = {
     ficha: Ficha | null;
+    /** How each field can be corrected: its options, "boolean", or null for free text. */
+    choices: Record<string, ReturnType<typeof correctionChoices>>;
     findings: RiskFinding[];
     risk_overall: "critico" | "atencao" | "ok" | null;
     progress: { verified: number; total: number };
@@ -47,6 +54,7 @@ export type FichaView = {
 
 type FichaRow = {
     project_id: string;
+    updated_at?: string;
     ficha: Ficha | null;
     findings: RiskFinding[] | null;
     risk_overall: FichaView["risk_overall"];
@@ -59,6 +67,7 @@ function view(row: FichaRow | null): FichaView {
     const ficha = row?.ficha && Object.keys(row.ficha).length ? row.ficha : null;
     return {
         ficha,
+        choices: Object.fromEntries(FICHA_FIELDS.map((field) => [field.path, correctionChoices(field.path)])),
         findings: row?.findings ?? [],
         risk_overall: row?.risk_overall ?? null,
         progress: fichaProgress(ficha),
@@ -71,7 +80,7 @@ function view(row: FichaRow | null): FichaView {
 async function loadRow(db: Db, projectId: string): Promise<FichaRow | null> {
     const { data, error } = await db
         .from("contract_fichas")
-        .select("project_id, ficha, findings, risk_overall, document_id, extracted_at, model")
+        .select("project_id, ficha, findings, risk_overall, document_id, extracted_at, model, updated_at")
         .eq("project_id", projectId)
         .maybeSingle();
     if (error) throw error;
@@ -103,6 +112,8 @@ async function saveFicha(
     projectId: string,
     ficha: Ficha,
     extra: Partial<Record<string, unknown>>,
+    /** Writes only if the row is still the one read: a concurrent save is not lost. */
+    expectedUpdatedAt?: string,
 ): Promise<Pick<FichaRow, "ficha" | "findings" | "risk_overall"> & Partial<FichaRow>> {
     const findings = evaluateRules(ficha);
     const now = new Date().toISOString();
@@ -115,8 +126,19 @@ async function saveFicha(
         updated_at: now,
         ...extra,
     };
-    const { error } = await db.from("contract_fichas").upsert(row, { onConflict: "project_id" });
-    if (error) throw error;
+    if (expectedUpdatedAt) {
+        const { data, error } = await db
+            .from("contract_fichas")
+            .update(row)
+            .eq("project_id", projectId)
+            .eq("updated_at", expectedUpdatedAt)
+            .select("project_id");
+        if (error) throw error;
+        if (!Array.isArray(data) || data.length === 0) throw new FichaChangedError();
+    } else {
+        const { error } = await db.from("contract_fichas").upsert(row, { onConflict: "project_id" });
+        if (error) throw error;
+    }
     return row as Pick<FichaRow, "ficha" | "findings" | "risk_overall"> & Partial<FichaRow>;
 }
 
@@ -151,6 +173,10 @@ export async function extractFicha(
             console.warn(`[ficha] unparseable extraction (${raw.length} chars)`);
             throw error;
         }
+        const fields = (parsed as { fields?: unknown } | null)?.fields;
+        // An answer with no fields would reset every field to "not found".
+        if (!fields || typeof fields !== "object" || Object.keys(fields).length === 0)
+            throw new Error("model returned no Ficha fields");
         const previous = (await loadRow(db, projectId))?.ficha ?? null;
         const ficha = mergeExtraction(previous, normalizeExtraction(parsed, text));
         const now = new Date().toISOString();
@@ -179,6 +205,8 @@ export async function decideFichaField(
     if (!isFichaPath(path)) return failure("validation", "Campo da Ficha desconhecido.");
     if (action !== "confirmar" && action !== "corrigir") return failure("validation", "Ação deve ser confirmar ou corrigir.");
     if (action === "corrigir" && !("value" in body)) return failure("validation", "Informe o valor corrigido.");
+    if (action === "corrigir" && !validCorrection(path, body.value))
+        return failure("validation", "Escolha um dos valores deste campo.");
     const comment = typeof body.comment === "string" ? body.comment.trim().slice(0, 500) || null : null;
     const allowed = await requireContractEdit(db, caller, projectId);
     if (!allowed.ok) return allowed;
@@ -193,7 +221,7 @@ export async function decideFichaField(
             action === "confirmar" ? { action, by, comment } : { action, by, value: body.value ?? null, comment },
             now,
         );
-        const saved = await saveFicha(db, projectId, { ...row.ficha, [path]: decided }, {});
+        const saved = await saveFicha(db, projectId, { ...row.ficha, [path]: decided }, {}, row.updated_at);
         const { error } = await db.from("contract_field_reviews").insert({
             project_id: projectId,
             path,
@@ -206,6 +234,8 @@ export async function decideFichaField(
         if (error) throw error;
         return ok(view({ ...row, ...saved }));
     } catch (error) {
+        if (error instanceof FichaChangedError)
+            return failure("conflict", "Outra pessoa acabou de alterar a Ficha. Recarregue e tente de novo.");
         return internalFailure(error);
     }
 }

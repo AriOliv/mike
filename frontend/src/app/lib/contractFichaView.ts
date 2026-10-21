@@ -3,7 +3,7 @@
 // aviso de 30 dias corridos"). The value stays structured in the Ficha; this is
 // only its wording.
 
-import type { FichaField } from "./mikeApi";
+import type { FichaChoices, FichaField } from "./mikeApi";
 
 export const FICHA_GROUPS: { title: string; fields: [string, string][] }[] = [
     {
@@ -147,14 +147,45 @@ export function fichaGroups(ficha: Record<string, FichaField>) {
     })).filter((group) => group.fields.length > 0);
 }
 
+/** Free-text fields and the key their text goes to; anything else is chosen from a list. */
+const FREE_TEXT_KEY: Record<string, string> = {
+    "foro.lei_aplicavel": "jurisdicao",
+    "identificacao.contraparte": "nome",
+};
+
+export type CorrectionForm =
+    | { kind: "boolean" }
+    | { kind: "choice"; key: string; options: { value: string; label: string }[] }
+    | { kind: "text"; key: string }
+    | null;
+
+/** How a person corrects this field, from the choices the server sent. */
+export function correctionForm(path: string, choices: FichaChoices | undefined): CorrectionForm {
+    if (choices === "boolean") return { kind: "boolean" };
+    if (choices && choices.length) {
+        const [first] = choices;
+        return { kind: "choice", key: first.key, options: first.values.map((value) => ({ value, label: word(value) })) };
+    }
+    return FREE_TEXT_KEY[path] ? { kind: "text", key: FREE_TEXT_KEY[path] } : null;
+}
+
+/** What the form currently shows for the field. */
+export function correctionDraft(form: NonNullable<CorrectionForm>, value: unknown): string {
+    if (form.kind === "boolean") return value === true ? "true" : value === false ? "false" : "";
+    const current = form.key ? (value as Record<string, unknown> | null)?.[form.key] : value;
+    return typeof current === "string" ? current : "";
+}
+
 /**
- * A correction typed as text. "sim"/"não" become booleans; anything else is
- * kept as the person wrote it, in `nota`, so nothing they typed is lost.
+ * The corrected value in the field's shape: the chosen option goes to its
+ * key and the rest of the structured value is kept, so a correction of the
+ * regime does not erase who it applies to.
  */
-export function parseCorrection(text: string): unknown {
-    const value = text.trim();
-    if (!value) return null;
-    if (/^(sim|s)$/i.test(value)) return true;
-    if (/^(não|nao|n)$/i.test(value)) return false;
-    return { nota: value };
+export function correctedValue(form: NonNullable<CorrectionForm>, previous: unknown, draft: string): unknown {
+    if (form.kind === "boolean") return draft === "true" ? true : draft === "false" ? false : null;
+    const text = draft.trim();
+    if (!text) return null;
+    if (!form.key) return text;
+    const base = previous && typeof previous === "object" && !Array.isArray(previous) ? previous : {};
+    return { ...base, [form.key]: text };
 }

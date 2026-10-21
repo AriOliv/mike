@@ -8,7 +8,14 @@ import { TextButtonUI } from "@/shared/ui/TextButtonUI";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { SkeletonLine } from "@/app/components/shared/TablePrimitive";
 import type { ContractFicha, FichaField } from "@/app/lib/mikeApi";
-import { fichaGroups, fieldSummary } from "@/app/lib/contractFichaView";
+import {
+    correctedValue,
+    correctionDraft,
+    correctionForm,
+    fichaGroups,
+    fieldSummary,
+    type CorrectionForm,
+} from "@/app/lib/contractFichaView";
 
 /**
  * The Ficha beside the review: each field with its state (a conferir /
@@ -32,7 +39,7 @@ export function ContractFichaPanel({
     canEdit: boolean;
     onExtract: () => void;
     onConfirm: (path: string) => void;
-    onCorrect: (path: string, text: string) => void;
+    onCorrect: (path: string, value: unknown) => void;
     onLocate: (quote: string) => void;
 }) {
     const [editing, setEditing] = useState<string | null>(null);
@@ -92,35 +99,44 @@ export function ContractFichaPanel({
                 <section key={group.title} aria-label={group.title} className="space-y-1.5">
                     <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500">{group.title}</h4>
                     <ul className="space-y-1">
-                        {group.fields.map(({ path, label, field }) => (
-                            <FichaRow
-                                key={path}
-                                path={path}
-                                label={label}
-                                field={field}
-                                canEdit={canEdit}
-                                editing={editing === path}
-                                draft={draft}
-                                onDraft={setDraft}
-                                onStartEdit={() => {
-                                    setDraft(fieldSummary(field));
-                                    setEditing(path);
-                                }}
-                                onCancel={() => setEditing(null)}
-                                onSave={() => {
-                                    setEditing(null);
-                                    onCorrect(path, draft);
-                                }}
-                                onConfirm={() => onConfirm(path)}
-                                onLocate={onLocate}
-                            />
-                        ))}
+                        {group.fields.map(({ path, label, field }) => {
+                            const form = correctionForm(path, ficha.choices?.[path]);
+                            return (
+                                <FichaRow
+                                    key={path}
+                                    path={path}
+                                    label={label}
+                                    field={field}
+                                    canEdit={canEdit}
+                                    form={form}
+                                    editing={editing === path}
+                                    draft={draft}
+                                    onDraft={setDraft}
+                                    onStartEdit={() => {
+                                        if (!form) return;
+                                        setDraft(correctionDraft(form, field.value));
+                                        setEditing(path);
+                                    }}
+                                    onCancel={() => setEditing(null)}
+                                    onSave={() => {
+                                        if (!form) return;
+                                        setEditing(null);
+                                        onCorrect(path, correctedValue(form, field.value, draft));
+                                    }}
+                                    onConfirm={() => onConfirm(path)}
+                                    onLocate={onLocate}
+                                />
+                            );
+                        })}
                     </ul>
                 </section>
             ))}
         </div>
     );
 }
+
+const FIELD_CLASS =
+    "min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
 function StateMark({ field }: { field: FichaField }) {
     if (field.review.state === "confirmado")
@@ -158,6 +174,7 @@ function FichaRow({
     label,
     field,
     canEdit,
+    form,
     editing,
     draft,
     onDraft,
@@ -171,6 +188,7 @@ function FichaRow({
     label: string;
     field: FichaField;
     canEdit: boolean;
+    form: CorrectionForm;
     editing: boolean;
     draft: string;
     onDraft: (text: string) => void;
@@ -193,25 +211,53 @@ function FichaRow({
                     <StateMark field={field} />
                 </span>
             </div>
-            {editing ? (
+            {editing && form ? (
                 <div className="mt-1.5 flex items-center gap-2">
                     <label className="sr-only" htmlFor={`ficha-${path}`}>
                         Valor correto de {label}
                     </label>
-                    <input
-                        id={`ficha-${path}`}
-                        autoFocus
-                        value={draft}
-                        onChange={(event) => onDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                            if (event.key === "Enter") onSave();
-                            if (event.key === "Escape") onCancel();
-                        }}
-                        className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                    />
+                    {form.kind === "text" ? (
+                        <input
+                            id={`ficha-${path}`}
+                            autoFocus
+                            value={draft}
+                            onChange={(event) => onDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter") onSave();
+                                if (event.key === "Escape") onCancel();
+                            }}
+                            className={FIELD_CLASS}
+                        />
+                    ) : (
+                        <select
+                            id={`ficha-${path}`}
+                            autoFocus
+                            value={draft}
+                            onChange={(event) => onDraft(event.target.value)}
+                            onKeyDown={(event) => event.key === "Escape" && onCancel()}
+                            className={FIELD_CLASS}
+                        >
+                            <option value="">O contrato não trata disso</option>
+                            {form.kind === "boolean" ? (
+                                <>
+                                    <option value="true">Sim</option>
+                                    <option value="false">Não</option>
+                                </>
+                            ) : (
+                                form.options.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))
+                            )}
+                        </select>
+                    )}
                     <PillButtonUI tone="black" size="xs" onClick={onSave}>
                         Salvar
                     </PillButtonUI>
+                    <TextButtonUI size="xs" onClick={onCancel}>
+                        Cancelar
+                    </TextButtonUI>
                 </div>
             ) : (
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 pl-0 text-xs sm:pl-42">
@@ -230,9 +276,11 @@ function FichaRow({
                                 <Check aria-hidden="true" className="h-3 w-3" />
                                 Verificar
                             </TextButtonUI>
-                            <TextButtonUI size="xs" onClick={onStartEdit} aria-label={`Corrigir ${label}`}>
-                                Corrigir
-                            </TextButtonUI>
+                            {form && (
+                                <TextButtonUI size="xs" onClick={onStartEdit} aria-label={`Corrigir ${label}`}>
+                                    Corrigir
+                                </TextButtonUI>
+                            )}
                         </>
                     )}
                 </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FichaField } from "./mikeApi";
-import { fichaGroups, fieldSummary, parseCorrection } from "./contractFichaView";
+import { correctedValue, correctionDraft, correctionForm, fichaGroups, fieldSummary } from "./contractFichaView";
 
 const field = (value: unknown, status: FichaField["status"] = "encontrado"): FichaField => ({
     status,
@@ -78,12 +78,38 @@ describe("fichaGroups", () => {
     });
 });
 
-describe("parseCorrection", () => {
-    it("reads yes/no and keeps anything else as written", () => {
-        expect(parseCorrection("  ")).toBeNull();
-        expect(parseCorrection("Sim")).toBe(true);
-        expect(parseCorrection("n")).toBe(false);
-        expect(parseCorrection("não")).toBe(false);
-        expect(parseCorrection("aviso de 90 dias")).toEqual({ nota: "aviso de 90 dias" });
+describe("corrections", () => {
+    it("builds the form from the field's choices", () => {
+        expect(correctionForm("dados_pessoais.compartilhamento", "boolean")).toEqual({ kind: "boolean" });
+        expect(correctionForm("alteracao_parte.cessao", [{ key: "regime", values: ["livre", "vedada"] }, { key: "aplica_a", values: ["avenia"] }])).toEqual({
+            kind: "choice",
+            key: "regime",
+            options: [
+                { value: "livre", label: "livre" },
+                { value: "vedada", label: "vedada" },
+            ],
+        });
+        expect(correctionForm("foro.lei_aplicavel", null)).toEqual({ kind: "text", key: "jurisdicao" });
+        expect(correctionForm("foro.lei_aplicavel", [])).toEqual({ kind: "text", key: "jurisdicao" });
+        expect(correctionForm("vigencia.renovacao", undefined)).toBeNull();
+    });
+
+    it("shows the current value and keeps the rest of the structure on save", () => {
+        expect(correctionDraft({ kind: "boolean" }, true)).toBe("true");
+        expect(correctionDraft({ kind: "boolean" }, false)).toBe("false");
+        expect(correctionDraft({ kind: "boolean" }, null)).toBe("");
+        const regime = { kind: "choice" as const, key: "regime", options: [] };
+        expect(correctionDraft(regime, { regime: "vedada", aplica_a: "avenia" })).toBe("vedada");
+        expect(correctionDraft(regime, null)).toBe("");
+        const plain = { kind: "choice" as const, key: "", options: [] };
+        expect(correctionDraft(plain, "anexo")).toBe("anexo");
+        expect(correctedValue({ kind: "boolean" }, true, "false")).toBe(false);
+        expect(correctedValue({ kind: "boolean" }, true, "true")).toBe(true);
+        expect(correctedValue({ kind: "boolean" }, true, "")).toBeNull();
+        expect(correctedValue(regime, { regime: "vedada", aplica_a: "avenia" }, "livre")).toEqual({ regime: "livre", aplica_a: "avenia" });
+        expect(correctedValue(regime, null, "livre")).toEqual({ regime: "livre" });
+        expect(correctedValue(regime, ["x"], "livre")).toEqual({ regime: "livre" });
+        expect(correctedValue(plain, "anexo", "no_corpo")).toBe("no_corpo");
+        expect(correctedValue(plain, "anexo", " ")).toBeNull();
     });
 });

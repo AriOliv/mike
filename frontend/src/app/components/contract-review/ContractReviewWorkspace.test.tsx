@@ -96,6 +96,7 @@ const FICHA: ContractFicha = {
             review: { state: "pendente", by: null, at: null, comment: null },
         },
     },
+    choices: { "foro.lei_aplicavel": null, "dados_pessoais.compartilhamento": "boolean" },
     findings: [],
     risk_overall: "atencao",
     progress: { verified: 0, total: 1 },
@@ -186,6 +187,63 @@ describe("ContractReviewWorkspace", () => {
         expect(screen.queryByRole("button", { name: /Reabrir/ })).toBeNull();
     });
 
+    it("corrects a yes/no field from a list, never as free text", async () => {
+        api.getContractFicha.mockResolvedValue({
+            ...FICHA,
+            ficha: {
+                "dados_pessoais.compartilhamento": { ...FICHA.ficha!["foro.lei_aplicavel"], value: true },
+            },
+        });
+        api.decideFichaField.mockResolvedValue(FICHA);
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("tab", { name: /Ficha/ }));
+        fireEvent.click(await screen.findByRole("button", { name: "Corrigir Compartilha dados pessoais" }));
+        const select = screen.getByRole("combobox", { name: "Valor correto de Compartilha dados pessoais" });
+        expect(select).toHaveValue("true");
+        fireEvent.change(select, { target: { value: "false" } });
+        fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+        await waitFor(() =>
+            expect(api.decideFichaField).toHaveBeenCalledWith("p1", { path: "dados_pessoais.compartilhamento", action: "corrigir", value: false }),
+        );
+    });
+
+    it("explains that a rejection already in the document is changed there", async () => {
+        api.getContractReview.mockResolvedValue({
+            ...REVIEW,
+            clauses: [clause("foro", "diverge", { decision: { decision: "rejeitado", edited_text: null, reason: null, decided_by: "duda@avenia.io", decided_at: "2026-10-20T10:05:00Z", edit: null } })],
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Reabrir: Rejeitado" }));
+        expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: "info" }));
+        expect(api.decideReviewClause).not.toHaveBeenCalled();
+    });
+
+    it("lets an old toast's undo touch only its own decision", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        const firstUndo = toasts.showToast.mock.calls[0][0].actions[0];
+        fireEvent.click(await screen.findByRole("button", { name: "Reabrir: Aceito" }));
+        const again = screen.getAllByRole("article").find((card) => within(card).queryByText("Cláusula foro · Regra foro"))!;
+        fireEvent.click(within(again).getByRole("button", { name: /Rejeitar/ }));
+        fireEvent.keyDown(within(again).getByLabelText("Por quê? (opcional)"), { key: "Enter" });
+        act(() => firstUndo.onClick());
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "rejeitado" }));
+        expect(api.decideReviewClause).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the focused clause in the document with Enter", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        const cards = await screen.findAllByRole("article");
+        fireEvent.keyDown(cards[0].parentElement!, { key: "j" });
+        fireEvent.keyDown(cards[0], { key: "Enter" });
+        expect(viewer.docx).toHaveBeenLastCalledWith(expect.objectContaining({ quotes: [{ quote: "trecho foro" }] }));
+    });
+
     it("reopens a decided clause on the server", async () => {
         api.getContractReview.mockResolvedValue({
             ...REVIEW,
@@ -262,13 +320,14 @@ describe("ContractReviewWorkspace", () => {
         expect(viewer.docx).toHaveBeenLastCalledWith(expect.objectContaining({ quotes: [{ quote: "leis de Nova York" }] }));
         fireEvent.click(screen.getByRole("button", { name: "Corrigir Lei aplicável" }));
         const input = screen.getByLabelText("Valor correto de Lei aplicável");
-        fireEvent.change(input, { target: { value: "lei brasileira" } });
+        expect(input).toHaveValue("US");
+        fireEvent.change(input, { target: { value: "BR" } });
         fireEvent.keyDown(input, { key: "Enter" });
         await waitFor(() =>
             expect(api.decideFichaField).toHaveBeenCalledWith("p1", {
                 path: "foro.lei_aplicavel",
                 action: "corrigir",
-                value: { nota: "lei brasileira" },
+                value: { jurisdicao: "BR" },
             }),
         );
     });

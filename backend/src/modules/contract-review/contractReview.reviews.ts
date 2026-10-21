@@ -488,10 +488,12 @@ const DECISIONS = new Set(["aceito", "editado", "rejeitado", "desfeito"]);
 /**
  * Records a person's decision on one suggestion and applies it to the Word
  * document: accepting keeps the tracked change for the counterparty, rejecting
- * removes it, editing replaces it with the person's wording as a new tracked
- * change (the suggestion's change is rejected first, so the edit replaces the
- * contract's own text). "desfeito" removes the decision: the undo in the toast
- * runs before the decision is sent, so a change is never re-created.
+ * removes it, editing writes the person's wording over the suggestion's
+ * inserted text as a new tracked change (the contract's original text stays
+ * marked as deleted). A suggestion takes one decision; "desfeito" reopens it
+ * only while the document is untouched — after an accept, or before any
+ * decision reached the server (the toast's undo never sends one). A reject or
+ * an edit already applied to the document is adjusted in the document itself.
  */
 export async function decideReviewClause(
     db: Db,
@@ -512,7 +514,14 @@ export async function decideReviewClause(
     try {
         const row = await reviewRow(db, projectId, runId);
         if (!row) return failure("not_found", "Revisão não encontrada.");
+        const existing = (await decisionsOf(db, runId)).get(findingId) ?? null;
         if (decision === "desfeito") {
+            if (!existing) return ok({ decision: null, edit: null });
+            if (existing.decision !== "aceito")
+                return failure(
+                    "conflict",
+                    "Esta decisão já foi aplicada ao documento. Ajuste a alteração direto no documento.",
+                );
             const { error } = await db
                 .from("contract_review_decisions")
                 .delete()
@@ -521,6 +530,7 @@ export async function decideReviewClause(
             if (error) throw error;
             return ok({ decision: null, edit: null });
         }
+        if (existing) return failure("conflict", "Esta sugestão já foi decidida. Recarregue para ver a decisão.");
         const run = await getPlaybookRunById(db, runId);
         const finding = (run?.findings as RunFinding[] | undefined)?.find((f) => f.id === findingId);
         if (!run || !finding) return failure("not_found", "Sugestão não encontrada.");
@@ -528,15 +538,11 @@ export async function decideReviewClause(
         const documentId = run.documentId ?? null;
         const pending = finding.edit && finding.edit.status === "pending" ? finding.edit : null;
         if (decision === "editado" && documentId) {
-            // Reject the suggestion's change first, so the person's wording
-            // replaces the original text rather than the suggestion; if the
-            // new change cannot be placed, put nothing at risk: report it.
-            const target = finding.quote || pending?.deleted_text || "";
+            // Over the suggestion's own inserted text when it is in the
+            // document, else over the contract language it quoted. One write:
+            // if the wording cannot be placed, the document is unchanged.
+            const target = pending?.inserted_text || finding.quote;
             if (!target) return failure("validation", "Esta sugestão não tem trecho no documento para editar.");
-            if (pending) {
-                const rejected = await resolveEdit("reject", documentId, pending.edit_id, caller.userId, caller.userEmail ?? undefined, db);
-                if (!rejected.ok) return failure("conflict", "O documento mudou desde a revisão. Recarregue e tente de novo.");
-            }
             const applied = await applyTrackedEditsToDocument({
                 documentId,
                 userId: caller.userId,
@@ -559,9 +565,10 @@ export async function decideReviewClause(
             decided_at: new Date().toISOString(),
             edit,
         };
-        const { error } = await db
-            .from("contract_review_decisions")
-            .upsert({ run_id: runId, finding_id: findingId, ...decided }, { onConflict: "run_id,finding_id" });
+        // The primary key settles two people deciding at once: the second loses.
+        const { error } = await db.from("contract_review_decisions").insert({ run_id: runId, finding_id: findingId, ...decided });
+        if (error && (error as { code?: string }).code === "23505")
+            return failure("conflict", "Esta sugestão já foi decidida. Recarregue para ver a decisão.");
         if (error) throw error;
         void recordAudit(db, {
             userId: caller.userId,

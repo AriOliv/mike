@@ -379,7 +379,19 @@ describe("listContractReviews", () => {
 });
 
 describe("decideReviewClause", () => {
-    const linked = () => ({ contract_reviews: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }] });
+    const linked = (decisions: unknown[] = []) => ({
+        contract_reviews: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }],
+        "contract_review_decisions:select": [{ data: decisions }],
+    });
+    const decided = (decision: string) => ({
+        finding_id: "f-foro",
+        decision,
+        edited_text: null,
+        reason: null,
+        decided_by: "ana@avenia.io",
+        decided_at: "t",
+        edit: null,
+    });
 
     it("keeps an accepted tracked change in the document and records who accepted it", async () => {
         playbooks.getPlaybookRunById.mockResolvedValue(RUN);
@@ -387,7 +399,7 @@ describe("decideReviewClause", () => {
         const result = await decideReviewClause(fake.db, caller, "p1", "run-1", "f-foro", { decision: "aceito" });
         expect(result).toMatchObject({ ok: true, data: { decision: { decision: "aceito", decided_by: "duda@avenia.io" } } });
         expect(documents.resolveEdit).not.toHaveBeenCalled();
-        expect(fake.calls.find((c) => c.op === "upsert")?.payload).toMatchObject({ run_id: "run-1", finding_id: "f-foro", decision: "aceito" });
+        expect(fake.calls.find((c) => c.op === "insert")?.payload).toMatchObject({ run_id: "run-1", finding_id: "f-foro", decision: "aceito" });
     });
 
     it("rejects the tracked change with a reason", async () => {
@@ -398,22 +410,32 @@ describe("decideReviewClause", () => {
         expect(result).toMatchObject({ ok: true, data: { decision: { decision: "rejeitado", reason: "contraparte não aceita" } } });
     });
 
-    it("replaces the suggestion with the person's wording as a new tracked change", async () => {
+    it("writes the person's wording over the suggestion in one change", async () => {
         playbooks.getPlaybookRunById.mockResolvedValue(RUN);
-        documents.resolveEdit.mockResolvedValue({ ok: true, body: {} });
         documents.applyTrackedEditsToDocument.mockResolvedValue({ ok: true, annotations: [{ edit_id: "e2", status: "pending" }] });
         const result = await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", {
             decision: "editado",
             edited_text: "foro da Comarca de São Paulo/SP, com arbitragem",
         });
         expect(documents.applyTrackedEditsToDocument).toHaveBeenCalledWith(
-            expect.objectContaining({ documentId: "d1", edits: [expect.objectContaining({ find: "foro de Nova York", replace: "foro da Comarca de São Paulo/SP, com arbitragem" })] }),
+            expect.objectContaining({
+                documentId: "d1",
+                edits: [expect.objectContaining({ find: "foro da Comarca de São Paulo/SP", replace: "foro da Comarca de São Paulo/SP, com arbitragem" })],
+            }),
         );
+        expect(documents.resolveEdit).not.toHaveBeenCalled();
         expect(result).toMatchObject({ ok: true, data: { edit: { edit_id: "e2" }, decision: { edited_text: "foro da Comarca de São Paulo/SP, com arbitragem" } } });
     });
 
-    it("leaves the document alone when the edited wording cannot be placed", async () => {
+    it("edits the quoted contract language when the suggestion made no tracked change", async () => {
         playbooks.getPlaybookRunById.mockResolvedValue({ ...RUN, findings: RUN.findings.map((f) => ({ ...f, edit: null })) });
+        documents.applyTrackedEditsToDocument.mockResolvedValue({ ok: true, annotations: [{ edit_id: "e3" }] });
+        await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "editado", edited_text: "x" });
+        expect(documents.applyTrackedEditsToDocument.mock.calls[0][0].edits[0].find).toBe("foro de Nova York");
+    });
+
+    it("leaves the document alone when the edited wording cannot be placed", async () => {
+        playbooks.getPlaybookRunById.mockResolvedValue(RUN);
         documents.applyTrackedEditsToDocument.mockResolvedValue({ ok: false, error: "not found" });
         expect(
             await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "editado", edited_text: "x" }),
@@ -422,19 +444,34 @@ describe("decideReviewClause", () => {
         expect(
             await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-extra", { decision: "editado", edited_text: "x" }),
         ).toMatchObject({ kind: "validation" });
-        documents.resolveEdit.mockResolvedValue({ ok: false });
-        playbooks.getPlaybookRunById.mockResolvedValue(RUN);
-        expect(
-            await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "editado", edited_text: "x" }),
-        ).toMatchObject({ kind: "conflict" });
     });
 
-    it("undoes a decision, and validates the request", async () => {
-        const fake = fakeDb(linked());
+    it("takes one decision per suggestion, even when two people decide at once", async () => {
+        playbooks.getPlaybookRunById.mockResolvedValue(RUN);
+        expect(
+            await decideReviewClause(fakeDb(linked([decided("aceito")])).db, caller, "p1", "run-1", "f-foro", { decision: "rejeitado" }),
+        ).toMatchObject({ kind: "conflict" });
+        const race = fakeDb({ ...linked(), "contract_review_decisions:insert": [{ error: { code: "23505" } }] });
+        expect(await decideReviewClause(race.db, caller, "p1", "run-1", "f-cessao", { decision: "aceito" })).toMatchObject({ kind: "conflict" });
+    });
+
+    it("reopens an accept, but not a change already applied to the document", async () => {
+        const fake = fakeDb(linked([decided("aceito")]));
         expect(await decideReviewClause(fake.db, caller, "p1", "run-1", "f-foro", { decision: "desfeito" })).toEqual({ ok: true, data: { decision: null, edit: null } });
         expect(fake.calls.find((c) => c.op === "delete")?.filters).toContainEqual(["eq", "finding_id", "f-foro"]);
-        expect(await decideReviewClause(fake.db, caller, "p1", "run-1", "f", { decision: "talvez" })).toMatchObject({ kind: "validation" });
-        expect(await decideReviewClause(fake.db, caller, "p1", "run-1", "f", { decision: "editado", edited_text: " " })).toMatchObject({ kind: "validation" });
+        expect(await decideReviewClause(fakeDb(linked([decided("rejeitado")])).db, caller, "p1", "run-1", "f-foro", { decision: "desfeito" })).toMatchObject({
+            kind: "conflict",
+        });
+        expect(await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "desfeito" })).toEqual({
+            ok: true,
+            data: { decision: null, edit: null },
+        });
+    });
+
+    it("validates the request", async () => {
+        const db = fakeDb(linked()).db;
+        expect(await decideReviewClause(db, caller, "p1", "run-1", "f", { decision: "talvez" })).toMatchObject({ kind: "validation" });
+        expect(await decideReviewClause(db, caller, "p1", "run-1", "f", { decision: "editado", edited_text: " " })).toMatchObject({ kind: "validation" });
     });
 
     it("reports a document that changed, a missing suggestion and a viewer", async () => {
@@ -445,7 +482,7 @@ describe("decideReviewClause", () => {
         expect(await decideReviewClause(fakeDb({ contract_reviews: [{ data: null }] }).db, caller, "p1", "run-1", "f", { decision: "aceito" })).toMatchObject({ kind: "not_found" });
         access.checkProjectAccess.mockResolvedValueOnce(role("viewer"));
         expect(await decideReviewClause(fakeDb({}).db, caller, "p1", "run-1", "f", { decision: "aceito" })).toMatchObject({ kind: "forbidden" });
-        const failing = fakeDb({ ...linked(), "contract_review_decisions:upsert": [{ error: { message: "x" } }] });
+        const failing = fakeDb({ ...linked(), "contract_review_decisions:insert": [{ error: { message: "x" } }] });
         expect(await decideReviewClause(failing.db, caller, "p1", "run-1", "f-cessao", { decision: "aceito" })).toMatchObject({ kind: "error" });
     });
 });
@@ -492,7 +529,8 @@ describe("Ficha service", () => {
         versions.loadActiveVersion.mockResolvedValue({ ...docxVersion, filename: "c.pdf", file_type: "pdf" });
         llm.completeText.mockResolvedValue('{"fields":{}}');
         const result = await extractFicha(fakeDb({ documents: [{ data: [{ id: "d1" }] }], contract_fichas: [{ data: null }] }).db, caller, "p1");
-        expect(result.ok).toBe(true);
+        // An answer with no fields would blank the Ficha: it is an error, not a reset.
+        expect(result).toMatchObject({ ok: false, kind: "error" });
         expect(llm.completeText.mock.calls[0][0].user).toContain("texto pdf");
     });
 
@@ -515,9 +553,11 @@ describe("Ficha service", () => {
             document_id: "d1",
             extracted_at: "t",
             model: "m",
+            updated_at: "2026-10-20T10:00:00Z",
         };
-        const fake = fakeDb({ "contract_fichas:select": [{ data: stored }] });
+        const fake = fakeDb({ "contract_fichas:select": [{ data: stored }], "contract_fichas:update": [{ data: [{ project_id: "p1" }] }] });
         const result = await decideFichaField(fake.db, caller, "p1", { path: "foro.lei_aplicavel", action: "corrigir", value: { jurisdicao: "BR" }, comment: "cl. 20" });
+        expect(fake.calls.find((c) => c.op === "update")?.filters).toContainEqual(["eq", "updated_at", "2026-10-20T10:00:00Z"]);
         expect(result).toMatchObject({ ok: true, data: { findings: [], risk_overall: "ok", progress: { verified: 1, total: 1 } } });
         expect(fake.calls.find((c) => c.table === "contract_field_reviews")?.payload).toMatchObject({
             path: "foro.lei_aplicavel",
@@ -527,8 +567,31 @@ describe("Ficha service", () => {
             reviewer: "duda@avenia.io",
             comment: "cl. 20",
         });
-        const confirm = await decideFichaField(fakeDb({ "contract_fichas:select": [{ data: stored }] }).db, caller, "p1", { path: "foro.lei_aplicavel", action: "confirmar" });
+        const confirm = await decideFichaField(
+            fakeDb({ "contract_fichas:select": [{ data: stored }], "contract_fichas:update": [{ data: [{ project_id: "p1" }] }] }).db,
+            caller,
+            "p1",
+            { path: "foro.lei_aplicavel", action: "confirmar" },
+        );
         expect(confirm.ok && confirm.data.findings.map((f) => f.rule_id)).toEqual(["FOR-01"]);
+        expect(confirm.ok && confirm.data.choices["dados_pessoais.compartilhamento"]).toBe("boolean");
+    });
+
+    it("loses no one's work when two people validate at once", async () => {
+        const stored = { project_id: "p1", ficha: { "foro.lei_aplicavel": fichaField({ jurisdicao: "US" }) }, findings: [], updated_at: "t0" };
+        const fake = fakeDb({ "contract_fichas:select": [{ data: stored }], "contract_fichas:update": [{ data: [] }] });
+        expect(await decideFichaField(fake.db, caller, "p1", { path: "foro.lei_aplicavel", action: "confirmar" })).toMatchObject({ kind: "conflict" });
+        expect(fake.calls.some((c) => c.table === "contract_field_reviews")).toBe(false);
+    });
+
+    it("refuses a correction the rules could not read", async () => {
+        const db = fakeDb({}).db;
+        expect(await decideFichaField(db, caller, "p1", { path: "identificacao.papel_avenia", action: "corrigir", value: { nota: "contratada" } })).toMatchObject({
+            kind: "validation",
+            detail: "Escolha um dos valores deste campo.",
+        });
+        expect(await decideFichaField(db, caller, "p1", { path: "dados_pessoais.compartilhamento", action: "corrigir", value: "sim" })).toMatchObject({ kind: "validation" });
+        expect(await decideFichaField(db, caller, "p1", { path: "alteracao_parte.cessao", action: "corrigir", value: { regime: "proibida" } })).toMatchObject({ kind: "validation" });
     });
 
     it("validates the field decision", async () => {

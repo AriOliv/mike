@@ -117,7 +117,7 @@ export function ReviewClauseCard({
             focused={focused}
             onFocus={onFocus}
             onAccept={decidable ? onAccept : undefined}
-            onEdit={decidable && (before || missing) ? onEdit : undefined}
+            onEdit={decidable && !missing && before ? onEdit : undefined}
             editableText={decidable ? after : undefined}
             onReject={decidable ? onReject : undefined}
             onReopen={canDecide ? onReopen : undefined}

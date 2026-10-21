@@ -4,6 +4,8 @@ import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 import {
     applyFieldDecision,
+    correctionChoices,
+    validCorrection,
     extractionPrompt,
     fichaProgress,
     FICHA_FIELDS,
@@ -284,3 +286,28 @@ describe("drift against docs/product", () => {
         }
     });
 });
+
+describe("corrections", () => {
+    it("accepts only values the rules can read", () => {
+        expect(validCorrection("identificacao.papel_avenia", "contratada")).toBe(true);
+        expect(validCorrection("identificacao.papel_avenia", "fornecedora")).toBe(false);
+        expect(validCorrection("dados_pessoais.compartilhamento", false)).toBe(true);
+        expect(validCorrection("dados_pessoais.compartilhamento", "não")).toBe(false);
+        expect(validCorrection("alteracao_parte.cessao", { regime: "vedada", aplica_a: "avenia", excecoes: [] })).toBe(true);
+        expect(validCorrection("alteracao_parte.cessao", { regime: "livre" })).toBe(true);
+        expect(validCorrection("alteracao_parte.cessao", { regime: "x" })).toBe(false);
+        expect(validCorrection("alteracao_parte.cessao", "vedada")).toBe(false);
+        expect(validCorrection("alteracao_parte.cessao", ["vedada"])).toBe(false);
+        expect(validCorrection("foro.lei_aplicavel", { jurisdicao: "BR" })).toBe(true);
+        expect(validCorrection("foro.lei_aplicavel", [1])).toBe(false);
+        expect(validCorrection("foro.lei_aplicavel", undefined)).toBe(false);
+        expect(validCorrection("vigencia.prazo", null)).toBe(true);
+    });
+
+    it("describes the choices for the correction form", () => {
+        expect(correctionChoices("dados_pessoais.compartilhamento")).toBe("boolean");
+        expect(correctionChoices("dados_pessoais.dpa")).toEqual([{ key: "", values: ["no_corpo", "anexo", "por_referencia", "ausente"] }]);
+        expect(correctionChoices("foro.lei_aplicavel")).toBeNull();
+    });
+});
+

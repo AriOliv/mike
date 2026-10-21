@@ -4870,8 +4870,12 @@ export interface FichaField {
     review: { state: "pendente" | "confirmado" | "corrigido"; by: string | null; at: string | null; comment: string | null };
 }
 
+export type FichaChoices = { key: string; values: string[] }[] | "boolean" | null;
+
 export interface ContractFicha {
     ficha: Record<string, FichaField> | null;
+    /** How each field can be corrected: its options, "boolean", or null for free text. */
+    choices: Record<string, FichaChoices>;
     findings: RiskRuleFinding[];
     risk_overall: "critico" | "atencao" | "ok" | null;
     progress: { verified: number; total: number };
