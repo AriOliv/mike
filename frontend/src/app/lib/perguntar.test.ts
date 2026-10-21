@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import type { AcervoMatch } from "@/app/lib/mikeApi";
 import type { UserFacingError } from "@/shared/lib/userError";
 import {
+    count,
     coverageNotes,
+    FAILURE_ACTION_LABEL,
+    failureAction,
     failureCopy,
     hitSummary,
     matchStatus,
     MATCH_STATUS_LABEL,
     MODEL_REQUIRED_COPY,
+    plural,
     readSummary,
     reviewHref,
     splitCitations,
@@ -75,6 +79,9 @@ describe("links and labels", () => {
     it("counts hits and says what the search could not see", () => {
         expect(hitSummary({ total: 1, matches: [match({ hit: true })] })).toBe("1 de 1 contrato");
         expect(hitSummary({ total: 3, matches: [match({ hit: true }), match({})] })).toBe("1 de 3 contratos");
+        expect(hitSummary({ total: 0, matches: [] })).toBe("0 de 0 contratos");
+        const many = Array.from({ length: 1200 }, () => match({ hit: true }));
+        expect(hitSummary({ total: 5432, matches: many })).toBe("1.200 de 5.432 contratos");
 
         const coverage = {
             total_versions: 0,
@@ -94,6 +101,15 @@ describe("links and labels", () => {
         ]);
         expect(readSummary(1)).toBe("Respondido a partir de 1 contrato lido.");
         expect(readSummary(4)).toBe("Respondido a partir de 4 contratos lidos.");
+        expect(readSummary(1000)).toBe("Respondido a partir de 1.000 contratos lidos.");
+    });
+
+    it("pluralizes and groups thousands the Portuguese way", () => {
+        expect(count(999)).toBe("999");
+        expect(count(1234567)).toBe("1.234.567");
+        expect(plural(1, "contrato", "contratos")).toBe("1 contrato");
+        expect(plural(2, "contrato", "contratos")).toBe("2 contratos");
+        expect(plural(0, "contrato", "contratos")).toBe("0 contratos");
     });
 });
 
@@ -113,5 +129,15 @@ describe("failureCopy", () => {
         const copies = kinds.map((kind) => failureCopy(described({ kind })));
         expect(new Set(copies).size).toBe(kinds.length - 1); // offline and network read the same
         for (const copy of copies) expect(copy).not.toContain("raw backend text");
+    });
+
+    it("offers retry only when the same question could succeed", () => {
+        expect(failureAction(described({ kind: "validation", code: "model_required" }))).toBe("settings");
+        expect(failureAction(described({ kind: "unauthenticated" }))).toBe("sign_in");
+        expect(failureAction(described({ kind: "validation" }))).toBe("rewrite");
+        for (const kind of ["server", "network", "timeout", "rate_limited", "forbidden"] as const) {
+            expect(failureAction(described({ kind }))).toBe("retry");
+        }
+        expect(FAILURE_ACTION_LABEL.retry).toBe("Tentar de novo");
     });
 });

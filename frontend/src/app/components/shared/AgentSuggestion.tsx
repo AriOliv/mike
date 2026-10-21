@@ -73,7 +73,7 @@ function formatTime(iso: string) {
     const date = new Date(iso);
     return Number.isNaN(date.getTime())
         ? ""
-        : date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+        : date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 }
 
 /**

@@ -7,12 +7,12 @@
 
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
     CircleAlert,
     CircleCheck,
     CircleDashed,
     ExternalLink,
-    Grid3x3,
     Landmark,
     MessageCircleQuestion,
     Minus,
@@ -26,7 +26,10 @@ import {
     type AcervoSource,
 } from "@/app/lib/mikeApi";
 import {
+    count,
     coverageNotes,
+    FAILURE_ACTION_LABEL,
+    failureAction,
     failureCopy,
     hitSummary,
     matchStatus,
@@ -36,7 +39,8 @@ import {
     splitCitations,
     type MatchStatus,
 } from "@/app/lib/perguntar";
-import { describeError, notifyError } from "@/app/lib/userFacingError";
+import { isReported, reportError } from "@/app/lib/errorReporting";
+import { describeError, type UserFacingError } from "@/app/lib/userFacingError";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
     SkeletonLine,
@@ -61,6 +65,7 @@ const EXAMPLES = [
 ];
 
 const NOT_FOUND = "Não encontrei na base.";
+const ACTION = "responder à pergunta";
 
 type ScopeMode = "todos" | "contraparte" | "tipo";
 
@@ -78,6 +83,7 @@ const STATUS_ICON: Record<MatchStatus, ReactNode> = {
 };
 
 export default function PerguntarPage() {
+    const router = useRouter();
     const inputId = useId();
     const inputRef = useRef<HTMLInputElement>(null);
     const [question, setQuestion] = useState("");
@@ -88,7 +94,10 @@ export default function PerguntarPage() {
     const [includeLaw, setIncludeLaw] = useState(false);
     const [answer, setAnswer] = useState<AcervoAnswer | null>(null);
     const [asking, setAsking] = useState(false);
-    const [failed, setFailed] = useState<string | null>(null);
+    const [failed, setFailed] = useState<UserFacingError | null>(null);
+    // The question and scope last sent: "Tentar de novo" repeats exactly that,
+    // and a narrowed scope that found nothing offers to widen it.
+    const [asked, setAsked] = useState<{ q: string; scope: AcervoScope } | null>(null);
     const [activeSource, setActiveSource] = useState<number | null>(null);
 
     // The contract types seen on the pipeline feed the "Este tipo" choice.
@@ -108,30 +117,50 @@ export default function PerguntarPage() {
         };
     }, []);
 
-    async function ask(text: string) {
+    async function ask(text: string, scope: AcervoScope = scopeOf(mode, counterparty, contractType)) {
         const q = text.trim();
         if (!q || asking) return;
         setAsking(true);
         setFailed(null);
         setAnswer(null);
         setActiveSource(null);
+        setAsked({ q, scope });
         try {
-            setAnswer(
-                await askAcervo(q, {
-                    scope: scopeOf(mode, counterparty, contractType),
-                    includeLaw: includeLaw || undefined,
-                }),
-            );
+            setAnswer(await askAcervo(q, { scope, includeLaw: includeLaw || undefined }));
         } catch (error) {
-            const described = describeError(error, { action: "responder à pergunta" });
-            setFailed(failureCopy(described));
-            notifyError(error, {
-                action: "responder à pergunta",
-                onRetry: described.retryable ? () => void ask(q) : undefined,
-            });
+            const described = describeError(error, { lang: "pt", action: ACTION });
+            // The failure is shown once, inline, where the answer would be (no
+            // toast on top). Real faults still reach Sentry, as notifyError
+            // would have sent them; the API client already sent its own.
+            if (!isReported(error) && (described.kind === "unknown" || described.kind === "server")) {
+                reportError(error, { tags: { component: "acervo", action: ACTION } });
+            }
+            setFailed(described);
         } finally {
             setAsking(false);
         }
+    }
+
+    function onFailureAction(error: UserFacingError) {
+        switch (failureAction(error)) {
+            case "sign_in":
+                router.push(`/login?next=${encodeURIComponent("/acervo")}`);
+                return;
+            case "settings":
+                router.push("/settings/models");
+                return;
+            case "rewrite":
+                setFailed(null);
+                inputRef.current?.focus();
+                return;
+            default:
+                if (asked) void ask(asked.q, asked.scope);
+        }
+    }
+
+    function widenScope() {
+        setMode("todos");
+        if (asked) void ask(asked.q, "todos");
     }
 
     const scopeReady = mode !== "contraparte" || counterparty.trim().length > 0;
@@ -263,11 +292,11 @@ export default function PerguntarPage() {
                             className="mt-10"
                             tone="error"
                             icon={<CircleAlert className="text-red-400" />}
-                            title="Não consegui responder"
-                            description={failed}
+                            title={failed.title}
+                            description={failureCopy(failed)}
                             action={
-                                <PillButtonUI tone="white" size="sm" onClick={() => void ask(question)}>
-                                    Tentar de novo
+                                <PillButtonUI tone="black" size="sm" onClick={() => onFailureAction(failed)}>
+                                    {FAILURE_ACTION_LABEL[failureAction(failed)]}
                                 </PillButtonUI>
                             }
                         />
@@ -286,6 +315,7 @@ export default function PerguntarPage() {
                                     ?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
                             }}
                             includeLaw={includeLaw}
+                            onWidenScope={asked && asked.scope !== "todos" ? widenScope : undefined}
                         />
                     )}
                 </div>
@@ -319,11 +349,14 @@ function AnswerView({
     activeSource,
     onCite,
     includeLaw,
+    onWidenScope,
 }: {
     answer: AcervoAnswer;
     activeSource: number | null;
     onCite: (n: number) => void;
     includeLaw: boolean;
+    /** Set when the question was narrowed to a counterparty or type. */
+    onWidenScope?: () => void;
 }) {
     const sources = answer.sources;
     const lawSources = answer.law_sources;
@@ -356,7 +389,14 @@ function AnswerView({
                     )}
                 </p>
             ) : (
-                <p className="font-serif text-base leading-7 text-gray-900">{NOT_FOUND}</p>
+                <div>
+                    <p className="font-serif text-base leading-7 text-gray-900">{NOT_FOUND}</p>
+                    {onWidenScope && (
+                        <PillButtonUI tone="black" size="sm" className="mt-3" onClick={onWidenScope}>
+                            Buscar em todo o acervo
+                        </PillButtonUI>
+                    )}
+                </div>
             )}
 
             {notes.length > 0 && (
@@ -382,7 +422,7 @@ function AnswerView({
             {(sources.length > 0 || lawSources.length > 0) && (
                 <section className="mt-8" aria-labelledby="fontes-titulo">
                     <h2 id="fontes-titulo" className="mb-2 text-xs font-medium text-gray-500">
-                        Fontes · {sources.length + lawSources.length}
+                        Fontes · {count(sources.length + lawSources.length)}
                     </h2>
                     <ol className="space-y-2">
                         {sources.map((source) => (
@@ -476,18 +516,9 @@ function SourceItem({ source, active }: { source: AcervoSource; active: boolean 
 function MatchesTable({ answer }: { answer: AcervoAnswer }) {
     return (
         <section className="mt-8" aria-labelledby="contratos-titulo">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <h2 id="contratos-titulo" className="font-serif text-lg text-gray-900">
-                    {hitSummary(answer)}
-                </h2>
-                <Link
-                    href="/tabular-reviews"
-                    className="inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs text-gray-700 outline-none hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                >
-                    <Grid3x3 aria-hidden="true" className="h-3.5 w-3.5" />
-                    Abrir como grade
-                </Link>
-            </div>
+            <h2 id="contratos-titulo" className="mb-2 font-serif text-lg text-gray-900">
+                {hitSummary(answer)}
+            </h2>
             <div className={cn("overflow-x-auto rounded-2xl", TABLE_SURFACE_CLASS)} role="table" aria-label="Contratos">
                 <TableHeaderRow role="row" className="min-w-full pl-3">
                     <TableHeaderCell role="columnheader" className="w-56">

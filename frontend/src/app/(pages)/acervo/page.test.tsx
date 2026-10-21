@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AcervoAnswer } from "@/app/lib/mikeApi";
+import { MikeApiError, type AcervoAnswer } from "@/app/lib/mikeApi";
 
 const api = vi.hoisted(() => ({ askAcervo: vi.fn(), getPipeline: vi.fn() }));
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
@@ -13,7 +13,13 @@ vi.mock("@/app/lib/userFacingError", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/lib/userFacingError")>()),
     notifyError: errors.notifyError,
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const reporting = vi.hoisted(() => ({ reportError: vi.fn() }));
+vi.mock("@/app/lib/errorReporting", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/lib/errorReporting")>()),
+    reportError: reporting.reportError,
+}));
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 import PerguntarPage from "./page";
 
@@ -109,7 +115,8 @@ describe("Perguntar", () => {
 
         expect(screen.getByRole("heading", { name: "1 de 2 contratos" })).toBeTruthy();
         expect(screen.getByText("Ainda indexando")).toBeTruthy();
-        expect(screen.getByRole("link", { name: /Abrir como grade/ }).getAttribute("href")).toBe("/tabular-reviews");
+        // No grid shortcut until it can carry the question along.
+        expect(screen.queryByText(/Abrir como grade/)).toBeNull();
         expect(screen.getByText(/1 contrato ainda está sendo indexado/)).toBeTruthy();
     });
 
@@ -119,6 +126,36 @@ describe("Perguntar", () => {
         await userEvent.type(screen.getByLabelText(/Pergunte sobre os contratos/), "foro{Enter}");
         expect(await screen.findByText("Não encontrei na base.")).toBeTruthy();
         expect(screen.queryByRole("button", { name: /Ver fonte/ })).toBeNull();
+        // Already the whole corpus: there is no wider scope to offer.
+        expect(screen.queryByRole("button", { name: "Buscar em todo o acervo" })).toBeNull();
+    });
+
+    it("offers the whole corpus when a narrowed question found nothing", async () => {
+        api.askAcervo.mockResolvedValue(answer({ found: false, aggregate: false }));
+        render(<PerguntarPage />);
+        await userEvent.click(screen.getByRole("button", { name: "Esta contraparte" }));
+        await userEvent.type(screen.getByLabelText("Contraparte"), "Acme");
+        await userEvent.type(screen.getByLabelText(/Pergunte sobre os contratos/), "foro{Enter}");
+        await userEvent.click(await screen.findByRole("button", { name: "Buscar em todo o acervo" }));
+        expect(api.askAcervo).toHaveBeenLastCalledWith("foro", { scope: "todos", includeLaw: undefined });
+        expect(screen.getByRole("button", { name: "Todo o acervo" }).getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("exposes the chosen scope with aria-pressed", async () => {
+        render(<PerguntarPage />);
+        const all = screen.getByRole("button", { name: "Todo o acervo" });
+        const party = screen.getByRole("button", { name: "Esta contraparte" });
+        const law = screen.getByRole("button", { name: /Incluir legislação/ });
+        expect(all.getAttribute("aria-pressed")).toBe("true");
+        expect(party.getAttribute("aria-pressed")).toBe("false");
+        expect(law.getAttribute("aria-pressed")).toBe("false");
+        await userEvent.click(party);
+        await userEvent.click(law);
+        expect(all.getAttribute("aria-pressed")).toBe("false");
+        expect(party.getAttribute("aria-pressed")).toBe("true");
+        expect(law.getAttribute("aria-pressed")).toBe("true");
+        await userEvent.click(await screen.findByRole("button", { name: "Este tipo" }));
+        expect(screen.getByRole("button", { name: "Este tipo" }).getAttribute("aria-pressed")).toBe("true");
     });
 
     it("sends the chosen scope and the legislation flag, and shows when law has no source", async () => {
@@ -146,12 +183,57 @@ describe("Perguntar", () => {
         );
     });
 
-    it("shows a Portuguese failure, never the raw error, and notifies", async () => {
-        api.askAcervo.mockRejectedValue(new Error("relation dossiers does not exist"));
+    it("shows a Portuguese failure once, inline, never the raw error, and retries the same question", async () => {
+        const fault = new Error("relation dossiers does not exist");
+        api.askAcervo.mockRejectedValueOnce(fault).mockResolvedValueOnce(answer());
         render(<PerguntarPage />);
+        await userEvent.click(screen.getByRole("button", { name: "Esta contraparte" }));
+        await userEvent.type(screen.getByLabelText("Contraparte"), "Acme");
         await userEvent.type(screen.getByLabelText(/Pergunte sobre os contratos/), "foro{Enter}");
-        expect(await screen.findByText("Não consegui responder")).toBeTruthy();
+        expect(await screen.findByText("Não consegui responder à pergunta")).toBeTruthy();
+        expect(screen.getByText("Não consegui responder agora. Tente de novo em instantes.")).toBeTruthy();
         expect(screen.queryByText(/relation dossiers/)).toBeNull();
-        expect(errors.notifyError).toHaveBeenCalledTimes(1);
+        // One place only: no toast on top of the inline state.
+        expect(errors.notifyError).not.toHaveBeenCalled();
+        expect(reporting.reportError).toHaveBeenCalledWith(fault, {
+            tags: { component: "acervo", action: "responder à pergunta" },
+        });
+
+        // The question box changed since; the retry repeats what was asked.
+        await userEvent.type(screen.getByLabelText(/Pergunte sobre os contratos/), " eleito");
+        await userEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
+        expect(api.askAcervo).toHaveBeenLastCalledWith("foro", {
+            scope: { counterparty: "Acme" },
+            includeLaw: undefined,
+        });
+        expect(await screen.findByRole("heading", { name: "1 de 2 contratos" })).toBeTruthy();
+        expect(screen.queryByText("Não consegui responder à pergunta")).toBeNull();
+    });
+
+    it("offers the honest way forward when retrying would not help", async () => {
+        render(<PerguntarPage />);
+        const box = screen.getByLabelText(/Pergunte sobre os contratos/);
+
+        api.askAcervo.mockRejectedValueOnce(
+            new MikeApiError({ message: "model", status: 400, code: "model_required" }),
+        );
+        await userEvent.type(box, "foro{Enter}");
+        await userEvent.click(await screen.findByRole("button", { name: "Abrir Configurações" }));
+        expect(router.push).toHaveBeenLastCalledWith("/settings/models");
+
+        api.askAcervo.mockRejectedValueOnce(new MikeApiError({ message: "expired", status: 401 }));
+        await userEvent.type(box, "{Enter}");
+        await userEvent.click(await screen.findByRole("button", { name: "Entrar de novo" }));
+        expect(router.push).toHaveBeenLastCalledWith("/login?next=%2Facervo");
+
+        api.askAcervo.mockRejectedValueOnce(new MikeApiError({ message: "bad", status: 422 }));
+        await userEvent.type(box, "{Enter}");
+        await userEvent.click(await screen.findByRole("button", { name: "Reescrever a pergunta" }));
+        expect(screen.queryByRole("button", { name: "Reescrever a pergunta" })).toBeNull();
+        expect(document.activeElement).toBe(box);
+
+        // A 4xx is an answer, not a fault: nothing goes to Sentry.
+        expect(reporting.reportError).not.toHaveBeenCalled();
+        expect(errors.notifyError).not.toHaveBeenCalled();
     });
 });

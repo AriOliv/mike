@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Download, FileText, History, Loader2, Play, Share2, Sparkles } from "lucide-react";
+import { ChevronDown, Diamond, Download, FileText, History, Play, Share2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import {
     decideFichaField,
     decideReviewClause,
     extractContractFicha,
     getContractFicha,
+    getCardActivity,
     getContractReview,
     getDocumentFile,
     listContractReviews,
@@ -15,23 +17,30 @@ import {
     type ContractFicha,
     type ContractReview,
     type ContractReviewSummary,
+    type CardEvent,
     type ReviewClause,
+    type ReviewDecision,
 } from "@/app/lib/mikeApi";
 import {
     isRunning,
     pendingAligned,
+    plural,
     relativeTime,
+    reviewActivity,
     stepFocus,
     verdictCounts,
     visibleClauses,
     type VerdictFilter,
 } from "@/app/lib/contractReviewView";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
+import { fichaLabel } from "@/app/lib/contractFichaView";
 import { dismissToast, showToast } from "@/shared/ui/ToastUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TextButtonUI } from "@/shared/ui/TextButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { VerdictCountsUI } from "@/shared/ui/VerdictUI";
+import { StatusChip } from "@/app/components/ui/status-chip";
+import { ActivityFeed } from "@/app/components/shared/ActivityFeed";
 import {
     Dropdown,
     DropdownContent,
@@ -104,9 +113,19 @@ export function ContractReviewWorkspace({
     const [starting, setStarting] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
-    const [tab, setTab] = useState<"revisao" | "ficha">("revisao");
+    const [tab, setTab] = useState<"revisao" | "ficha" | "atividade">("revisao");
+    const [activity, setActivity] = useState<CardEvent[] | null>(null);
+    // Verificar waits out its undo window too, and can't be pressed twice.
+    const [confirming, setConfirming] = useState<ReadonlySet<string>>(new Set());
+    const router = useRouter();
     const [filter, setFilter] = useState<VerdictFilter>(initialVerdict);
     const [focus, setFocus] = useState(-1);
+    // A new filter starts the j/k focus from the top.
+    const [seenFilter, setSeenFilter] = useState(filter);
+    if (seenFilter !== filter) {
+        setSeenFilter(filter);
+        setFocus(-1);
+    }
     const [busy, setBusy] = useState<string | null>(null);
     const [optimistic, setOptimistic] = useState<Record<string, ReviewClause["decision"]>>({});
     const [docRevision, setDocRevision] = useState(0);
@@ -123,6 +142,8 @@ export function ContractReviewWorkspace({
     }, []);
     // The review on screen: a slow answer for another one is dropped.
     const shownRun = useRef<string | null>(null);
+    const hasReview = useRef(false);
+    const startedRun = useRef<string | null>(null);
 
     // ── loading ──────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -132,12 +153,15 @@ export function ContractReviewWorkspace({
                 if (!current) return;
                 setReviews(items);
                 setLoadError(null);
-                // A linked run that is not this contract's falls back to the newest.
-                setSelectedId((id) => (id && items.some((item) => item.id === id) ? id : (items[0]?.id ?? null)));
+                // A linked run that is not this contract's falls back to the
+                // newest; one just started here is kept while the list catches up.
+                setSelectedId((id) =>
+                    id && (id === startedRun.current || items.some((item) => item.id === id)) ? id : (items[0]?.id ?? null),
+                );
             },
             (error) => {
                 if (!current) return;
-                setLoadError(describeError(error, { action: "carregar as revisões" }).message);
+                setLoadError(describeError(error, { lang: "pt", action: "carregar as revisões" }).message);
                 setReviews((existing) => existing ?? []);
             },
         );
@@ -155,10 +179,16 @@ export function ContractReviewWorkspace({
         async (runId: string) => {
             try {
                 const loaded = await getContractReview(projectId, runId);
-                if (shownRun.current === runId) setReview(loaded);
+                if (shownRun.current !== runId) return;
+                setReview(loaded);
+                setLoadError(null);
             } catch (error) {
-                if (shownRun.current === runId)
-                    setLoadError(describeError(error, { action: "abrir a revisão" }).message);
+                if (shownRun.current !== runId) return;
+                // With a review on screen a failed refresh is a notice, not a
+                // blank page; the full-page error is only for having no data.
+                if (hasReview.current)
+                    notifyError(error, { lang: "pt", action: "atualizar a revisão", dedupeKey: "review-refresh" });
+                else setLoadError(describeError(error, { lang: "pt", action: "abrir a revisão" }).message);
             } finally {
                 setPolls((n) => n + 1);
             }
@@ -166,9 +196,19 @@ export function ContractReviewWorkspace({
         [projectId],
     );
     useEffect(() => {
+        if (shownRun.current === selectedId) return;
         shownRun.current = selectedId;
+        // A different version starts clean: no old cards, focus or pending looks.
+        hasReview.current = false;
+        setReview(null);
+        setFocus(-1);
+        setOptimistic({});
+        setLoadError(null);
         if (selectedId) void loadReview(selectedId);
     }, [selectedId, loadReview]);
+    useEffect(() => {
+        hasReview.current = review !== null;
+    }, [review]);
 
     // A review drafts its edits on the server: poll until it is done. Each
     // load, failed or not, re-arms the timer, so one network error does not
@@ -187,6 +227,22 @@ export function ContractReviewWorkspace({
         }
         wasRunning.current = running;
     }, [running]);
+
+    useEffect(() => {
+        if (tab !== "atividade") return;
+        let current = true;
+        getCardActivity(projectId).then(
+            (events) => current && setActivity(events),
+            (error) => {
+                if (!current) return;
+                setActivity((existing) => existing ?? []);
+                notifyError(error, { lang: "pt", action: "carregar a atividade", dedupeKey: "review-activity" });
+            },
+        );
+        return () => {
+            current = false;
+        };
+    }, [tab, projectId, docRevision]);
 
     useEffect(() => {
         onUrlStateChange?.({ runId: selectedId, filter });
@@ -209,12 +265,13 @@ export function ContractReviewWorkspace({
         setStarting(true);
         try {
             const run = await startContractReview(projectId);
+            startedRun.current = run.id;
             setSelectedId(run.id);
             setReview(null);
             setAttempt((n) => n + 1);
             setTab("revisao");
         } catch (error) {
-            notifyError(error, { action: "iniciar a revisão", onRetry: startReview });
+            notifyError(error, { lang: "pt", action: "iniciar a revisão", onRetry: startReview });
         } finally {
             setStarting(false);
         }
@@ -226,10 +283,38 @@ export function ContractReviewWorkspace({
             setFicha(await extractContractFicha(projectId));
             if (selectedId) void loadReview(selectedId);
         } catch (error) {
-            notifyError(error, { action: "extrair a Ficha", onRetry: extract });
+            notifyError(error, { lang: "pt", action: "extrair a Ficha", onRetry: extract });
         } finally {
             setExtracting(false);
         }
+    }
+
+    function confirmField(path: string, label: string) {
+        if (confirming.has(path)) return;
+        setConfirming((current) => new Set(current).add(path));
+        const release = () =>
+            setConfirming((current) => {
+                const next = new Set(current);
+                next.delete(path);
+                return next;
+            });
+        const timer = setTimeout(() => {
+            void decideField(path, "confirmar").finally(release);
+        }, UNDO_MS);
+        showToast({
+            tone: "success",
+            message: `Verificado: ${label}`,
+            durationMs: UNDO_MS,
+            actions: [
+                {
+                    label: "Desfazer",
+                    onClick: () => {
+                        clearTimeout(timer);
+                        release();
+                    },
+                },
+            ],
+        });
     }
 
     async function decideField(path: string, action: "confirmar" | "corrigir", value?: unknown) {
@@ -243,7 +328,7 @@ export function ContractReviewWorkspace({
             );
             if (selectedId) void loadReview(selectedId);
         } catch (error) {
-            notifyError(error, { action: "salvar o campo" });
+            notifyError(error, { lang: "pt", action: "salvar o campo" });
         }
     }
 
@@ -259,71 +344,139 @@ export function ContractReviewWorkspace({
             setBusy(clause.id);
             return enqueue(async () => {
                 try {
-                    await decideReviewClause(projectId, runId, clause.id, input);
+                    const result = await decideReviewClause(projectId, runId, clause.id, input);
+                    // The server's answer is the truth on screen even if the
+                    // refresh below fails, so the card never springs back.
+                    applyDecision(runId, clause.id, result.decision, result.edit);
                     setDocRevision((n) => n + 1);
                 } catch (error) {
-                    notifyError(error, { action: "registrar a decisão" });
+                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
                 } finally {
-                    await loadReview(runId);
                     setOptimistic((current) => without(current, clause.id));
                     setBusy((id) => (id === clause.id ? null : id));
                 }
+                await loadReview(runId);
             });
         },
         [projectId, review, loadReview, enqueue],
     );
 
+    function applyDecision(runId: string, clauseId: string, decision: ReviewDecision | null, edit: ReviewClause["edit"]) {
+        setReview((current) =>
+            current && current.id === runId
+                ? {
+                      ...current,
+                      clauses: current.clauses.map((c) =>
+                          c.id === clauseId ? { ...c, decision, edit: edit ?? c.edit } : c,
+                      ),
+                  }
+                : current,
+        );
+    }
+
     /** Drops a decision still in its undo window; true when there was one. */
     function cancelPending(clauseId: string): boolean {
         const queued = pending.current.get(clauseId);
         if (!queued) return false;
-        clearTimeout(queued.timer);
-        dismissToast(queued.toastId);
         pending.current.delete(clauseId);
+        // A batch shares its timer and toast: they go when its last decision does.
+        const shared = [...pending.current.values()].some((other) => other.timer === queued.timer);
+        if (!shared) {
+            clearTimeout(queued.timer);
+            dismissToast(queued.toastId);
+        }
         setOptimistic((current) => without(current, clauseId));
         return true;
     }
 
-    function decide(clause: ReviewClause, input: { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string }) {
-        cancelPending(clause.id);
-        setOptimistic((current) => ({
-            ...current,
-            [clause.id]: {
-                decision: input.decision,
-                edited_text: input.edited_text ?? null,
-                reason: input.reason ?? null,
-                decided_by: "você",
-                decided_at: new Date().toISOString(),
-                edit: null,
-            },
-        }));
-        const label = input.decision === "aceito" ? "Aceito" : input.decision === "editado" ? "Editado" : "Rejeitado";
+    type DecisionInput = { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string };
+
+    function decide(clause: ReviewClause, input: DecisionInput) {
+        queueDecisions([clause], input, `${decisionLabel(input.decision)}: ${clause.ruleName}`);
+        setFocus((index) => stepFocus(index, 1, shown.length));
+    }
+
+    function decisionLabel(decision: DecisionInput["decision"]) {
+        return decision === "aceito" ? "Aceito" : decision === "editado" ? "Editado" : "Rejeitado";
+    }
+
+    /**
+     * Shows the decisions at once and sends them after the undo window. One
+     * toast covers the whole set, so "Aceitar todos os alinhados" is one
+     * notice whose Desfazer takes back every one of them.
+     */
+    function queueDecisions(targets: ReviewClause[], input: DecisionInput, message: string) {
+        if (!targets.length) return;
+        for (const clause of targets) cancelPending(clause.id);
+        const at = new Date().toISOString();
+        setOptimistic((current) => {
+            const next = { ...current };
+            for (const clause of targets)
+                next[clause.id] = {
+                    decision: input.decision,
+                    edited_text: input.edited_text ?? null,
+                    reason: input.reason ?? null,
+                    decided_by: "você",
+                    decided_at: at,
+                    edit: null,
+                };
+            return next;
+        });
         const runId = review?.id;
-        const entry: Pending = {
-            timer: setTimeout(() => {
-                if (pending.current.get(clause.id) !== entry) return;
-                pending.current.delete(clause.id);
-                void commit(clause, input);
-            }, UNDO_MS),
-            toastId: "",
-            send: () => (runId ? decideReviewClause(projectId, runId, clause.id, input) : Promise.resolve()),
-        };
-        entry.toastId = showToast({
+        const entries: Pending[] = [];
+        const toastId = showToast({
             tone: "success",
-            message: `${label}: ${clause.ruleName}`,
+            message,
             durationMs: UNDO_MS,
             actions: [
                 {
                     label: "Desfazer",
-                    // Only this toast's own decision, and only while it is still queued.
+                    // Only this toast's own decisions, and only while still queued.
                     onClick: () => {
-                        if (pending.current.get(clause.id) === entry) cancelPending(clause.id);
+                        targets.forEach((clause, i) => {
+                            if (pending.current.get(clause.id) === entries[i]) cancelPending(clause.id);
+                        });
                     },
                 },
             ],
         });
-        pending.current.set(clause.id, entry);
-        setFocus((index) => stepFocus(index, 1, shown.length));
+        const timer = setTimeout(() => {
+            const due = targets.filter((clause, i) => pending.current.get(clause.id) === entries[i]);
+            for (const clause of due) pending.current.delete(clause.id);
+            void commitAll(due, input);
+        }, UNDO_MS);
+        for (const clause of targets) {
+            const entry: Pending = {
+                timer,
+                toastId,
+                send: () => (runId ? decideReviewClause(projectId, runId, clause.id, input) : Promise.resolve()),
+            };
+            entries.push(entry);
+            pending.current.set(clause.id, entry);
+        }
+    }
+
+    /** Sends several decisions in turn, then refreshes the document and the review once. */
+    async function commitAll(targets: ReviewClause[], input: DecisionInput) {
+        const runId = review?.id;
+        if (!runId || !targets.length) return;
+        if (targets.length === 1) return commit(targets[0], input);
+        await enqueue(async () => {
+            for (const clause of targets) {
+                setBusy(clause.id);
+                try {
+                    const result = await decideReviewClause(projectId, runId, clause.id, input);
+                    applyDecision(runId, clause.id, result.decision, result.edit);
+                } catch (error) {
+                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
+                } finally {
+                    setOptimistic((current) => without(current, clause.id));
+                }
+            }
+            setBusy(null);
+            setDocRevision((n) => n + 1);
+            await loadReview(runId);
+        });
     }
 
     function reopen(clause: ReviewClause) {
@@ -339,7 +492,7 @@ export function ContractReviewWorkspace({
     }
 
     function acceptAligned() {
-        for (const clause of aligned) decide(clause, { decision: "aceito" });
+        queueDecisions(aligned, { decision: "aceito" }, `${plural(aligned.length, "cláusula conferida", "cláusulas conferidas")}`);
     }
 
     // Leaving the page sends what is still in its undo window, one at a
@@ -350,7 +503,9 @@ export function ContractReviewWorkspace({
             for (const item of queue.values()) {
                 clearTimeout(item.timer);
                 dismissToast(item.toastId);
-                enqueue(item.send).catch((error: unknown) => notifyError(error, { action: "registrar a decisão" }));
+                enqueue(item.send).catch((error: unknown) =>
+                    notifyError(error, { lang: "pt", action: "registrar a decisão" }),
+                );
             }
             queue.clear();
         };
@@ -366,9 +521,10 @@ export function ContractReviewWorkspace({
             link.href = url;
             link.download = filename ?? review?.document.name ?? "contrato-revisado.docx";
             link.click();
-            URL.revokeObjectURL(url);
+            // Some browsers start the download after click() returns.
+            setTimeout(() => URL.revokeObjectURL(url), 1_000);
         } catch (error) {
-            notifyError(error, { action: "exportar o .docx", onRetry: exportDocx });
+            notifyError(error, { lang: "pt", action: "exportar o .docx", onRetry: exportDocx });
         }
     }
 
@@ -410,8 +566,9 @@ export function ContractReviewWorkspace({
                                         <span>
                                             Revisão {reviews.length - index} · {relativeTime(item.started_at)}
                                         </span>
-                                        <span className="text-xs text-gray-500">
-                                            {item.playbook_name} · {item.counts.diverge} divergem · {item.counts.precisa_revisao} a revisar
+                                        <span className="flex items-center gap-2 text-xs text-gray-500">
+                                            {item.playbook_name}
+                                            <VerdictCountsUI variant="compact" {...item.counts} />
                                         </span>
                                     </span>
                                 </DropdownRadioItem>
@@ -465,7 +622,14 @@ export function ContractReviewWorkspace({
                     <EmptyState
                         icon={<FileText className="text-gray-300" />}
                         title="O contrato aparece aqui"
-                        description="Envie o contrato em Word (.docx) na aba Documentos. A revisão marca as edições sugeridas como alterações controladas, prontas para a contraparte."
+                        description="Envie o contrato em Word (.docx). A revisão marca as edições sugeridas como alterações controladas, prontas para a contraparte."
+                        action={
+                            canEdit && (
+                                <PillButtonUI tone="black" onClick={() => router.push(`/projects/${projectId}`)}>
+                                    Enviar contrato
+                                </PillButtonUI>
+                            )
+                        }
                     />
                 </div>
             )}
@@ -493,7 +657,7 @@ export function ContractReviewWorkspace({
             />
         ) : (
             <EmptyState
-                icon={<Sparkles className="text-violet-500" />}
+                icon={<Diamond className="fill-violet-100 text-violet-500" />}
                 title="Nenhuma revisão ainda"
                 description="Eu reviso o contrato com o Playbook Avenia v1 (cessão, mudança de controle, LGPD, limitação de responsabilidade, multas, foro, renovação e aviso prévio), marco as edições no documento e digo, cláusula por cláusula, o que está alinhado e o que diverge. Você aceita, edita ou rejeita cada sugestão."
                 action={
@@ -507,10 +671,7 @@ export function ContractReviewWorkspace({
         )
     ) : running ? (
         <div role="status" className="flex flex-col items-start gap-2 py-6">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-                <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
-                Redigindo edições…
-            </span>
+            <StatusChip status="rodando" label="Redigindo edições…" />
             <p className="text-sm text-gray-600">
                 Estou lendo o contrato contra o playbook. Pode sair desta página: a revisão continua e aparece aqui quando terminar.
             </p>
@@ -543,7 +704,7 @@ export function ContractReviewWorkspace({
                 )}
             </div>
             {!ficha?.ficha && (
-                <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-700">
+                <p className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-700">
                     Sem a Ficha, o semáforo usa só o playbook.{" "}
                     <button type="button" className="underline" onClick={() => setTab("ficha")}>
                         Extrair a Ficha
@@ -552,9 +713,28 @@ export function ContractReviewWorkspace({
                 </p>
             )}
             {shown.length === 0 ? (
-                <p className="py-6 text-sm text-gray-500">
-                    {filter ? "Nada com este semáforo." : "O playbook não encontrou cláusulas para revisar."}
-                </p>
+                <EmptyState
+                    title={filter ? "Nada com este semáforo" : "Nenhuma cláusula para revisar"}
+                    description={
+                        filter
+                            ? "Nenhuma cláusula desta revisão tem esse resultado."
+                            : "O playbook não encontrou cláusulas deste contrato que tratem dos seus temas. Confira o tipo de contrato ou revise com outro playbook."
+                    }
+                    action={
+                        filter ? (
+                            <PillButtonUI tone="black" onClick={() => setFilter(null)}>
+                                Mostrar tudo
+                            </PillButtonUI>
+                        ) : (
+                            canEdit && (
+                                <PillButtonUI tone="black" onClick={() => router.push("/playbooks")}>
+                                    Ver playbooks
+                                </PillButtonUI>
+                            )
+                        )
+                    }
+                    className="py-6"
+                />
             ) : (
                 shown.map((clause, index) => (
                     <ReviewClauseCard
@@ -578,9 +758,7 @@ export function ContractReviewWorkspace({
                     <h3 className="text-xs font-medium text-gray-700">Riscos da Ficha sem regra no playbook</h3>
                     <ul className="space-y-1 text-xs text-gray-600">
                         {review.uncovered.map((finding) => (
-                            <li key={finding.rule_id}>
-                                <span className="font-medium text-gray-700">{finding.rule_id}</span> · {finding.titulo}
-                            </li>
+                            <li key={finding.rule_id}>{finding.titulo}</li>
                         ))}
                     </ul>
                 </section>
@@ -609,10 +787,19 @@ export function ContractReviewWorkspace({
                                 </span>
                             )}
                         </TabPillButtonUI>
+                        <TabPillButtonUI role="tab" aria-selected={tab === "atividade"} active={tab === "atividade"} onClick={() => setTab("atividade")}>
+                            Atividade
+                        </TabPillButtonUI>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-4">
                         {tab === "revisao" ? (
                             reviewBody
+                        ) : tab === "atividade" ? (
+                            <ActivityFeed
+                                items={reviewActivity(activity ?? [])}
+                                loading={activity === null}
+                                emptyText="Nada aconteceu neste contrato ainda. Quando alguém revisar ou decidir uma sugestão, aparece aqui."
+                            />
                         ) : (
                             <ContractFichaPanel
                                 ficha={ficha}
@@ -620,7 +807,8 @@ export function ContractReviewWorkspace({
                                 extracting={extracting}
                                 canEdit={canEdit}
                                 onExtract={extract}
-                                onConfirm={(path) => void decideField(path, "confirmar")}
+                                onConfirm={(path) => confirmField(path, fichaLabel(path))}
+                                confirming={confirming}
                                 onCorrect={(path, value) => void decideField(path, "corrigir", value)}
                                 onLocate={(quote) => setHighlight((current) => ({ quote, key: (current?.key ?? 0) + 1 }))}
                             />

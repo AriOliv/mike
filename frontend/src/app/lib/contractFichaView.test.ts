@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FichaField } from "./mikeApi";
-import { correctedValue, correctionDraft, correctionForm, fichaGroups, fieldSummary } from "./contractFichaView";
+import { correctedValue, correctionDraft, correctionForm, fichaGroups, fichaLabel, fieldSummary } from "./contractFichaView";
 
 const field = (value: unknown, status: FichaField["status"] = "encontrado"): FichaField => ({
     status,
@@ -20,6 +20,8 @@ describe("fieldSummary", () => {
         expect(fieldSummary(field("por_referencia"))).toBe("só por referência (documento externo)");
         expect(fieldSummary(field("algo_novo"))).toBe("algo novo");
         expect(fieldSummary(field(3))).toBe("3");
+        expect(fieldSummary(field(1234.5))).toBe("1.234,5");
+        expect(fieldSummary(field(BigInt(7)))).toBe("7");
     });
 
     it("says structured values in one line", () => {
@@ -38,15 +40,27 @@ describe("fieldSummary", () => {
                 }),
             ),
         ).toBe("Ambas as partes, aviso da Avenia: 10 dias úteis, aviso da contraparte: 60 dias");
+        expect(
+            fieldSummary(
+                field({
+                    tipo: "determinado",
+                    duracao: { amount: 1, unit: "anos" },
+                    aviso_nao_renovacao: { amount: 1, unit: "dias", day_count: "uteis" },
+                }),
+            ),
+        ).toBe("Determinado, 1 ano, aviso de 1 dia útil");
+        expect(fieldSummary(field({ aviso_nao_renovacao: { amount: 1, unit: "dias", day_count: "corridos" } }))).toBe("Aviso de 1 dia corrido");
+        expect(fieldSummary(field({ duracao: { amount: 1, unit: "semanas" } }))).toBe("1 semanas");
         expect(fieldSummary(field({ regime: "vedada", aplica_a: "avenia", excecoes: ["afiliadas", "outro"] }))).toBe(
             "Vedada, para Avenia, exceto afiliadas, outro",
         );
         expect(fieldSummary(field({ regime: "notificacao", direito_rescisao_contraparte: true, define_controle: false }))).toBe(
             "Mediante notificação, contraparte pode rescindir, sem definição de controle",
         );
-        expect(fieldSummary(field({ existe: true, tipo: "percentual_saldo", percentual: 20, meses: 3, devida_por: "avenia" }))).toBe(
-            "% do saldo, 20%, 3 meses, devida por Avenia",
+        expect(fieldSummary(field({ existe: true, tipo: "percentual_saldo", percentual: 2.5, meses: 3, devida_por: "avenia" }))).toBe(
+            "% do saldo, 2,5%, 3 meses, devida por Avenia",
         );
+        expect(fieldSummary(field({ meses: 1 }))).toBe("1 mês");
         expect(fieldSummary(field({ existe: true, protege: "ambas", limitada: false }))).toBe("Sim, protege ambas as partes, sem teto");
         expect(fieldSummary(field({ existe: false }))).toBe("Não");
         expect(fieldSummary(field({ existe: true }))).toBe("Sim");
@@ -61,8 +75,8 @@ describe("fieldSummary", () => {
         expect(fieldSummary(field({ jurisdicao: "US-NY" }))).toBe("US-NY");
         expect(fieldSummary(field({ nome: "Polaris Tecnologia Ltda." }))).toBe("Polaris Tecnologia Ltda.");
         expect(fieldSummary(field({ categoria: "parceiro_bancario_baas" }))).toBe("Parceiro bancário / BaaS");
-        expect(fieldSummary(field({ duracao: { amount: "x", unit: "dias" } }))).toBe('{"duracao":{"amount":"x","unit":"dias"}}');
-        expect(fieldSummary(field({ duracao: null, aviso_nao_renovacao: 3 }))).toBe('{"duracao":null,"aviso_nao_renovacao":3}');
+        expect(fieldSummary(field({ duracao: { amount: "x", unit: "dias" } }))).toBe("—");
+        expect(fieldSummary(field({ duracao: null, aviso_nao_renovacao: 3 }))).toBe("—");
     });
 });
 
@@ -113,3 +127,11 @@ describe("corrections", () => {
         expect(correctedValue(plain, "anexo", " ")).toBeNull();
     });
 });
+
+describe("fichaLabel", () => {
+    it("names a field the way the spreadsheet does", () => {
+        expect(fichaLabel("foro.lei_aplicavel")).toBe("Lei aplicável");
+        expect(fichaLabel("x.y")).toBe("campo da Ficha");
+    });
+});
+

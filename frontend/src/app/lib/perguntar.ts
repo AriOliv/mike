@@ -55,12 +55,16 @@ export const MATCH_STATUS_LABEL: Record<MatchStatus, string> = {
     nao_buscado: "Não buscado",
 };
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** A count as Portuguese reads it: "1.234". */
+export const count = (n: number) => n.toLocaleString("pt-BR");
+
+/** "1 contrato", "2 contratos", "1.234 contratos". */
+export const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;
 
 /** "7 de 52 contratos". */
 export function hitSummary(answer: Pick<AcervoAnswer, "matches" | "total">): string {
     const hits = answer.matches.filter((m) => m.hit).length;
-    return `${hits} de ${plural(answer.total, "contrato", "contratos")}`;
+    return `${count(hits)} de ${plural(answer.total, "contrato", "contratos")}`;
 }
 
 /**
@@ -90,6 +94,27 @@ export function readSummary(searched: number): string {
 
 export const MODEL_REQUIRED_COPY =
     "Escolha um modelo de revisão tabular em Configurações para usar o Perguntar.";
+
+/**
+ * The one way forward a failed question offers. Retrying is only honest when
+ * the same question could succeed: an expired session needs a sign-in, a
+ * missing model needs Configurações, and a rejected question needs rewriting.
+ */
+export type FailureAction = "retry" | "sign_in" | "settings" | "rewrite";
+
+export function failureAction(error: UserFacingError): FailureAction {
+    if (error.code === "model_required") return "settings";
+    if (error.kind === "unauthenticated") return "sign_in";
+    if (error.kind === "validation") return "rewrite";
+    return "retry";
+}
+
+export const FAILURE_ACTION_LABEL: Record<FailureAction, string> = {
+    retry: "Tentar de novo",
+    sign_in: "Entrar de novo",
+    settings: "Abrir Configurações",
+    rewrite: "Reescrever a pergunta",
+};
 
 /** The failure, in Portuguese, from its classification — never the raw message. */
 export function failureCopy(error: UserFacingError): string {

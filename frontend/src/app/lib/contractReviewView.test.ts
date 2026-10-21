@@ -9,6 +9,9 @@ import {
     precedentSentence,
     reviewSearch,
     verdictFromParam,
+    plural,
+    clockTime,
+    reviewActivity,
     relativeTime,
     sourceCount,
     stepFocus,
@@ -72,18 +75,32 @@ describe("contract review view", () => {
         expect(precedentSentence({ same: 0, of: 0, projects: [] })).toBeNull();
         expect(precedentSentence({ same: 3, of: 5, projects: [] })).toBe("Igual a 3 de 5 contratos assinados");
         expect(precedentSentence({ same: 1, of: 1, projects: [] })).toBe("Igual a 1 de 1 contrato assinado");
-        expect(precedentSentence({ same: 0, of: 4, projects: [] })).toBe("Diferente dos 4 contratos assinados com este tema validado");
+        expect(precedentSentence({ same: 0, of: 4, projects: [] })).toBe("Diferente de todos os 4 contratos assinados com este tema verificado");
+        expect(precedentSentence({ same: 0, of: 1, projects: [] })).toBe("Diferente do único contrato assinado com este tema verificado");
+        expect(precedentSentence({ same: 1200, of: 1500, projects: [] })).toBe("Igual a 1.200 de 1.500 contratos assinados");
     });
 
-    it("says how long ago in PT-BR", () => {
+    it("says how long ago in PT-BR, by São Paulo's calendar", () => {
+        // 12:00 UTC is 09:00 in São Paulo.
         const now = Date.parse("2026-10-20T12:00:00Z");
         expect(relativeTime("x", now)).toBe("");
         expect(relativeTime("2026-10-20T12:00:20Z", now)).toBe("agora");
         expect(relativeTime("2026-10-20T11:55:00Z", now)).toBe("há 5 min");
         expect(relativeTime("2026-10-20T09:00:00Z", now)).toBe("há 3 h");
+        // 02:00 UTC on the 20th is 23:00 on the 19th in São Paulo: yesterday, though only 10 h ago.
+        expect(relativeTime("2026-10-20T02:00:00Z", now)).toBe("ontem");
         expect(relativeTime("2026-10-19T10:00:00Z", now)).toBe("ontem");
         expect(relativeTime("2026-10-17T12:00:00Z", now)).toBe("há 3 d");
+        expect(relativeTime("2026-10-01T12:00:00Z", now)).toBe("01/10/2026");
         expect(relativeTime(new Date().toISOString())).toBe("agora");
+    });
+
+    it("writes counts and times the Brazilian way", () => {
+        expect(plural(1, "fonte", "fontes")).toBe("1 fonte");
+        expect(plural(0, "fonte", "fontes")).toBe("0 fontes");
+        expect(plural(2500, "contrato", "contratos")).toBe("2.500 contratos");
+        expect(clockTime("2026-10-20T21:02:00Z")).toBe("18:02");
+        expect(clockTime("ontem")).toBe("");
     });
 
     it("counts the sources a suggestion stands on", () => {
@@ -130,6 +147,21 @@ describe("review URL", () => {
         expect(reviewSearch("quote=abc", "run-1", "diverge")).toBe("?quote=abc&run=run-1&veredito=diverge");
         expect(reviewSearch("?run=old&veredito=alinhado", "run-2", null)).toBe("?run=run-2");
         expect(reviewSearch("run=x", null, null)).toBe("");
+    });
+});
+
+describe("review activity", () => {
+    it("words clause decisions and leaves the rest to the shared feed", () => {
+        const items = reviewActivity([
+            { id: 2, project_id: "p", at: "2026-10-20T12:05:00Z", actor_type: "user", actor_id: "u", actor_name: "Duda", action: "review.clause_rejeitado", field: "Lei aplicável e foro" },
+            { id: 1, project_id: "p", at: "2026-10-20T12:00:00Z", actor_type: "agent", actor_id: "agent:revisor@1", actor_name: "Agente de revisão", action: "review.started", after: { document: "MSA.docx" } },
+            { id: 3, project_id: "p", at: "2026-10-20T11:00:00Z", actor_type: "user", actor_id: "u", actor_name: "Duda", action: "review.clause_aceito" },
+        ]);
+        expect(items.map((i) => [i.verb, i.object])).toEqual([
+            ["rejeitou a sugestão em", "Lei aplicável e foro"],
+            ["começou a revisar", "MSA.docx"],
+            ["aceitou a sugestão em", undefined],
+        ]);
     });
 });
 

@@ -4,11 +4,13 @@ import { useMemo } from "react";
 import { BookOpen, FileSearch, Scale, TriangleAlert } from "lucide-react";
 import { AgentSuggestion } from "@/app/components/shared/AgentSuggestion";
 import { VerdictLabelUI } from "@/shared/ui/VerdictUI";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 import type { ReviewClause } from "@/app/lib/mikeApi";
 import { diffWords } from "@/app/lib/wordDiff";
 import {
     fichaStateLabel,
     isDecidable,
+    plural,
     precedentSentence,
     relativeTime,
     sourceCount,
@@ -98,18 +100,25 @@ export function ReviewClauseCard({
         <AgentSuggestion
             id={`clausula-${clause.id}`}
             agent="Agente de revisão"
-            meta={`${relativeTime(reviewedAt)}${sources ? ` · ${sources} ${sources === 1 ? "fonte" : "fontes"}` : ""}`}
+            meta={`${relativeTime(reviewedAt)}${sources ? ` · ${plural(sources, "fonte", "fontes")}` : ""}`}
             label={<VerdictLabelUI verdict={clause.verdict} />}
             title={
-                <button
-                    type="button"
-                    onClick={onLocate}
-                    className="text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                    title="Ver no documento"
-                >
-                    {clause.location ? `${clause.location} · ` : ""}
-                    {clause.ruleName}
-                </button>
+                <span className="inline-flex flex-wrap items-baseline gap-1.5">
+                    <button
+                        type="button"
+                        onClick={onLocate}
+                        className="text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        title="Ver no documento"
+                    >
+                        {clause.location ? `${clause.location} · ` : ""}
+                        {clause.ruleName}
+                    </button>
+                    {(clause.quote || clause.edit) && (
+                        <CitationPillUI aria-label="Ver o trecho no documento" title="Ver o trecho no documento" onClick={onLocate}>
+                            1
+                        </CitationPillUI>
+                    )}
+                </span>
             }
             decision={decision}
             canDecide={canDecide && decidable}
@@ -150,7 +159,7 @@ export function ReviewClauseCard({
                                 <li key={rule.rule_id} className="flex gap-1.5">
                                     <TriangleAlert aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
                                     <span className="min-w-0 [overflow-wrap:anywhere]">
-                                        <span className="font-medium text-gray-700">Regra {rule.rule_id}</span> ({SEVERITY[rule.severity] ?? rule.severity}): {rule.label}
+                                        <span className="font-medium text-gray-700">{rule.label}</span> (risco {SEVERITY[rule.severity] ?? rule.severity})
                                         {rule.pending_validation && <span className="text-gray-500"> · a confirmar na Ficha</span>}
                                     </span>
                                 </li>

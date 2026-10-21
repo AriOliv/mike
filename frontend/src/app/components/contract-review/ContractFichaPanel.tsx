@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CircleAlert, CircleCheck, CircleDashed, Pencil } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, CircleDashed, Diamond, Pencil } from "lucide-react";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 import { clsx } from "clsx";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TextButtonUI } from "@/shared/ui/TextButtonUI";
@@ -32,6 +33,7 @@ export function ContractFichaPanel({
     onConfirm,
     onCorrect,
     onLocate,
+    confirming,
 }: {
     ficha: ContractFicha | null;
     loading: boolean;
@@ -39,6 +41,8 @@ export function ContractFichaPanel({
     canEdit: boolean;
     onExtract: () => void;
     onConfirm: (path: string) => void;
+    /** Fields whose Verificar is in its undo window or being saved. */
+    confirming?: ReadonlySet<string>;
     onCorrect: (path: string, value: unknown) => void;
     onLocate: (quote: string) => void;
 }) {
@@ -124,6 +128,7 @@ export function ContractFichaPanel({
                                         onCorrect(path, correctedValue(form, field.value, draft));
                                     }}
                                     onConfirm={() => onConfirm(path)}
+                                    confirming={confirming?.has(path) ?? false}
                                     onLocate={onLocate}
                                 />
                             );
@@ -161,10 +166,16 @@ function StateMark({ field }: { field: FichaField }) {
                 citação não localizada
             </span>
         );
+    // Violet marks who wrote it (an agent); amber marks the state (to check).
     return (
-        <span className={clsx("inline-flex items-center gap-1", field.confidence === "baixa" ? "text-amber-700" : "text-violet-700")}>
-            <CircleDashed aria-hidden="true" className="h-3.5 w-3.5" />
-            IA · a conferir
+        <span className="inline-flex items-center gap-1">
+            <Diamond aria-hidden="true" className="h-3 w-3 fill-violet-100 text-violet-600" />
+            <span className="text-violet-700">IA</span>
+            <span className="text-gray-400">·</span>
+            <span className="inline-flex items-center gap-1 text-amber-700">
+                <CircleDashed aria-hidden="true" className="h-3.5 w-3.5" />
+                {field.confidence === "baixa" ? "a conferir, pouca certeza" : "a conferir"}
+            </span>
         </span>
     );
 }
@@ -182,6 +193,7 @@ function FichaRow({
     onCancel,
     onSave,
     onConfirm,
+    confirming,
     onLocate,
 }: {
     path: string;
@@ -196,6 +208,7 @@ function FichaRow({
     onCancel: () => void;
     onSave: () => void;
     onConfirm: () => void;
+    confirming: boolean;
     onLocate: (quote: string) => void;
 }) {
     const citation = field.citations[0];
@@ -211,6 +224,11 @@ function FichaRow({
                     <StateMark field={field} />
                 </span>
             </div>
+            {field.review.state !== "pendente" && field.ai_value !== undefined && field.notes && (
+                <p className="mt-0.5 text-xs text-amber-700 sm:pl-42">
+                    {field.notes} IA leu: {fieldSummary({ value: field.ai_value }) || "o contrato não trata disso"}
+                </p>
+            )}
             {editing && form ? (
                 <div className="mt-1.5 flex items-center gap-2">
                     <label className="sr-only" htmlFor={`ficha-${path}`}>
@@ -262,19 +280,22 @@ function FichaRow({
             ) : (
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 pl-0 text-xs sm:pl-42">
                     {citation && (
-                        <button
-                            type="button"
-                            onClick={() => onLocate(citation.quote)}
-                            className="text-gray-500 underline decoration-gray-300 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                        >
-                            {citation.clause ?? "ver no documento"}
-                        </button>
+                        <span className="inline-flex items-center gap-1 text-gray-500">
+                            <CitationPillUI
+                                aria-label={`Ver no documento: ${citation.clause ?? label}`}
+                                title="Ver no documento"
+                                onClick={() => onLocate(citation.quote)}
+                            >
+                                1
+                            </CitationPillUI>
+                            {citation.clause}
+                        </span>
                     )}
                     {canEdit && field.review.state === "pendente" && (
                         <>
-                            <TextButtonUI size="xs" onClick={onConfirm} aria-label={`Verificar ${label}`}>
+                            <TextButtonUI size="xs" onClick={onConfirm} disabled={confirming} aria-label={`Verificar ${label}`}>
                                 <Check aria-hidden="true" className="h-3 w-3" />
-                                Verificar
+                                {confirming ? "Verificando…" : "Verificar"}
                             </TextButtonUI>
                             {form && (
                                 <TextButtonUI size="xs" onClick={onStartEdit} aria-label={`Corrigir ${label}`}>

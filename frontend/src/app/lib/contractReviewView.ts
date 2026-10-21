@@ -3,8 +3,23 @@
 // as decidable, the precedent sentence) are tested on their own.
 
 import type { ContractReview, ReviewClause, ReviewVerdict } from "./mikeApi";
+import { toActivityItems, type ActivityItem, type CardEventRow } from "./activityFeed";
 
 export type VerdictFilter = Exclude<ReviewVerdict, "nao_aplica"> | null;
+
+/** "1 contrato", "3 contratos": the count and the noun that agrees with it. */
+export function plural(n: number, one: string, many: string): string {
+    return `${n.toLocaleString("pt-BR")} ${n === 1 ? one : many}`;
+}
+
+const SAO_PAULO = "America/Sao_Paulo";
+const DAY = new Intl.DateTimeFormat("en-CA", { timeZone: SAO_PAULO, year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** Calendar days between two instants, as a person in São Paulo counts them. */
+function calendarDaysBetween(then: number, now: number): number {
+    const day = (t: number) => Date.parse(`${DAY.format(t)}T00:00:00Z`);
+    return Math.round((day(now) - day(then)) / 86_400_000);
+}
 
 const URGENCY: Record<ReviewVerdict, number> = { diverge: 0, precisa_revisao: 1, alinhado: 2, nao_aplica: 3 };
 
@@ -40,22 +55,30 @@ export function pendingAligned(clauses: readonly ReviewClause[]): ReviewClause[]
 /** "Igual a 3 de 5 contratos assinados", or null when there is nothing to compare with. */
 export function precedentSentence(precedent: ReviewClause["precedent"]): string | null {
     if (!precedent || precedent.of === 0) return null;
-    const noun = precedent.of === 1 ? "contrato assinado" : "contratos assinados";
-    if (precedent.same === 0) return `Diferente dos ${precedent.of} ${noun} com este tema validado`;
-    return `Igual a ${precedent.same} de ${precedent.of} ${noun}`;
+    const signed = plural(precedent.of, "contrato assinado", "contratos assinados");
+    if (precedent.same === 0)
+        return precedent.of === 1
+            ? "Diferente do único contrato assinado com este tema verificado"
+            : `Diferente de todos os ${signed} com este tema verificado`;
+    return `Igual a ${precedent.same.toLocaleString("pt-BR")} de ${signed}`;
 }
 
-/** "há 5 min", "ontem", "há 3 d" — the PT-BR relative time of the parity rules. */
+/**
+ * "há 5 min", "há 3 h", "ontem", "há 3 d", or the date — the PT-BR relative
+ * time of the parity rules. "ontem" is the previous calendar day in São Paulo,
+ * not "24 hours ago".
+ */
 export function relativeTime(iso: string, now: number = Date.now()): string {
     const then = Date.parse(iso);
     if (Number.isNaN(then)) return "";
-    const minutes = Math.max(0, Math.round((now - then) / 60_000));
+    const minutes = Math.max(0, Math.floor((now - then) / 60_000));
     if (minutes < 1) return "agora";
     if (minutes < 60) return `há ${minutes} min`;
-    const hours = Math.round(minutes / 60);
-    if (hours < 24) return `há ${hours} h`;
-    const days = Math.round(hours / 24);
-    return days === 1 ? "ontem" : `há ${days} d`;
+    const days = calendarDaysBetween(then, now);
+    if (days < 1) return `há ${Math.floor(minutes / 60)} h`;
+    if (days === 1) return "ontem";
+    if (days < 7) return `há ${days} d`;
+    return new Date(then).toLocaleDateString("pt-BR", { timeZone: SAO_PAULO });
 }
 
 export function sourceCount(clause: ReviewClause): number {
@@ -108,5 +131,34 @@ export function reviewSearch(current: string, runId: string | null, filter: Verd
     else params.delete("veredito");
     const text = params.toString();
     return text ? `?${text}` : "";
+}
+
+/** "18:02" in São Paulo, for a decision's line. */
+export function clockTime(iso: string): string {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime())
+        ? ""
+        : date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: SAO_PAULO });
+}
+
+const CLAUSE_VERBS: Record<string, string> = {
+    "review.clause_aceito": "aceitou a sugestão em",
+    "review.clause_editado": "editou a sugestão em",
+    "review.clause_rejeitado": "rejeitou a sugestão em",
+};
+
+/**
+ * The contract's activity feed. Clause decisions are this module's own
+ * events, so they are worded here ("aceitou a sugestão em Cessão") and the
+ * rest is left to the shared feed.
+ */
+export function reviewActivity(events: CardEventRow[]): ActivityItem[] {
+    const items = toActivityItems(events);
+    const byId = new Map(events.map((event) => [String(event.id), event]));
+    return items.map((item) => {
+        const event = byId.get(item.id);
+        const verb = event && CLAUSE_VERBS[event.action];
+        return verb ? { ...item, verb, object: event.field ?? undefined } : item;
+    });
 }
 

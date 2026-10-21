@@ -91,12 +91,17 @@ const WORDS: Record<string, string> = {
 
 const word = (value: unknown) => (typeof value === "string" ? (WORDS[value] ?? value.replace(/_/g, " ")) : "");
 
+const number = (n: number) => n.toLocaleString("pt-BR");
+
 function duration(value: unknown): string {
     if (!value || typeof value !== "object") return "";
     const { amount, unit, day_count } = value as { amount?: number; unit?: string; day_count?: string };
     if (typeof amount !== "number" || !unit) return "";
-    const count = day_count === "uteis" ? " úteis" : day_count === "corridos" ? " corridos" : "";
-    return `${amount} ${unit}${unit === "dias" ? count : ""}`;
+    const one: Record<string, string> = { horas: "hora", dias: "dia", meses: "mês", anos: "ano" };
+    const noun = amount === 1 ? (one[unit] ?? unit) : unit;
+    const count =
+        unit !== "dias" ? "" : day_count === "uteis" ? (amount === 1 ? " útil" : " úteis") : day_count === "corridos" ? (amount === 1 ? " corrido" : " corridos") : "";
+    return `${number(amount)} ${noun}${count}`;
 }
 
 /** One line for a structured value; booleans and enums in words. */
@@ -105,6 +110,7 @@ export function fieldSummary(field: Pick<FichaField, "value">): string {
     if (value === null || value === undefined) return "";
     if (typeof value === "boolean") return value ? "Sim" : "Não";
     if (typeof value === "string") return word(value);
+    if (typeof value === "number") return number(value);
     if (typeof value !== "object") return String(value);
     const v = value as Record<string, unknown>;
     const parts: string[] = [];
@@ -121,8 +127,8 @@ export function fieldSummary(field: Pick<FichaField, "value">): string {
     if (duration(v.aviso_nao_renovacao)) parts.push(`aviso de ${duration(v.aviso_nao_renovacao)}`);
     if (duration(v.aviso_previo_avenia)) parts.push(`aviso da Avenia: ${duration(v.aviso_previo_avenia)}`);
     if (duration(v.aviso_previo_contraparte)) parts.push(`aviso da contraparte: ${duration(v.aviso_previo_contraparte)}`);
-    if (typeof v.percentual === "number") parts.push(`${v.percentual}%`);
-    if (typeof v.meses === "number") parts.push(`${v.meses} meses`);
+    if (typeof v.percentual === "number") parts.push(`${number(v.percentual)}%`);
+    if (typeof v.meses === "number") parts.push(`${number(v.meses)} ${v.meses === 1 ? "mês" : "meses"}`);
     if (typeof v.devida_por === "string") parts.push(`devida por ${word(v.devida_por)}`);
     if (typeof v.protege === "string") parts.push(`protege ${word(v.protege)}`);
     if (Array.isArray(v.excecoes) && v.excecoes.length) parts.push(`exceto ${v.excecoes.map(word).join(", ")}`);
@@ -134,7 +140,13 @@ export function fieldSummary(field: Pick<FichaField, "value">): string {
     if (v.limitada === false) parts.push("sem teto");
     if (typeof v.mecanismo === "string") parts.push(v.mecanismo);
     const text = parts.join(", ");
-    return text ? text.charAt(0).toUpperCase() + text.slice(1) : JSON.stringify(value);
+    return text ? text.charAt(0).toUpperCase() + text.slice(1) : "—";
+}
+
+/** The Legal team's name for a Ficha field. */
+export function fichaLabel(path: string): string {
+    for (const group of FICHA_GROUPS) for (const [p, label] of group.fields) if (p === path) return label;
+    return "campo da Ficha";
 }
 
 /** The groups with the fields this Ficha has, in the spreadsheet's order. */
