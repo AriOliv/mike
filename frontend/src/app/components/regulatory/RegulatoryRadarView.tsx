@@ -486,7 +486,9 @@ export function RegulatoryRadarView() {
                                 id: s.id,
                                 value: s.counts.abertas,
                                 label: s.name,
-                                tone: s.counts.alto > 0 ? "critico" : s.counts.novas > 0 ? "atencao" : "default",
+                                // Neutral number: unread is not a problem; the
+                                // impact chip in each row carries the colour.
+                                tone: "default",
                                 hint: s.last_error
                                     ? "fonte fora do ar"
                                     : !s.enabled

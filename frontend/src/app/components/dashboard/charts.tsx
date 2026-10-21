@@ -73,8 +73,8 @@ export function ChartCard({
     const [asTable, setAsTable] = useState(false);
     return (
         <figure className={cn("viz-root min-w-0 rounded-xl border border-gray-200 bg-app-surface p-4", className)}>
-            <figcaption className="mb-3 flex flex-wrap items-start justify-between gap-2">
-                <span className="min-w-0">
+            <figcaption className="mb-3 flex items-start justify-between gap-2">
+                <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-gray-900">{title}</span>
                     {subtitle ? <span className="block text-xs text-gray-500">{subtitle}</span> : null}
                 </span>
@@ -82,7 +82,7 @@ export function ChartCard({
                     type="button"
                     onClick={() => setAsTable((v) => !v)}
                     aria-pressed={asTable}
-                    className="rounded-full px-2 py-0.5 text-[11px] text-gray-500 hover:bg-app-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                    className="shrink-0 rounded-full px-2 py-0.5 text-[11px] text-gray-500 hover:bg-app-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                 >
                     {asTable ? "Ver gráfico" : "Ver tabela"}
                 </button>
