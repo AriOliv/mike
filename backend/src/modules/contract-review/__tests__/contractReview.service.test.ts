@@ -145,7 +145,7 @@ describe("startContractReview", () => {
             expect.objectContaining({ playbookId: "pb-1", documentId: "d1", model: "test-model", reviewMode: "strict" }),
         );
         expect(playbooks.startPlaybookReview.mock.calls[0][0].instructions).toContain("português do Brasil");
-        expect(fake.calls.find((c) => c.table === "contract_reviews")?.payload).toEqual({
+        expect(fake.calls.find((c) => c.table === "contract_review_runs")?.payload).toEqual({
             run_id: "run-1",
             project_id: "p1",
             document_id: "d1",
@@ -279,7 +279,7 @@ describe("getContractReview", () => {
     it("combines the playbook verdict, the Ficha's rules and precedent per clause", async () => {
         playbooks.getPlaybookRunById.mockResolvedValue(RUN);
         const fake = fakeDb({
-            contract_reviews: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }],
+            contract_review_runs: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }],
             playbook_runs: [{ data: { content_json: SNAPSHOT } }],
             playbooks: [{ data: { id: "pb-1", name: AVENIA_PLAYBOOK_NAME } }],
             contract_review_decisions: [
@@ -330,7 +330,7 @@ describe("getContractReview", () => {
     it("turns a high-severity rule into a divergence and works without a Ficha", async () => {
         playbooks.getPlaybookRunById.mockResolvedValue(RUN);
         const withRule = fakeDb({
-            contract_reviews: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }],
+            contract_review_runs: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }],
             contract_fichas: [{ data: { ficha: {}, findings: [{ rule_id: "ALT-04", severidade: "alta", titulo: "x", depende_de_campo_nao_validado: false }] } }],
             projects: [{ data: [] }],
         });
@@ -339,27 +339,27 @@ describe("getContractReview", () => {
         expect(result.ok && result.data.playbook.name).toBe(AVENIA_PLAYBOOK_NAME);
 
         access.listAccessibleProjectIds.mockResolvedValueOnce(["p1"]);
-        const none = fakeDb({ contract_reviews: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }], contract_fichas: [{ data: null }] });
+        const none = fakeDb({ contract_review_runs: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }], contract_fichas: [{ data: null }] });
         const bare = await getContractReview(none.db, caller, "p1", "run-1");
         expect(bare.ok && bare.data.clauses.map((c) => c.precedent)).toEqual([null, null, null]);
     });
 
     it("hides a review of another contract and a run that is gone", async () => {
-        expect(await getContractReview(fakeDb({ contract_reviews: [{ data: null }] }).db, caller, "p1", "run-x")).toMatchObject({ kind: "not_found" });
+        expect(await getContractReview(fakeDb({ contract_review_runs: [{ data: null }] }).db, caller, "p1", "run-x")).toMatchObject({ kind: "not_found" });
         playbooks.getPlaybookRunById.mockResolvedValueOnce(null);
         expect(
-            await getContractReview(fakeDb({ contract_reviews: [{ data: { run_id: "r", playbook_id: "pb" } }] }).db, caller, "p1", "r"),
+            await getContractReview(fakeDb({ contract_review_runs: [{ data: { run_id: "r", playbook_id: "pb" } }] }).db, caller, "p1", "r"),
         ).toMatchObject({ kind: "not_found" });
         access.checkProjectAccess.mockResolvedValueOnce({ ok: false });
         expect(await getContractReview(fakeDb({}).db, caller, "p1", "r")).toMatchObject({ kind: "not_found" });
-        expect(await getContractReview(fakeDb({ contract_reviews: [{ error: { message: "boom" } }] }).db, caller, "p1", "r")).toMatchObject({ kind: "error" });
+        expect(await getContractReview(fakeDb({ contract_review_runs: [{ error: { message: "boom" } }] }).db, caller, "p1", "r")).toMatchObject({ kind: "error" });
     });
 });
 
 describe("listContractReviews", () => {
     it("lists the contract's reviews with their verdict counts", async () => {
         const fake = fakeDb({
-            contract_reviews: [
+            contract_review_runs: [
                 { data: [{ run_id: "run-1", playbook_id: "pb-1", created_at: "c1" }, { run_id: "gone", playbook_id: "pb-1", created_at: "c0" }] },
             ],
             playbook_runs: [{ data: [{ id: "run-1", status: "completed", started_at: "s1", findings_json: RUN.findings }] }],
@@ -369,9 +369,9 @@ describe("listContractReviews", () => {
             ok: true,
             data: [{ id: "run-1", status: "completed", started_at: "s1", playbook_name: "Playbook Avenia v1", counts: { alinhado: 1, precisa_revisao: 1, diverge: 0 } }],
         });
-        expect(await listContractReviews(fakeDb({ contract_reviews: [{ data: [] }] }).db, caller, "p1")).toEqual({ ok: true, data: [] });
+        expect(await listContractReviews(fakeDb({ contract_review_runs: [{ data: [] }] }).db, caller, "p1")).toEqual({ ok: true, data: [] });
         expect(
-            await listContractReviews(fakeDb({ contract_reviews: [{ data: [{ run_id: "r", playbook_id: "pb" }] }], playbook_runs: [{ error: { m: 1 } }] }).db, caller, "p1"),
+            await listContractReviews(fakeDb({ contract_review_runs: [{ data: [{ run_id: "r", playbook_id: "pb" }] }], playbook_runs: [{ error: { m: 1 } }] }).db, caller, "p1"),
         ).toMatchObject({ kind: "error" });
         access.checkProjectAccess.mockResolvedValueOnce({ ok: false });
         expect(await listContractReviews(fakeDb({}).db, caller, "p1")).toMatchObject({ kind: "not_found" });
@@ -380,7 +380,7 @@ describe("listContractReviews", () => {
 
 describe("decideReviewClause", () => {
     const linked = (decisions: unknown[] = []) => ({
-        contract_reviews: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }],
+        contract_review_runs: [{ data: { run_id: "run-1", project_id: "p1", playbook_id: "pb-1" } }],
         "contract_review_decisions:select": [{ data: decisions }],
     });
     const decided = (decision: string) => ({
@@ -479,7 +479,7 @@ describe("decideReviewClause", () => {
         documents.resolveEdit.mockResolvedValue({ ok: false, detail: "Edit not found" });
         expect(await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "rejeitado" })).toMatchObject({ kind: "conflict" });
         expect(await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "nope", { decision: "aceito" })).toMatchObject({ kind: "not_found" });
-        expect(await decideReviewClause(fakeDb({ contract_reviews: [{ data: null }] }).db, caller, "p1", "run-1", "f", { decision: "aceito" })).toMatchObject({ kind: "not_found" });
+        expect(await decideReviewClause(fakeDb({ contract_review_runs: [{ data: null }] }).db, caller, "p1", "run-1", "f", { decision: "aceito" })).toMatchObject({ kind: "not_found" });
         access.checkProjectAccess.mockResolvedValueOnce(role("viewer"));
         expect(await decideReviewClause(fakeDb({}).db, caller, "p1", "run-1", "f", { decision: "aceito" })).toMatchObject({ kind: "forbidden" });
         const failing = fakeDb({ ...linked(), "contract_review_decisions:insert": [{ error: { message: "x" } }] });

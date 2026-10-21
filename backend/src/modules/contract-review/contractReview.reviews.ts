@@ -201,7 +201,7 @@ export async function startContractReview(
         });
         // The run records its own outcome; a failure is already logged there.
         done.catch(() => undefined);
-        const { error } = await db.from("contract_reviews").insert({
+        const { error } = await db.from("contract_review_runs").insert({
             run_id: run.id,
             project_id: projectId,
             document_id: doc.documentId,
@@ -228,7 +228,7 @@ export async function startContractReview(
 
 async function reviewRow(db: Db, projectId: string, runId: string) {
     const { data, error } = await db
-        .from("contract_reviews")
+        .from("contract_review_runs")
         .select("run_id, project_id, playbook_id")
         .eq("run_id", runId)
         .eq("project_id", projectId)
@@ -442,7 +442,7 @@ export async function listContractReviews(
     if (!allowed.ok) return allowed;
     try {
         const { data, error } = await db
-            .from("contract_reviews")
+            .from("contract_review_runs")
             .select("run_id, playbook_id, created_at")
             .eq("project_id", projectId)
             .order("created_at", { ascending: false })
