@@ -82,13 +82,18 @@ describe("AppSidebar account dropdown", () => {
     expect(screen.queryByRole("menuitem", { name: "Memory" })).toBeNull();
   });
 
-  it("shows the IDE navigation directly below Assistant", () => {
+  it("lists the Legal workstation in Portuguese, then the other tools under Mais", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    const assistant = screen.getByRole("button", { name: "Assistant" });
-    const ide = screen.getByRole("button", { name: "IDE" });
+    const esteira = screen.getByRole("button", { name: "Esteira" });
+    const mais = screen.getByText("Mais");
+    const playbooks = screen.getByRole("button", { name: "Playbooks" });
 
-    expect(assistant.parentElement?.nextElementSibling).toContainElement(ide);
+    expect(esteira.compareDocumentPosition(mais) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mais.compareDocumentPosition(playbooks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Pipeline" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "IDE" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Contratos" })).toBeVisible();
   });
 
   it("shows a recovery toast when sign out fails", async () => {
@@ -100,8 +105,8 @@ describe("AppSidebar account dropdown", () => {
     await user.click(screen.getByText("Alice").closest("button")!);
     await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't sign out");
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não consegui sair");
+    expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeInTheDocument();
     clearToasts();
   });
 
@@ -281,8 +286,8 @@ describe("AppSidebar account dropdown", () => {
 
     rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    expect(screen.getByText("Assistant")).toHaveClass("sidebar-fade-in-2");
-    expect(screen.getByText("Recent Projects").closest("button")).toHaveClass(
+    expect(screen.getByText("Esteira")).toHaveClass("sidebar-fade-in-2");
+    expect(screen.getByText("Projetos recentes").closest("button")).toHaveClass(
       "sidebar-fade-in",
     );
   });
@@ -290,6 +295,6 @@ describe("AppSidebar account dropdown", () => {
   it("does not fade contents of a sidebar that is open on first render", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    expect(screen.getByText("Assistant")).not.toHaveClass("sidebar-fade-in-2");
+    expect(screen.getByText("Esteira")).not.toHaveClass("sidebar-fade-in-2");
   });
 });

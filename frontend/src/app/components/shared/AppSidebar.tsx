@@ -8,6 +8,7 @@ import {
     useMemo,
     useCallback,
     useRef,
+    type ReactElement,
     type UIEvent,
 } from "react";
 import {
@@ -59,6 +60,14 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
+import {
+    isNavItemActive,
+    navForRole,
+    type NavIconKey,
+    type NavItem,
+    type NavRole,
+} from "@/app/lib/navItems";
+import { loadNavRole } from "@/app/lib/navRole";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -75,22 +84,15 @@ import {
 /** Where a workspace opens: the page the logo leads to. */
 const WORKSPACE_HOME = "/assistant";
 
-const NAV_ITEMS = [
-    { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
-    { href: "/ide", label: "IDE", icon: IdeSkeuoIcon },
-    { href: "/pipeline", label: "Pipeline", icon: FolderSkeuoIcon },
-    { href: "/radar", label: "Radar", icon: WorkflowSkeuoIcon },
-    { href: "/acervo", label: "Acervo", icon: LibrarySkeuoIcon },
-    { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
-    { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
-    {
-        href: "/tabular-reviews",
-        label: "Tabular Review",
-        icon: TabularReviewSkeuoIcon,
-    },
-    { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
-    { href: "/playbooks", label: "Playbooks", icon: PlaybookSkeuoIcon },
-];
+const NAV_ICONS: Record<NavIconKey, (props: { className?: string }) => ReactElement> = {
+    chat: ChatSkeuoIcon,
+    ide: IdeSkeuoIcon,
+    folder: FolderSkeuoIcon,
+    library: LibrarySkeuoIcon,
+    tabular: TabularReviewSkeuoIcon,
+    workflow: WorkflowSkeuoIcon,
+    playbook: PlaybookSkeuoIcon,
+};
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
 const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44";
@@ -338,7 +340,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 // An empty Projects section reads as "you have no projects",
                 // which is the one thing this failure does not mean.
                 notifyError(error, {
-                    action: "load your recent projects",
+                    lang: "pt",
+                    action: "carregar seus projetos recentes",
                     dedupeKey: "sidebar-recent-projects",
                     onRetry: () =>
                         setRecentProjectsAttempt((attempt) => attempt + 1),
@@ -401,7 +404,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             // The current page survives; the user is told the next one did
             // not arrive instead of scrolling at a list that stopped growing.
             notifyError(error, {
-                action: "load more projects",
+                lang: "pt",
+                action: "carregar mais projetos",
                 dedupeKey: "sidebar-recent-projects-more",
                 onRetry: () => retryLoadMoreRecentProjectsRef.current?.(),
             });
@@ -448,7 +452,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             .then(() => router.push("/"))
             .catch((error) => {
                 notifyError(error, {
-                    action: "sign out",
+                    lang: "pt",
+                    action: "sair",
                     dedupeKey: "sign-out",
                     onRetry: handleSignOut,
                 });
@@ -458,6 +463,20 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     useEffect(() => {
         setCurrentChatId(routeChatId);
     }, [routeChatId, setCurrentChatId]);
+
+    // Whoever only asks the Legal team for things gets a shorter menu. The
+    // role is per account, so it is asked again only when the account changes.
+    const [navRole, setNavRole] = useState<NavRole | null>(null);
+    useEffect(() => {
+        setNavRole(null);
+        if (!userId) return;
+        const controller = new AbortController();
+        void loadNavRole(controller.signal).then((role) => {
+            if (!controller.signal.aborted) setNavRole(role);
+        });
+        return () => controller.abort();
+    }, [userId]);
+    const nav = navForRole(navRole);
 
 
     const getDisplayName = () => {
@@ -572,52 +591,40 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
                     {/* Nav items */}
                     <div className="pt-1.5">
-                        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-                            const isActive =
-                                href === "/assistant"
-                                    ? pathname === href
-                                    : href === "/projects"
-                                      ? pathname === href
-                                      : pathname === href ||
-                                        pathname.startsWith(href + "/");
-                            return (
-                                <div key={href} className="px-1.5 py-0.5">
-                                    <button
-                                        onClick={() => router.push(href)}
-                                        title={!isOpen ? label : ""}
-                                        className={cn(
-                                            "w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
-                                            isActive
-                                                ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
-                                                : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
-                                            !isOpen ? "hidden md:flex" : "flex",
-                                        )}
-                                    >
-                                        <Icon
-                                            className={`h-4 w-4 flex-shrink-0 ${
-                                                isActive
-                                                    ? "text-gray-900"
-                                                    : "text-black"
-                                            }`}
-                                        />
-                                        {isOpen && (
-                                            <span
-                                                className={`text-sm font-medium ${
-                                                    shouldAnimate
-                                                        ? "sidebar-fade-in-2"
-                                                        : ""
-                                                }`}
-                                            >
-                                                {label}
-                                            </span>
-                                        )}
-                                    </button>
-                                </div>
-                            );
-                        })}
+                        {nav.main.map((item) => (
+                            <NavButton
+                                key={item.href}
+                                item={item}
+                                active={isNavItemActive(item, pathname)}
+                                isOpen={isOpen}
+                                animate={shouldAnimate}
+                                onNavigate={() => router.push(item.href)}
+                            />
+                        ))}
+                        {nav.more.length === 0 ? null : isOpen ? (
+                            <p
+                                className={`mt-3 mb-1 px-3.5 text-xs font-semibold text-gray-500 ${
+                                    shouldAnimate ? "sidebar-fade-in" : ""
+                                }`}
+                            >
+                                Mais
+                            </p>
+                        ) : (
+                            <div aria-hidden="true" className="mx-3 my-2 hidden border-t border-gray-200 md:block" />
+                        )}
+                        {nav.more.map((item) => (
+                            <NavButton
+                                key={item.href}
+                                item={item}
+                                active={isNavItemActive(item, pathname)}
+                                isOpen={isOpen}
+                                animate={shouldAnimate}
+                                onNavigate={() => router.push(item.href)}
+                            />
+                        ))}
                     </div>
 
-                    {isOpen && (
+                    {isOpen && nav.workLists && (
                         <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
                             {/* Recent Projects */}
                             <div>
@@ -627,7 +634,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         shouldAnimate ? "sidebar-fade-in" : ""
                                     }`}
                                 >
-                                    <span>Recent Projects</span>
+                                    <span>Projetos recentes</span>
                                     <ChevronDown
                                         className={`h-3.5 w-3.5 transition-transform ${
                                             projectsCollapsed ? "-rotate-90" : ""
@@ -671,7 +678,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                         : ""
                                                 }`}
                                             >
-                                                No projects yet
+                                                Nenhum projeto ainda
                                             </div>
                                         ) : (
                                             <div
@@ -736,7 +743,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         shouldAnimate ? "sidebar-fade-in" : ""
                                     }`}
                                 >
-                                    <span>History</span>
+                                    <span>Histórico</span>
                                     <ChevronDown
                                         className={`h-3.5 w-3.5 transition-transform ${
                                             historyCollapsed ? "-rotate-90" : ""
@@ -746,7 +753,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 <div
                                     id="sidebar-history"
                                     role="region"
-                                    aria-label="History"
+                                    aria-label="Histórico"
                                     className={cn(
                                         "min-h-0 flex-1 overflow-y-auto",
                                         historyCollapsed && "hidden",
@@ -778,7 +785,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                     : ""
                                             }`}
                                         >
-                                            {!history.error && "No history yet"}
+                                            {!history.error && "Nada no histórico ainda"}
                                         </div>
                                     ) : (
                                         <>
@@ -904,7 +911,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                             onClick={() => void history.retry()}
                                             className="mx-3.5 my-2 rounded text-left text-xs text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                                         >
-                                            Some history could not be loaded. Try again
+                                            Não consegui carregar parte do histórico. Tentar de novo
                                         </button>
                                     )}
                                 </div>
@@ -1040,5 +1047,53 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 </div>
             </div>
         </>
+    );
+}
+
+/** One sidebar navigation row; only the label hides when the sidebar is closed. */
+function NavButton({
+    item,
+    active,
+    isOpen,
+    animate,
+    onNavigate,
+}: {
+    item: NavItem;
+    active: boolean;
+    isOpen: boolean;
+    animate: boolean;
+    onNavigate: () => void;
+}) {
+    const Icon = NAV_ICONS[item.icon];
+    return (
+        <div className="px-1.5 py-0.5">
+            <button
+                onClick={onNavigate}
+                title={!isOpen ? item.label : ""}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                    "w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
+                    active
+                        ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
+                        : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
+                    !isOpen ? "hidden md:flex" : "flex",
+                )}
+            >
+                <Icon
+                    className={`h-4 w-4 flex-shrink-0 ${
+                        active ? "text-gray-900" : "text-black"
+                    }`}
+                />
+                {isOpen && (
+                    <span
+                        className={`text-sm font-medium ${
+                            animate ? "sidebar-fade-in-2" : ""
+                        }`}
+                    >
+                        {item.label}
+                    </span>
+                )}
+            </button>
+        </div>
     );
 }
