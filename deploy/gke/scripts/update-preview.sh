@@ -30,6 +30,8 @@ BRANCHES="${BRANCHES:-infra/gke-staging feat/card-events feat/ui-verdict feat/ui
 LOCAL_OK="${LOCAL_OK:-feat/radar-regulatorio}"
 # kept outside the checkout (the merges rewrite deploy/gke)
 UNION=$(mktemp); cp "$ROOT/deploy/gke/scripts/union-words.pl" "$UNION"
+UNION_NAV=$(mktemp); cp "$ROOT/deploy/gke/scripts/union-nav.py" "$UNION_NAV"
+SUPERSET=$(mktemp); cp "$ROOT/deploy/gke/scripts/superset.pl" "$SUPERSET"
 REG="southamerica-east1-docker.pkg.dev/$P/mike"
 
 git diff --quiet && git diff --cached --quiet || { echo "working tree is dirty; commit or stash first"; exit 1; }
@@ -37,7 +39,7 @@ git fetch -q origin
 
 if [ "${SKIP_MERGE:-0}" != 1 ]; then
   git checkout -q -B "$TARGET" "origin/$BASE"
-  merged=() skipped=() conflicted=() nolink=()
+  merged=() skipped=() conflicted=()
   # tables every migration creates; a branch whose migrations create a table
   # some earlier migration already creates is left out (create-if-not-exists
   # would silently keep the first shape)
@@ -52,37 +54,53 @@ if [ "${SKIP_MERGE:-0}" != 1 ]; then
     before=$(tables_of HEAD)
     # rerere replays conflict resolutions already recorded on this machine
     # (resolve once by hand in a worktree, `git rerere`, commit: next run is clean)
+    navdone=""
     if ! git -c rerere.enabled=true -c rerere.autoupdate=true -c merge.conflictStyle=diff3 merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
       files=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
-      if [ -z "$files" ]; then git commit -q --no-edit; echo "merged $ref (recorded resolution)"
+      if [ -z "$files" ]; then git merge --abort 2>/dev/null; conflicted+=("$b: merge failed without conflicts"); continue
       else
       # The only conflicts we resolve here are "both sides appended a line"
       # in the registries every feature touches; anything else is real.
       trivial="backend/schema.sql backend/src/app.ts backend/src/jobs/registry.ts frontend/src/app/lib/mikeApi.ts frontend/src/app/lib/mikeApi.contracts.test.ts"
-      # the sidebar moved to app/lib/navItems.ts (#8): keep the integration's
-      # sidebar; the branch's menu link is missing until its owner adds a line
-      # to navItems.ts (the page itself still works by URL)
+      # the sidebar: features only add to it; per hunk keep the side that
+      # contains the other (menu items themselves live in navItems.ts)
       ours="frontend/src/app/components/shared/AppSidebar.tsx"
       # one-line word lists every feature appends to
+      # menu items, one line per feature (navItems.ts + its test)
+      nav="frontend/src/app/lib/navItems.ts frontend/src/app/lib/navItems.test.ts"
       words="backend/src/lib/observability/sentryPrivacy.ts frontend/src/shared/lib/sentryPrivacy.ts backend/src/__tests__/helpers/scriptedDb.ts"
       real=""
-      for f in $files; do case " $trivial $ours $words " in *" $f "*) ;; *) real="$real $f";; esac; done
+      for f in $files; do case " $trivial $ours $words $nav " in *" $f "*) ;; *) real="$real $f";; esac; done
       if [ -n "$real" ]; then
         git merge --abort; conflicted+=("$b:$real"); echo "LEFT OUT $b: conflict in$real"; continue
       fi
       for f in $files; do
         case " $ours " in
-          *" $f "*) git checkout -q --ours -- "$f"; nolink+=("$b") ;;
+          *" $f "*) perl "$SUPERSET" "$f" >"$f.res" && mv "$f.res" "$f" ;;
         esac
         case " $words " in
           *" $f "*) perl -0pi "$UNION" "$f" ;;
         esac
-        case " $ours $words " in *" $f "*) ;;
+        case " $nav " in
+          *" $f "*) [ -n "${navdone:-}" ] || { python3 "$UNION_NAV" "$ROOT"; navdone=1; } ;;
+        esac
+        case " $ours $words $nav " in *" $f "*) ;;
           # diff3 hunks: ours, then theirs, dropping the common base (keeps
           # a closing brace the base shares from being lost)
           *) perl -0pi -e 's/^<<<<<<< [^\n]*\n(.*?)^\|\|\|\|\|\|\| [^\n]*\n.*?^=======\n(.*?)^>>>>>>> [^\n]*\n/$1$2/gms' "$f" ;;
         esac
       done
+      # concatenated hunks leave the migration ledger out of order; sort it
+      case " $files " in *" backend/schema.sql "*)
+        python3 - <<'PY'
+import re
+p = "backend/schema.sql"; s = open(p).read()
+m = list(re.finditer(r"(insert into public\.schema_migrations \(filename\) values\n)(.*?)(\non conflict)", s, re.S))[-1]
+rows = sorted({r.strip().rstrip(",") for r in m.group(2).split("\n") if r.strip()})
+s = s[:m.start(2)] + ",\n".join("  " + r for r in rows) + s[m.end(2):]
+open(p, "w").write(s)
+PY
+      ;; esac
       git add $files && git commit -q --no-edit
       echo "merged $ref (kept both sides in: $files)"
       fi
@@ -97,7 +115,6 @@ if [ "${SKIP_MERGE:-0}" != 1 ]; then
     merged+=("$ref")
   done
   echo "merged: ${merged[*]:-none}"; [ ${#skipped[@]} -eq 0 ] || echo "skipped (not found): ${skipped[*]}"
-  [ ${#nolink[@]} -eq 0 ] || echo "no menu link yet (add a line to app/lib/navItems.ts): ${nolink[*]}"
   if [ ${#conflicted[@]} -gt 0 ]; then echo "LEFT OUT (owner must rebase/rename):"; printf '  %s\n' "${conflicted[@]}"; fi
   git push -q --force-with-lease origin "$TARGET"
 fi

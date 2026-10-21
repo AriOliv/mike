@@ -77,10 +77,11 @@ deploy/gke/scripts/update-preview.sh
    Usa sempre a branch do `origin`; se ela não estiver pushada, pula. A exceção
    é quem estiver em `LOCAL_OK` (hoje só `feat/radar-regulatorio`), que entra
    pelos commits locais com aviso.
-2. Resolve sozinho só os conflitos de acréscimo:
-   - `backend/schema.sql`, `app.ts`, `jobs/registry.ts`, `mikeApi.ts` e `mikeApi.contracts.test.ts`: mantém os dois lados (diff3, sem a base);
-   - `sentryPrivacy.ts` (back e front) e `scriptedDb.ts`: união das palavras;
-   - `AppSidebar.tsx`: fica o da integração. O menu mora em `app/lib/navItems.ts` desde o #8; o script avisa quem precisa acrescentar a própria linha ali.
+2. Resolve sozinho só os conflitos de acréscimo, sempre com diff3:
+   - `backend/schema.sql`, `app.ts`, `jobs/registry.ts`, `mikeApi.ts` e `mikeApi.contracts.test.ts`: os dois lados. O ledger de migrações sai reordenado;
+   - `sentryPrivacy.ts` (back e front) e `scriptedDb.ts`: união das palavras (`union-words.pl`);
+   - `navItems.ts` e o teste dele: união dos itens do menu na ordem do doc 05, Início · Pedidos · Esteira · Contratos · Prazos · Radar regulatório · Perguntar (`union-nav.py`);
+   - `AppSidebar.tsx`: por trecho, fica o lado que contém o outro (`superset.pl`).
 
    Uma branch com outro conflito, ou cujas migrações criam uma tabela que outra
    branch já cria, **fica de fora** e é nomeada no fim. As demais entram, e o
@@ -89,10 +90,8 @@ deploy/gke/scripts/update-preview.sh
 4. Faz o Cloud Build do commit, o apply no namespace `preview` e roda as migrações
    (db-init), o rollout e o seed.
 
-Conflito real que alguém já resolveu à mão é regravado pelo `git rerere`, que
-fica neste clone. Para ensinar uma resolução nova: faça o merge num worktree,
-resolva, rode `git rerere` e depois `git commit`. Daí em diante o script
-aplica a resolução sozinho.
+Conflito real que fica fora dessas regras não é resolvido aqui: a branch fica de
+fora e o dono rebaseia na `integration/harvey`.
 
 Variáveis: `RESET_DB=1` recria o banco do preview (sintético, re-seed), para quando uma branch reescreveu uma migração já aplicada; `BRANCHES="..."` troca a lista, `SKIP_MERGE=1` redeploya a branch como
 está, `SKIP_BUILD=1` reaproveita a imagem do commit.
