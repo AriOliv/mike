@@ -77,9 +77,14 @@ deploy/gke/scripts/update-preview.sh
    Usa sempre a branch do `origin`; se ela não estiver pushada, pula. A exceção
    é quem estiver em `LOCAL_OK` (hoje só `feat/radar-regulatorio`), que entra
    pelos commits locais com aviso.
-2. Resolve sozinho só os conflitos de "os dois lados acrescentaram uma linha" em
-   `backend/schema.sql`, `backend/src/app.ts` e `backend/src/jobs/registry.ts`.
-   Em qualquer outro conflito ele para, sem push, e diz qual branch conflitou com qual.
+2. Resolve sozinho só os conflitos de acréscimo:
+   - `backend/schema.sql`, `app.ts`, `jobs/registry.ts`, `mikeApi.ts` e `mikeApi.contracts.test.ts`: mantém os dois lados (diff3, sem a base);
+   - `sentryPrivacy.ts` (back e front) e `scriptedDb.ts`: união das palavras;
+   - `AppSidebar.tsx`: fica o da integração. O menu mora em `app/lib/navItems.ts` desde o #8; o script avisa quem precisa acrescentar a própria linha ali.
+
+   Uma branch com outro conflito, ou cujas migrações criam uma tabela que outra
+   branch já cria, **fica de fora** e é nomeada no fim. As demais entram, e o
+   dono rebaseia na `integration/harvey`.
 3. Faz push de `integration/harvey`, que é gerada e nunca editada à mão.
 4. Faz o Cloud Build do commit, o apply no namespace `preview` e roda as migrações
    (db-init), o rollout e o seed.

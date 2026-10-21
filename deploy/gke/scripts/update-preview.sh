@@ -10,8 +10,9 @@
 #   SKIP_MERGE=1 deploy/gke/scripts/update-preview.sh                # redeploy HEAD of the branch
 #   SKIP_BUILD=1 ...                                                 # reuse the image of that commit
 #
-# Stops on the first merge conflict and names the two branches: whoever owns
-# the later branch rebases it on the earlier one; nothing is pushed then.
+# A branch with a real merge conflict, or whose migrations create a table an
+# earlier branch already creates, is left out (the others still ship) and
+# named at the end: its owner rebases it on integration/harvey.
 # Never touches namespace staging (except the shared Gateway, which only the
 # staging overlay applies).
 set -euo pipefail
@@ -27,6 +28,8 @@ BRANCHES="${BRANCHES:-infra/gke-staging feat/card-events feat/ui-verdict feat/ui
 # Branches allowed to come from a LOCAL ref while their owner has not pushed
 # yet (committed work only; uncommitted changes in their worktrees never enter).
 LOCAL_OK="${LOCAL_OK:-feat/radar-regulatorio}"
+# kept outside the checkout (the merges rewrite deploy/gke)
+UNION=$(mktemp); cp "$ROOT/deploy/gke/scripts/union-words.pl" "$UNION"
 REG="southamerica-east1-docker.pkg.dev/$P/mike"
 
 git diff --quiet && git diff --cached --quiet || { echo "working tree is dirty; commit or stash first"; exit 1; }
@@ -34,34 +37,68 @@ git fetch -q origin
 
 if [ "${SKIP_MERGE:-0}" != 1 ]; then
   git checkout -q -B "$TARGET" "origin/$BASE"
-  merged=() skipped=()
+  merged=() skipped=() conflicted=() nolink=()
+  # tables every migration creates; a branch whose migrations create a table
+  # some earlier migration already creates is left out (create-if-not-exists
+  # would silently keep the first shape)
+  tables_of() { git grep -hioE "create table if not exists public\.[a-z_]+" "$1" -- backend/migrations \
+                  | sed -E 's/.*public\.//' | tr 'A-Z' 'a-z' | sort -u; }
   for b in $BRANCHES; do
     # the pushed branch; a local one only when listed in LOCAL_OK
     if git rev-parse -q --verify "origin/$b" >/dev/null; then ref="origin/$b"
     elif [[ " $LOCAL_OK " == *" $b "* ]] && git rev-parse -q --verify "refs/heads/$b" >/dev/null; then
       ref="$b"; echo "using LOCAL $b (not pushed)"
     else skipped+=("$b"); continue; fi
+    before=$(tables_of HEAD)
     # rerere replays conflict resolutions already recorded on this machine
     # (resolve once by hand in a worktree, `git rerere`, commit: next run is clean)
-    if ! git -c rerere.enabled=true -c rerere.autoupdate=true merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
+    if ! git -c rerere.enabled=true -c rerere.autoupdate=true -c merge.conflictStyle=diff3 merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
       files=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
-      if [ -z "$files" ]; then git commit -q --no-edit; echo "merged $ref (recorded resolution)"; merged+=("$ref"); continue; fi
+      if [ -z "$files" ]; then git commit -q --no-edit; echo "merged $ref (recorded resolution)"
+      else
       # The only conflicts we resolve here are "both sides appended a line"
       # in the registries every feature touches; anything else is real.
-      trivial="backend/schema.sql backend/src/app.ts backend/src/jobs/registry.ts"
+      trivial="backend/schema.sql backend/src/app.ts backend/src/jobs/registry.ts frontend/src/app/lib/mikeApi.ts frontend/src/app/lib/mikeApi.contracts.test.ts"
+      # the sidebar moved to app/lib/navItems.ts (#8): keep the integration's
+      # sidebar; the branch's menu link is missing until its owner adds a line
+      # to navItems.ts (the page itself still works by URL)
+      ours="frontend/src/app/components/shared/AppSidebar.tsx"
+      # one-line word lists every feature appends to
+      words="backend/src/lib/observability/sentryPrivacy.ts frontend/src/shared/lib/sentryPrivacy.ts backend/src/__tests__/helpers/scriptedDb.ts"
+      real=""
+      for f in $files; do case " $trivial $ours $words " in *" $f "*) ;; *) real="$real $f";; esac; done
+      if [ -n "$real" ]; then
+        git merge --abort; conflicted+=("$b:$real"); echo "LEFT OUT $b: conflict in$real"; continue
+      fi
       for f in $files; do
-        case " $trivial " in *" $f "*) ;; *) git merge --abort
-          echo "CONFLICT merging $b: $files"; echo "already merged: ${merged[*]:-none}"; exit 2;; esac
-      done
-      for f in $files; do
-        perl -0pi -e 's/^<<<<<<< [^\n]*\n(.*?)^=======\n(.*?)^>>>>>>> [^\n]*\n/$1$2/gms' "$f"
+        case " $ours " in
+          *" $f "*) git checkout -q --ours -- "$f"; nolink+=("$b") ;;
+        esac
+        case " $words " in
+          *" $f "*) perl -0pi "$UNION" "$f" ;;
+        esac
+        case " $ours $words " in *" $f "*) ;;
+          # diff3 hunks: ours, then theirs, dropping the common base (keeps
+          # a closing brace the base shares from being lost)
+          *) perl -0pi -e 's/^<<<<<<< [^\n]*\n(.*?)^\|\|\|\|\|\|\| [^\n]*\n.*?^=======\n(.*?)^>>>>>>> [^\n]*\n/$1$2/gms' "$f" ;;
+        esac
       done
       git add $files && git commit -q --no-edit
       echo "merged $ref (kept both sides in: $files)"
+      fi
+    fi
+    dup=$(comm -12 <(echo "$before") <(git diff --name-only HEAD^1 HEAD -- backend/migrations \
+            | xargs -I{} git grep -hioE "create table if not exists public\.[a-z_]+" HEAD -- {} \
+            | sed -E 's/.*public\.//' | tr 'A-Z' 'a-z' | sort -u))
+    if [ -n "$dup" ]; then
+      git reset -q --hard HEAD^1; conflicted+=("$b: table(s) already created by an earlier branch: $(echo $dup)")
+      echo "LEFT OUT $b: its migrations re-create $(echo $dup)"; continue
     fi
     merged+=("$ref")
   done
   echo "merged: ${merged[*]:-none}"; [ ${#skipped[@]} -eq 0 ] || echo "skipped (not found): ${skipped[*]}"
+  [ ${#nolink[@]} -eq 0 ] || echo "no menu link yet (add a line to app/lib/navItems.ts): ${nolink[*]}"
+  if [ ${#conflicted[@]} -gt 0 ]; then echo "LEFT OUT (owner must rebase/rename):"; printf '  %s\n' "${conflicted[@]}"; fi
   git push -q --force-with-lease origin "$TARGET"
 fi
 
