@@ -13,9 +13,8 @@
 
 import type { Db } from "../../lib/supabase";
 import { internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
-import { LANES, listPipeline, type PipelineCard } from "../contracts/contracts.service";
+import { countAgentReviews, LANES, listPipeline, type PipelineCard } from "../contracts/contracts.service";
 import { visibleScanIds } from "../regulatory/regulatory.service";
-import { countAgentReviews } from "./dashboard.reviews";
 
 export type Caller = { userId: string; userEmail?: string | null };
 

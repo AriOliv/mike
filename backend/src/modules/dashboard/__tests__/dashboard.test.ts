@@ -4,12 +4,12 @@ import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 const contracts = vi.hoisted(() => ({
     LANES: ["entrada", "triagem", "revisao", "negociacao", "assinatura", "arquivado"] as const,
     listPipeline: vi.fn(),
+    countAgentReviews: vi.fn(),
+    REVIEW_AGENTS: ["revisor"] as const,
 }));
 vi.mock("../../contracts/contracts.service", () => contracts);
 const regulatory = vi.hoisted(() => ({ visibleScanIds: vi.fn() }));
 vi.mock("../../regulatory/regulatory.service", () => regulatory);
-const reviewsMod = vi.hoisted(() => ({ countAgentReviews: vi.fn(), REVIEW_AGENTS: ["revisor"] as const }));
-vi.mock("../dashboard.reviews", () => reviewsMod);
 
 import { computeDashboard, DEFAULT_ASSUMPTIONS, getDashboard, parseDashboardQuery } from "../dashboard.service";
 import { periodStart, weekOf } from "../dashboard.metrics";
@@ -231,7 +231,7 @@ describe("getDashboard", () => {
     beforeEach(() => {
         contracts.listPipeline.mockReset();
         regulatory.visibleScanIds.mockReset();
-        reviewsMod.countAgentReviews.mockReset().mockResolvedValue(0);
+        contracts.countAgentReviews.mockReset().mockResolvedValue(0);
     });
 
     const MISSING = { code: "PGRST205", message: "missing" };
@@ -265,7 +265,7 @@ describe("getDashboard", () => {
         expect(fake.calls[10].filters).toContainEqual(["in", "scan_id", ["s1"]]);
         // The reviewed count comes from the one shared function, over the
         // visible contracts and exactly the period's window.
-        expect(reviewsMod.countAgentReviews).toHaveBeenCalledWith(fake.db, ["p1"], periodStart(NOW, 30), NOW.toISOString());
+        expect(contracts.countAgentReviews).toHaveBeenCalledWith(fake.db, ["p1"], periodStart(NOW, 30), NOW.toISOString());
         fake.done();
     });
 
@@ -301,7 +301,7 @@ describe("getDashboard", () => {
                 ],
             },
         ]);
-        reviewsMod.countAgentReviews.mockResolvedValue(2);
+        contracts.countAgentReviews.mockResolvedValue(2);
         const result = await getDashboard(fake.db, caller, { period: "30" }, NOW);
         if (!result.ok) throw new Error("expected ok");
         expect(result.data.agents.contracts_reviewed_by_agents).toBe(2);

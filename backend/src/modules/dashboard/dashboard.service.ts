@@ -11,4 +11,4 @@ export {
     type Caller,
     type Dashboard,
 } from "./dashboard.metrics";
-export { countAgentReviews, REVIEW_AGENTS } from "./dashboard.reviews";
+export { countAgentReviews, REVIEW_AGENTS } from "../contracts/contracts.service";
