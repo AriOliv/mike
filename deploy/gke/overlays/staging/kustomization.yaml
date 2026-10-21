@@ -45,6 +45,13 @@ patches:
       - op: replace
         path: /spec/addresses/0/value
         value: mike-staging-ip
+  # LB access log (who reached the real-contracts environment, from where);
+  # set on the policy so the Gateway controller keeps it on
+  - target: { kind: GCPBackendPolicy, name: frontend-iap }
+    patch: |-
+      - op: add
+        path: /spec/default/logging
+        value: { enabled: true, sampleRate: 1000000 }
   # the LiteLLM key for the backend only, from the Secret the LiteLLM session made
   - target: { kind: Deployment, name: backend }
     patch: |-
