@@ -122,6 +122,13 @@ describe("RequestSteps", () => {
         rerender(<RequestSteps step="concluido" />);
         expect(screen.queryByRole("listitem", { current: "step" })).not.toBeInTheDocument();
     });
+
+    it("never shows a cancelled request as Concluído", () => {
+        render(<RequestSteps step="concluido" cancelled />);
+        expect(screen.getByText("Cancelado")).toBeInTheDocument();
+        expect(screen.queryByText("Concluído")).not.toBeInTheDocument();
+        expect(screen.queryByText("Assinatura")).not.toBeInTheDocument();
+    });
 });
 
 describe("RequestConversation", () => {

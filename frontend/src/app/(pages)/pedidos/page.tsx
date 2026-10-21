@@ -174,13 +174,17 @@ export default function PedidosPage() {
                                             <span className="font-mono text-[11px] text-gray-500">{item.code}</span>
                                             <span className="break-words text-sm text-gray-900">{item.title}</span>
                                         </span>
-                                        <RequestSteps step={stepOf(item)} />
+                                        <RequestSteps step={stepOf(item)} cancelled={item.status === "cancelado"} />
                                         <span className="text-[11px] text-gray-500">
                                             {item.status === "aguardando_solicitante" ? (
                                                 <span className="font-medium text-amber-700">O Legal fez uma pergunta · </span>
                                             ) : null}
                                             {item.assignee_name ? `${item.assignee_name} · ` : ""}
-                                            {item.status === "entregue" ? "entregue" : `prazo ${formatDate(item.due_at)}`}
+                                            {item.status === "entregue"
+                                                ? "entregue"
+                                                : item.status === "cancelado"
+                                                  ? "cancelado"
+                                                  : `prazo ${formatDate(item.due_at)}`}
                                         </span>
                                     </button>
                                 </li>

@@ -107,14 +107,18 @@ export default function PedidoPage({ params }: Props) {
                         {r.counterparty ? ` · ${r.counterparty}` : ""} · pedido em {formatDate(r.created_at)}
                     </p>
 
-                    <RequestSteps step={r.step} className="mt-4" />
+                    <RequestSteps step={r.step} cancelled={r.status === "cancelado"} className="mt-4" />
 
                     <dl className="mt-5 grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
                         <dt className="text-gray-500">Quem cuida</dt>
                         <dd className="text-gray-900">{r.assignee_name ?? "o Legal está distribuindo"}</dd>
                         <dt className="text-gray-500">Prazo</dt>
                         <dd className="text-gray-900">
-                            {closed ? "encerrado" : `${formatDate(r.due_at)} · ${slaText(r.sla, r.due_at)}`}
+                            {r.status === "cancelado"
+                                ? "pedido cancelado"
+                                : closed
+                                  ? "encerrado"
+                                  : `${formatDate(r.due_at)} · ${slaText(r.sla, r.due_at)}`}
                         </dd>
                         {r.audience === "guest" ? (
                             <>
