@@ -104,10 +104,18 @@ O fork estava 828 commits atrás de `open-legal-products/mike`. Fiz **merge** (s
 
 **Docs.** PR #3 (draft, base `sync/upstream-2026-10`) versiona este `docs/product/` no fork; gitleaks não encontrou nada.
 
+## Rodada 3 (2026-10-20): advisory novo e docs públicos
+
+**dependency-audit.** Os PRs filhos (#4–#7) falhavam só em dependency-audit (frontend, word-addin) por causa do GHSA-587h-7wmj-h5pm (`launch-editor` ≤ 2.14.1 e as versões do `vite` que o embutem), publicado no mesmo dia. O upstream ainda não tinha corrigido, então mexi só nos lockfiles, dentro dos ranges já declarados (commit `4b41ca2d`): no frontend, `vite` 8.2.2 → 8.3.4 e o `vite` do `@ladle/react` 6.4.3 → 6.4.4; no word-addin, `launch-editor` 2.14.1 → 2.14.2. Sem allowlist. O audit gate passa nos quatro workspaces da matriz, e os testes e o build do frontend e do word-addin passam. Para rodar de novo os checks dos PRs filhos sem reescrever as branches dos teammates: fechar e reabrir o PR **depois** que o GitHub recalcula `refs/pull/N/merge` (senão o run testa a base antiga).
+
+**Docs no fork (público).** Os docs que citam concorrentes (01, 05, 06, o `07-pedidos-orquestracao.md` original e a pasta de referências de terceiros) ficam só neste workspace, fora do fork. No PR #3: `01-pesquisa-competitiva.md` removido com commit normal, sem force-push (os commits antigos continuam acessíveis por SHA de qualquer forma, e a pesquisa usa só fontes públicas); `03-ux-spec.md` deixou de linkar o 01; o protótipo foi atualizado com a versão limpa pelo Prism; e entrou uma versão do `07-pedidos-orquestracao.md` sem os links para 05/06. gitleaks: nada encontrado.
+
 ## Pendências
 
 - [ ] Revisar e ensaiar a migração do banco de produção (seção acima) **antes** de fazer merge do PR.
 - [x] ~~`SYNC_TOKEN`~~: decidido evitar token pessoal; a rotina usa `workflow_dispatch`.
 - [ ] Migration de `user_id` uuid + FK nas tabelas do CLM.
+- [ ] `desktop/package-lock.json`: advisory high do `undici` (GHSA-rfgv-xxqx-mfg5, DoS via subprotocolo WebSocket). O desktop não entra na matriz do dependency-audit, então não quebra o CI; não mexemos por decisão. Resolver quando o upstream atualizar, ou com um bump do lockfile.
+- [ ] O fork é público: antes de copiar um doc daqui para `docs/product/` no fork, rodar `grep -i` pelos nomes de concorrentes e o gitleaks.
 - [ ] Converter `risk-rules.v1.yaml` em playbook; o dossiê passa a consumir os achados do playbook.
 - [ ] Acervo passa a usar o texto indexado do upstream.
