@@ -42,9 +42,11 @@ import {
     type RunProgressUpdate,
 } from "../../lib/queue/runProgress";
 import { type UserApiKeys } from "../../lib/llm";
+import { chunkArray } from "../../lib/arrays";
 import { extractRowColumns, finalizeCell } from "./tabular.extractRow";
 import { type ReviewRow } from "./tabular.rows";
 import {
+    CELL_ID_BATCH_SIZE,
     finishGeneration,
     parseCellContent,
     type Column,
@@ -132,11 +134,11 @@ export async function claimCellsForGeneration(args: {
             }
         }
     }
-    if (existingIds.length) {
+    for (const batch of chunkArray(existingIds, CELL_ID_BATCH_SIZE)) {
         const { error } = await db
             .from("tabular_cells")
             .update({ generation_id: generationId })
-            .in("id", existingIds);
+            .in("id", batch);
         if (error) throw new Error(error.message);
     }
     if (inserts.length) {

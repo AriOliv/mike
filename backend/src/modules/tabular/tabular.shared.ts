@@ -333,6 +333,14 @@ export type Column = {
 // carries the generation id releases it. These constants are shared by both so
 // the two paths agree on the timings.
 
+/**
+ * Most cell ids one `.in("id", …)` filter carries. The filter goes in the
+ * request URL, and a review's cells grow as rows × columns: 17 documents under
+ * 28 columns is ~18 KB of ids, which the gateway answers with 414. 100 uuids
+ * keep a request near 4 KB.
+ */
+export const CELL_ID_BATCH_SIZE = 100;
+
 /** Lease duration requested on begin/renew. */
 export const TABULAR_GENERATION_LEASE_SECONDS = 300;
 /** How often a holder renews its lease — comfortably inside the lease window. */
