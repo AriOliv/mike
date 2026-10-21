@@ -90,6 +90,9 @@ describe("getHomeSummary", () => {
                 ],
             },
             { table: "watched_folders", data: null },
+            // Last 90 days, then since the last visit.
+            { table: "agent_runs", data: [{ project_id: "p1" }] },
+            { table: "contract_reviews", data: [{ project_id: "p1" }, { project_id: "p2" }, { project_id: "p3" }] },
             { table: "agent_runs", data: [{ project_id: "p1" }] },
             { table: "contract_reviews", data: [{ project_id: "p1" }, { project_id: "p2" }] },
             {
@@ -130,9 +133,11 @@ describe("getHomeSummary", () => {
             ficha: { verified: 1, total: 2 },
             request: { id: "req-1", code: "LEG-0142" },
         });
-        expect(home.greeting).toEqual({ reviewed: 2, failed: 1, notices_closing: 1, ready: 1 });
-        // The count reads the shared source, since the last visit.
-        expect(fake.calls[11].filters).toContainEqual(["gte", "finished_at", "2026-10-19T09:00:00Z"]);
+        expect(home.greeting).toEqual({ reviewed: 2, reviewed_90d: 3, failed: 1, notices_closing: 1, ready: 1 });
+        // The shared count, in the legal dashboard's default window, then since the last visit.
+        expect(fake.calls[11].filters).toContainEqual(["gte", "finished_at", "2026-07-22T12:00:00.000Z"]);
+        expect(fake.calls[11].filters).toContainEqual(["lt", "finished_at", "2026-10-20T12:00:00.000Z"]);
+        expect(fake.calls[13].filters).toContainEqual(["gte", "finished_at", "2026-10-19T09:00:00Z"]);
         expect(home.counters).toEqual({ ready: 1, mine: 1, notices_30d: 1, folders: 1 });
         // A deadline already past is not "closing".
         expect(home.deadlines).toEqual([
@@ -157,12 +162,17 @@ describe("getHomeSummary", () => {
             { table: "card_events", data: [] },
             { table: "watched_folders", data: null },
             { table: "agent_runs", data: [] },
-            { table: "contract_reviews", data: [] },
+            { table: "contract_reviews", data: [{ project_id: "p1" }] },
             { table: "card_events", data: [] },
         ]);
         const result = await getHomeSummary(fake.db, caller, NOW, "o1");
-        expect(result).toMatchObject({ ok: true, data: { reviews: [{ id: "r2", ficha: null }] } });
+        expect(result).toMatchObject({
+            ok: true,
+            data: { reviews: [{ id: "r2", ficha: null }], greeting: { reviewed: 1, reviewed_90d: 1 } },
+        });
         expect(fake.calls[2].filters).toContainEqual(["in", "project_id", ["p2"]]);
+        // The count matches the legal dashboard, which reads every card on the board.
+        expect(fake.calls[9].filters).toContainEqual(["in", "project_id", ["p1", "p2"]]);
         fake.done();
     });
 

@@ -82,7 +82,7 @@ function review(overrides: Partial<HomeReview>): HomeReview {
 function summary(reviews: HomeReview[], extra: Partial<HomeSummary> = {}): HomeSummary {
     return {
         since: "2026-10-19T09:00:00Z",
-        greeting: { reviewed: reviews.length, failed: 0, notices_closing: 1, ready: 1 },
+        greeting: { reviewed: reviews.length, reviewed_90d: reviews.length + 3, failed: 0, notices_closing: 1, ready: 1 },
         counters: { ready: 1, mine: 1, notices_30d: 1, folders: 1 },
         reviews,
         deadlines: [
@@ -137,7 +137,7 @@ describe("HomeView", () => {
         );
         render(<HomeView />);
         await waitFor(() => expect(api.getHomeSummary).toHaveBeenCalledWith("personal"));
-        expect(await screen.findByText(/Revisei 3 contratos para você desde sua última visita/)).toBeInTheDocument();
+        expect(await screen.findByText(/Revisei 6 contratos nos últimos 90 dias, 3 novos desde sua última visita/)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Prontos p\/ revisar/ })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Avisos em 30 dias/ })).toHaveTextContent("o mais próximo em 12 dias");
         expect(screen.getByText("1", { selector: "span.text-amber-700" })).toBeInTheDocument();
@@ -170,7 +170,7 @@ describe("HomeView", () => {
     });
 
     it("teaches the first step when nothing was reviewed", async () => {
-        api.getHomeSummary.mockResolvedValue(summary([], { deadlines: [], activity: [], greeting: { reviewed: 0, failed: 0, notices_closing: 0, ready: 0 } }));
+        api.getHomeSummary.mockResolvedValue(summary([], { deadlines: [], activity: [], greeting: { reviewed: 0, reviewed_90d: 0, failed: 0, notices_closing: 0, ready: 0 } }));
         render(<HomeView />);
         expect(await screen.findByText("Ainda não revisei nenhum contrato.")).toBeInTheDocument();
         expect(screen.getByText("Nenhum contrato revisado ainda")).toBeInTheDocument();

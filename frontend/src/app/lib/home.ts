@@ -12,20 +12,23 @@ export function contracts(n: number): string {
 }
 
 /**
- * The first line of the home screen: what the agents did since the last
- * visit, in the first person and with the next step.
+ * The first line of the home screen: how many contracts the agents reviewed in
+ * the last 90 days (the legal dashboard's default period and count, so the two
+ * match), how many of those are new since the last visit, and the next step.
  */
 export function greeting(home: Pick<HomeSummary, "since" | "greeting" | "reviews">): {
     lead: string;
     detail: string | null;
 } {
-    const { reviewed, failed, notices_closing, ready } = home.greeting;
-    if (home.reviews.length === 0)
+    const { reviewed, reviewed_90d, failed, notices_closing, ready } = home.greeting;
+    if (home.reviews.length === 0 && reviewed_90d === 0)
         return {
             lead: "Ainda não revisei nenhum contrato.",
             detail: "Envie contratos ou monitore uma pasta e eu reviso cada um assim que chegar.",
         };
+    const working = home.reviews.filter((r) => r.status === "queued" || r.status === "running").length;
     const parts: string[] = [];
+    if (working > 0) parts.push(`estou revisando ${contracts(working)} agora`);
     if (notices_closing > 0)
         parts.push(
             `${notices_closing} ${notices_closing === 1 ? "aviso prévio fecha" : "avisos prévios fecham"} em até 30 dias`,
@@ -33,16 +36,14 @@ export function greeting(home: Pick<HomeSummary, "since" | "greeting" | "reviews
     if (ready > 0) parts.push(`${contracts(ready)} ${ready === 1 ? "espera" : "esperam"} sua revisão`);
     if (failed > 0) parts.push(`${failed === 1 ? "1 falhou" : `${failed} falharam`} e ${failed === 1 ? "precisa" : "precisam"} de outra tentativa`);
     const detail = parts.length ? `${capitalize(parts.join(", "))}.` : null;
-    if (reviewed > 0)
-        return {
-            lead: `Revisei ${contracts(reviewed)} para você ${home.since ? "desde sua última visita" : "até agora"}.`,
-            detail,
-        };
-    const working = home.reviews.filter((r) => r.status === "queued" || r.status === "running").length;
-    if (working > 0) return { lead: `Estou revisando ${contracts(working)} agora.`, detail };
-    if (!home.since)
-        return { lead: "Conecte uma pasta ou envie contratos e eu reviso cada um.", detail };
-    return { lead: "Nada novo desde sua última visita.", detail };
+    if (reviewed_90d === 0)
+        return { lead: "Não revisei nenhum contrato nos últimos 90 dias.", detail };
+    const news = !home.since
+        ? ""
+        : reviewed === 0
+          ? ", nenhum novo desde sua última visita"
+          : `, ${reviewed} ${reviewed === 1 ? "novo" : "novos"} desde sua última visita`;
+    return { lead: `Revisei ${contracts(reviewed_90d)} nos últimos 90 dias${news}.`, detail };
 }
 
 /** When the nearest notice deadline closes: "hoje", "amanhã" or "em N dias". */

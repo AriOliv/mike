@@ -50,8 +50,9 @@ function review(overrides: Partial<HomeReview>): HomeReview {
     };
 }
 
-const g = (reviewed: number, failed = 0, notices_closing = 0, ready = 0) => ({
+const g = (reviewed: number, failed = 0, notices_closing = 0, ready = 0, reviewed_90d = reviewed) => ({
     reviewed,
+    reviewed_90d,
     failed,
     notices_closing,
     ready,
@@ -65,23 +66,26 @@ describe("greeting", () => {
         });
     });
 
-    it("counts what is new since the last visit, with what needs the person", () => {
-        expect(greeting({ since: "x", greeting: g(10, 1, 2, 3), reviews: [review({})] })).toEqual({
-            lead: "Revisei 10 contratos para você desde sua última visita.",
+    it("leads with the dashboard's 90-day count, what is new since the last visit, and what needs the person", () => {
+        expect(greeting({ since: "x", greeting: g(10, 1, 2, 3, 14), reviews: [review({})] })).toEqual({
+            lead: "Revisei 14 contratos nos últimos 90 dias, 10 novos desde sua última visita.",
             detail: "2 avisos prévios fecham em até 30 dias, 3 contratos esperam sua revisão, 1 falhou e precisa de outra tentativa.",
         });
+        expect(greeting({ since: "x", greeting: g(1, 0, 0, 0, 1), reviews: [] }).lead).toBe(
+            "Revisei 1 contrato nos últimos 90 dias, 1 novo desde sua última visita.",
+        );
         expect(greeting({ since: null, greeting: g(1, 2, 1, 1), reviews: [review({})] })).toEqual({
-            lead: "Revisei 1 contrato para você até agora.",
+            lead: "Revisei 1 contrato nos últimos 90 dias.",
             detail: "1 aviso prévio fecha em até 30 dias, 1 contrato espera sua revisão, 2 falharam e precisam de outra tentativa.",
         });
     });
 
     it("says nothing is new, with or without pending work", () => {
-        expect(greeting({ since: "x", greeting: g(0), reviews: [review({})] })).toEqual({
-            lead: "Nada novo desde sua última visita.",
+        expect(greeting({ since: "x", greeting: g(0, 0, 0, 0, 6), reviews: [review({})] })).toEqual({
+            lead: "Revisei 6 contratos nos últimos 90 dias, nenhum novo desde sua última visita.",
             detail: null,
         });
-        expect(greeting({ since: "x", greeting: g(0, 0, 0, 2), reviews: [review({})] }).detail).toBe(
+        expect(greeting({ since: "x", greeting: g(0, 0, 0, 2, 6), reviews: [review({})] }).detail).toBe(
             "2 contratos esperam sua revisão.",
         );
     });
@@ -167,13 +171,17 @@ describe("formatting", () => {
     });
 });
 
-describe("greeting without new reviews", () => {
-    it("says what is running now, teaches on a first visit, and otherwise reports nothing new", () => {
+describe("greeting with work in progress", () => {
+    it("keeps the reviewed count first and says what is running now as the next line", () => {
         const running = [review({ status: "running" }), review({ id: "q", status: "queued" })];
-        expect(greeting({ since: "x", greeting: g(0), reviews: running }).lead).toBe("Estou revisando 2 contratos agora.");
-        expect(greeting({ since: null, greeting: g(0), reviews: [review({})] }).lead).toBe(
-            "Conecte uma pasta ou envie contratos e eu reviso cada um.",
-        );
+        expect(greeting({ since: "x", greeting: g(0, 0, 0, 1, 6), reviews: running })).toEqual({
+            lead: "Revisei 6 contratos nos últimos 90 dias, nenhum novo desde sua última visita.",
+            detail: "Estou revisando 2 contratos agora, 1 contrato espera sua revisão.",
+        });
+        expect(greeting({ since: "x", greeting: g(0), reviews: running })).toEqual({
+            lead: "Não revisei nenhum contrato nos últimos 90 dias.",
+            detail: "Estou revisando 2 contratos agora.",
+        });
     });
 });
 

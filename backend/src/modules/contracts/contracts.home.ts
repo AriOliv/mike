@@ -13,6 +13,8 @@ import type { CardEvent } from "./contracts.events";
 
 const ID_CHUNK = 200;
 const NOTICE_WINDOW_DAYS = 30;
+/** The legal dashboard's default period: the greeting's count matches its reviewed tile. */
+export const DASHBOARD_PERIOD_DAYS = 90;
 const REVIEW_LIMIT = 200;
 const ACTIVITY_LIMIT = 30;
 
@@ -64,7 +66,7 @@ export type HomeDeadline = {
 
 export type HomeSummary = {
     since: string | null;
-    greeting: { reviewed: number; failed: number; notices_closing: number; ready: number };
+    greeting: { reviewed: number; reviewed_90d: number; failed: number; notices_closing: number; ready: number };
     counters: { ready: number; mine: number; notices_30d: number; folders: number };
     reviews: HomeReview[];
     deadlines: HomeDeadline[];
@@ -214,13 +216,14 @@ export async function getHomeSummary(
     try {
         const since = await touchVisit(db, caller.userId, now);
         const ids = await listAccessibleProjectIds(caller.userId, caller.userEmail, db);
-        const projects = await inChunks<ProjectRow>(ids, (slice) =>
+        const accessible = await inChunks<ProjectRow>(ids, (slice) =>
             db
                 .from("projects")
                 .select("id, org_id, name, counterparty, lane, requester_name, deadline, watched_folder_id")
                 .in("id", slice)
                 .is("archived_at", null),
-        ).then((rows) => rows.filter((p) => workspaceMatches(workspace, p.org_id)));
+        );
+        const projects = accessible.filter((p) => workspaceMatches(workspace, p.org_id));
         const byId = new Map(projects.map((p) => [p.id, p]));
         const visible = projects.map((p) => p.id);
 
@@ -375,7 +378,15 @@ export async function getHomeSummary(
 
         const sinceMs = since ? Date.parse(since) : 0;
         const newSince = (iso: string | null) => !!iso && Date.parse(iso) > sinceMs;
-        const reviewed = await countAgentReviews(db, visible, since);
+        // The legal dashboard's number, so the two can be checked against each other:
+        // same count, its default window and its scope (every card on the board, any
+        // workspace). What is new since the last visit is a part of it.
+        const onBoard = accessible.filter((p) => p.lane).map((p) => p.id);
+        const periodStart = new Date(now.getTime() - DASHBOARD_PERIOD_DAYS * 86_400_000).toISOString();
+        const nowIso = now.toISOString();
+        const reviewed90 = await countAgentReviews(db, onBoard, periodStart, nowIso);
+        const reviewed =
+            since && Date.parse(since) > Date.parse(periodStart) ? await countAgentReviews(db, onBoard, since, nowIso) : reviewed90;
         const failed = reviewRows.filter((r) => r.status === "failed" && newSince(r.updated_at)).length;
 
         const activityRows = await inChunks<CardEvent>(visible, (slice) =>
@@ -399,6 +410,7 @@ export async function getHomeSummary(
             since,
             greeting: {
                 reviewed,
+                reviewed_90d: reviewed90,
                 failed,
                 notices_closing: notices30,
                 ready: reviews.filter((r) => r.status === "ready").length,

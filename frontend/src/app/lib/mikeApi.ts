@@ -4618,7 +4618,7 @@ export interface HomeDeadline {
 export interface HomeSummary {
     /** When the caller last opened the home screen; null on a first visit. */
     since: string | null;
-    greeting: { reviewed: number; failed: number; notices_closing: number; ready: number };
+    greeting: { reviewed: number; reviewed_90d: number; failed: number; notices_closing: number; ready: number };
     counters: { ready: number; mine: number; notices_30d: number; folders: number };
     reviews: HomeReview[];
     deadlines: HomeDeadline[];
