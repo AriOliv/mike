@@ -124,3 +124,24 @@ describe("e-mails", () => {
         delete process.env.APP_BASE_URL;
     });
 });
+
+describe("messages the user reads", () => {
+    it("every failure detail in the module is Portuguese, written for the user", async () => {
+        const { readFileSync, readdirSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const dir = join(__dirname, "..");
+        const details = readdirSync(dir)
+            .filter((f) => f.endsWith(".ts"))
+            .flatMap((f) => [
+                ...readFileSync(join(dir, f), "utf8").matchAll(/(?:failure\(\s*"[a-z_]+",\s*|detail:\s*)([`"])(.*?)\1/g),
+            ])
+            .map((m) => m[2]);
+        expect(details.length).toBeGreaterThan(15);
+        for (const detail of details) {
+            // No English sentence, no snake_case field name, ends like a sentence.
+            expect(detail, detail).not.toMatch(/\b(must|should|required|invalid|not found|the|is)\b/i);
+            expect(detail, detail).not.toMatch(/[a-z]+_[a-z]+/);
+            expect(detail, detail).toMatch(/[.?!]$/);
+        }
+    });
+});

@@ -161,7 +161,7 @@ describe("createRequest", () => {
         });
         expect(
             await createRequest(w.db, REQUESTER, { kind: "parecer", context: "x", needed_by: "amanhã" }),
-        ).toMatchObject({ ok: false, kind: "validation" });
+        ).toMatchObject({ ok: false, kind: "validation", detail: "Escolha uma data válida em “Precisa até”." });
         expect(
             await createRequest(w.db, REQUESTER, { kind: "parecer", context: "x", document_ids: Array.from({ length: 6 }, () => uuid()) }),
         ).toMatchObject({ ok: false, kind: "validation" });
@@ -363,7 +363,11 @@ describe("the team works the request", () => {
             ok: false,
             kind: "forbidden",
         });
-        expect(await decideTriage(w.db, HEAD, view.id, { decision: "maybe" })).toMatchObject({ ok: false, kind: "validation" });
+        expect(await decideTriage(w.db, HEAD, view.id, { decision: "maybe" })).toMatchObject({
+            ok: false,
+            kind: "validation",
+            detail: "Escolha aceitar, ajustar ou recusar a triagem.",
+        });
 
         const accepted = await decideTriage(w.db, HEAD, view.id, { decision: "accepted" });
         expect(accepted).toMatchObject({ ok: true, data: { kind: "revisao", status: "em_andamento", lane: "triagem" } });

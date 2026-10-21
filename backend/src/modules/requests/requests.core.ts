@@ -164,7 +164,7 @@ function validateCreate(input: CreateRequestInput):
     let neededBy: string | null = null;
     if (input.needed_by !== undefined && input.needed_by !== null && input.needed_by !== "") {
         if (typeof input.needed_by !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input.needed_by)) {
-            return { ok: false, detail: "A data precisa estar no formato AAAA-MM-DD." };
+            return { ok: false, detail: "Escolha uma data válida em “Precisa até”." };
         }
         neededBy = input.needed_by;
     }
@@ -847,7 +847,7 @@ export async function decideTriage(
         return getTeamView(db, caller, requestId);
     }
     if (decision !== "accepted" && decision !== "edited" && decision !== "rejected") {
-        return failure("validation", "decision must be accepted, edited, rejected or reopened");
+        return failure("validation", "Escolha aceitar, ajustar ou recusar a triagem.");
     }
 
     const applied: Record<string, unknown> = {};
