@@ -4565,6 +4565,127 @@ export async function getCardActivity(projectId: string, limit = 50): Promise<Ca
     return apiRequest(`/projects/${projectId}/activity?limit=${limit}`);
 }
 
+// ── Home ("Início"): automatic review of watched folders ────────────────────
+export type ContractReviewStatus = "queued" | "running" | "ready" | "done" | "failed";
+
+export interface HomeReview {
+    id: string;
+    project_id: string;
+    project_name: string;
+    counterparty: string | null;
+    lane: string | null;
+    document_id: string;
+    filename: string | null;
+    status: ContractReviewStatus;
+    /** What the agent is doing while it runs. */
+    step: "lendo" | "ficha" | "playbook" | null;
+    aligned: number;
+    needs_review: number;
+    deviates: number;
+    summary: string | null;
+    error: string | null;
+    assignee_email: string | null;
+    playbook_id: string | null;
+    playbook_run_id: string | null;
+    watched_folder_id: string | null;
+    requester_name: string | null;
+    deadline: string | null;
+    notice_deadline: string | null;
+    notice_days: number | null;
+    term_end: string | null;
+    /** The Ficha's headline: fields a person checked out of those that apply. */
+    ficha: { verified: number; total: number } | null;
+    /** The assignment agent's pick while nobody owns the review. */
+    suggested_assignee: string | null;
+    /** The owner's profile name, when they have one. */
+    assignee_name: string | null;
+    /** The request this contract came from (LEG-0142), for the link. */
+    request: { id: string; code: string } | null;
+    updated_at: string;
+}
+
+export interface HomeDeadline {
+    project_id: string;
+    project_name: string;
+    counterparty: string | null;
+    notice_deadline: string;
+    notice_days: number | null;
+    term_end: string | null;
+    auto_renewal: boolean | null;
+    days_left: number;
+}
+
+export interface HomeSummary {
+    /** When the caller last opened the home screen; null on a first visit. */
+    since: string | null;
+    greeting: { reviewed: number; reviewed_90d: number; failed: number; notices_closing: number; ready: number };
+    counters: { ready: number; mine: number; notices_30d: number; folders: number };
+    reviews: HomeReview[];
+    deadlines: HomeDeadline[];
+    activity: (CardEvent & { project_name: string })[];
+}
+
+export interface WatchedFolder {
+    id: string;
+    org_id: string | null;
+    name: string;
+    source: "upload" | "drive";
+    drive_folder_id: string | null;
+    drive_link: string | null;
+    playbook_id: string | null;
+    default_assignee_email: string | null;
+    active: boolean;
+    last_scanned_at: string | null;
+    created_at: string;
+    contracts?: number;
+}
+
+/** The home screen, narrowed to a workspace ("personal" or an organization id) when given. */
+export async function getHomeSummary(workspace?: string | null): Promise<HomeSummary> {
+    return apiRequest(workspace ? `/home?workspace=${encodeURIComponent(workspace)}` : "/home");
+}
+
+export async function listWatchedFolders(): Promise<WatchedFolder[]> {
+    return apiRequest("/watched-folders");
+}
+
+export async function createWatchedFolder(payload: {
+    name: string;
+    source?: "upload" | "drive";
+    drive_link?: string | null;
+    playbook_id?: string | null;
+    default_assignee_email?: string | null;
+    org_id?: string | null;
+}): Promise<WatchedFolder> {
+    return apiRequest("/watched-folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function watchProject(folderId: string, projectId: string): Promise<void> {
+    await apiRequest(`/watched-folders/${folderId}/projects/${projectId}`, { method: "PUT" });
+}
+
+/** Review the card's latest document now. */
+export async function requestContractReview(
+    projectId: string,
+): Promise<{ review_id: string; queued: boolean }> {
+    return apiRequest(`/projects/${projectId}/review`, { method: "POST" });
+}
+
+export async function updateContractReview(
+    reviewId: string,
+    payload: { status?: "done" | "ready"; assignee_email?: string | null },
+): Promise<{ id: string; status: ContractReviewStatus; assignee_email: string | null }> {
+    return apiRequest(`/contract-reviews/${reviewId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
 // ── Acervo: questions across the whole corpus ───────────────────────────────
 export interface AcervoSource {
     project_id: string | null;

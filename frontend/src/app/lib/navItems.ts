@@ -10,6 +10,8 @@
  * Ficha's columns.
  */
 
+import { DEFAULT_HOME } from "./authRedirects";
+
 export type NavIconKey =
     | "chat"
     | "ide"
@@ -28,6 +30,7 @@ export type NavItem = {
 };
 
 export const NAV_MAIN: readonly NavItem[] = [
+    { href: DEFAULT_HOME, label: "Início", icon: "tabular" },
     { href: "/pipeline", label: "Esteira", icon: "folder" },
     { href: "/contratos", label: "Contratos", icon: "tabular" },
     { href: "/radar", label: "Prazos", icon: "workflow" },

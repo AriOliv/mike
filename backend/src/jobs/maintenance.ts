@@ -5,6 +5,7 @@ import { backfillDocumentText, sweepStaleProcessingDocuments } from "../modules/
 import { sweepStaleGeneratingCells } from "../modules/tabular/tabular.service";
 import { expireDepartureArchives, purgeExpiredOrganizations } from "../modules/orgs/orgs.service";
 import { purgeExpiredSubagentRuns } from "../modules/chat/chat.service";
+import { scanWatchedFolders } from "../modules/contracts/contracts.service";
 
 /** Run recovery/expiry sweeps; errors are contained per sweep. */
 export async function runStaleWorkSweep(
@@ -29,6 +30,10 @@ export async function runStaleWorkSweep(
     });
     await purgeExpiredSubagentRuns(db).catch((err) => {
         logError("stale-sweep", err, { sweep: "subagent-runs" });
+    });
+    // Watched folders: queue a review for every document that arrived since.
+    await scanWatchedFolders(db).catch((err) => {
+        logError("stale-sweep", safeError(err), { sweep: "watched-folders" });
     });
     return { documents, cells };
 }

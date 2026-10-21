@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_HOME } from "@/app/lib/authRedirects";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -277,8 +278,8 @@ export default function VerifyMfaPage() {
 
 function safeNextPath(value: string | null) {
     if (!value || !value.startsWith("/") || value.startsWith("//")) {
-        return "/assistant";
+        return DEFAULT_HOME;
     }
-    if (value.startsWith("/verify-mfa")) return "/assistant";
+    if (value.startsWith("/verify-mfa")) return DEFAULT_HOME;
     return value;
 }
