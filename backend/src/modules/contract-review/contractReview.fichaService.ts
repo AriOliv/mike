@@ -10,10 +10,12 @@ import { extractDocxBodyText } from "../../lib/docxTrackedChanges";
 import { extractPdfText } from "../../lib/pdfText";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { getUserModelSettings } from "../user/user.service";
+import { recordCardEvent } from "../contracts/contracts.service";
 import {
     applyFieldDecision,
     correctionChoices,
     extractionPrompt,
+    fieldLabel,
     FICHA_FIELDS,
     validCorrection,
     fichaProgress,
@@ -232,6 +234,17 @@ export async function decideFichaField(
             comment,
         });
         if (error) throw error;
+        void recordCardEvent(db, {
+            projectId,
+            orgId: allowed.access.project?.org_id ?? null,
+            actorType: "user",
+            actorId: caller.userId,
+            actorName: by,
+            action: "field.updated",
+            field: fieldLabel(path),
+            before: field.value ?? null,
+            after: decided.value ?? null,
+        });
         return ok(view({ ...row, ...saved }));
     } catch (error) {
         if (error instanceof FichaChangedError)

@@ -67,6 +67,8 @@ const playbooks = vi.hoisted(() => ({
 vi.mock("../../playbooks/playbooks.service", () => playbooks);
 const documents = vi.hoisted(() => ({ applyTrackedEditsToDocument: vi.fn(), resolveEdit: vi.fn() }));
 vi.mock("../../documents/documents.service", () => documents);
+const events = vi.hoisted(() => ({ recordCardEvent: vi.fn(async () => 1) }));
+vi.mock("../../contracts/contracts.service", () => events);
 
 import {
     decideFichaField,
@@ -141,6 +143,10 @@ describe("startContractReview", () => {
         playbooks.startPlaybookReview.mockResolvedValue({ run: { id: "run-1", status: "running" }, done: Promise.reject(new Error("later")) });
         const result = await startContractReview(fake.db, caller, "p1", {});
         expect(result).toEqual({ ok: true, data: { id: "run-1", status: "running" } });
+        expect(events.recordCardEvent).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ actorType: "agent", actorName: "Agente de revisão", action: "review.started", onBehalfOf: "u1" }),
+        );
         expect(playbooks.startPlaybookReview).toHaveBeenCalledWith(
             expect.objectContaining({ playbookId: "pb-1", documentId: "d1", model: "test-model", reviewMode: "strict" }),
         );
@@ -393,13 +399,50 @@ describe("decideReviewClause", () => {
         edit: null,
     });
 
-    it("keeps an accepted tracked change in the document and records who accepted it", async () => {
+    it("keeps an accepted tracked change in the document and records who accepted it, by name", async () => {
         playbooks.getPlaybookRunById.mockResolvedValue(RUN);
-        const fake = fakeDb(linked());
+        const fake = fakeDb({ ...linked(), user_profiles: [{ data: { display_name: "Duda Lima", email: "duda@avenia.io" } }] });
         const result = await decideReviewClause(fake.db, caller, "p1", "run-1", "f-foro", { decision: "aceito" });
-        expect(result).toMatchObject({ ok: true, data: { decision: { decision: "aceito", decided_by: "duda@avenia.io" } } });
+        expect(result).toMatchObject({ ok: true, data: { decision: { decision: "aceito", decided_by: "Duda Lima" } } });
         expect(documents.resolveEdit).not.toHaveBeenCalled();
+        expect(documents.applyTrackedEditsToDocument).not.toHaveBeenCalled();
         expect(fake.calls.find((c) => c.op === "insert")?.payload).toMatchObject({ run_id: "run-1", finding_id: "f-foro", decision: "aceito" });
+        expect(events.recordCardEvent).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ projectId: "p1", actorType: "user", actorName: "Duda Lima", action: "review.clause_aceito" }),
+        );
+    });
+
+    it("places a suggestion that had no tracked change when it is accepted", async () => {
+        const noEdit = { ...RUN, findings: RUN.findings.map((f) => ({ ...f, edit: null })) };
+        playbooks.getPlaybookRunById.mockResolvedValue(noEdit);
+        documents.applyTrackedEditsToDocument.mockResolvedValue({ ok: true, annotations: [{ edit_id: "e9" }] });
+        const result = await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "aceito" });
+        expect(documents.applyTrackedEditsToDocument.mock.calls[0][0].edits[0]).toMatchObject({
+            find: "foro de Nova York",
+            replace: "foro da Comarca de São Paulo/SP",
+        });
+        expect(result).toMatchObject({ ok: true, data: { edit: { edit_id: "e9" }, decision: { decided_by: "duda@avenia.io" } } });
+    });
+
+    it("inserts an accepted missing clause after the clause it follows, and says when it cannot", async () => {
+        const missing = {
+            ...RUN,
+            findings: [
+                { ...RUN.findings[1], id: "f-miss", status: "missing_required", quote: "", edit: null, insertAfter: "fim da cláusula 5.", suggestedText: "5.2 Rescisão." },
+                { ...RUN.findings[1], id: "f-nowhere", status: "missing_required", quote: "", edit: null, suggestedText: "5.3 X." },
+            ],
+        };
+        playbooks.getPlaybookRunById.mockResolvedValue(missing);
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: true, annotations: [{ edit_id: "e10" }] });
+        await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-miss", { decision: "aceito" });
+        expect(documents.applyTrackedEditsToDocument.mock.calls[0][0].edits[0]).toMatchObject({
+            find: "fim da cláusula 5.",
+            replace: "fim da cláusula 5.\n\n5.2 Rescisão.",
+        });
+        expect(await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-nowhere", { decision: "aceito" })).toMatchObject({ kind: "validation" });
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x" });
+        expect(await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-miss", { decision: "aceito" })).toMatchObject({ kind: "conflict" });
     });
 
     it("rejects the tracked change with a reason", async () => {

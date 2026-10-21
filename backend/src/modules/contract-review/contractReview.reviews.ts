@@ -15,6 +15,8 @@
 import type { Db } from "../../lib/supabase";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { recordAudit } from "../../lib/audit";
+import { profileAttributionName } from "../../lib/userLookup";
+import { recordCardEvent } from "../contracts/contracts.service";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import type { EditAnnotation } from "@mike/contracts";
 import {
@@ -50,6 +52,8 @@ type RunFinding = {
     location: string;
     analysis: string;
     suggestedText: string;
+    /** For a missing clause: the end of the clause the new one follows. */
+    insertAfter?: string;
     edit?: EditAnnotation | null;
 };
 
@@ -127,6 +131,16 @@ const DIVERGE_SEVERITIES = new Set(["critica", "alta"]);
 
 function worse(a: ReviewClause["verdict"], b: ReviewClause["verdict"]) {
     return RANK[b] > RANK[a] ? b : a;
+}
+
+/** The name a decision is shown under: the profile's name, else the email. */
+async function callerName(db: Db, caller: Caller): Promise<string> {
+    const { data } = await db
+        .from("user_profiles")
+        .select("display_name, email")
+        .eq("user_id", caller.userId)
+        .maybeSingle();
+    return profileAttributionName(data as { display_name?: unknown; email?: unknown } | null, caller.userEmail ?? "Alguém da equipe");
 }
 
 function failureOf(error: unknown) {
@@ -209,6 +223,16 @@ export async function startContractReview(
             user_id: caller.userId,
         });
         if (error) throw error;
+        void recordCardEvent(db, {
+            projectId,
+            orgId,
+            actorType: "agent",
+            actorId: "agent:revisor@1",
+            actorName: "Agente de revisão",
+            onBehalfOf: caller.userId,
+            action: "review.started",
+            after: { document: doc.filename, run: run.id },
+        });
         void recordAudit(db, {
             userId: caller.userId,
             userEmail: caller.userEmail,
@@ -553,6 +577,30 @@ export async function decideReviewClause(
             if (!applied.ok || !applied.annotations[0])
                 return failure("conflict", "Não consegui aplicar a redação editada no documento. Recarregue e tente de novo.");
             edit = applied.annotations[0];
+        } else if (decision === "aceito" && !finding.edit && documentId && finding.suggestedText.trim()) {
+            // A suggestion the review could not place as a tracked change is
+            // placed now, so accepting always changes the document.
+            const missing = finding.status === "missing_required";
+            const find = missing ? (finding.insertAfter ?? "") : finding.quote;
+            if (!find) return failure("validation", "Não sei onde colocar esta redação no documento. Edite a cláusula direto no documento.");
+            const applied = await applyTrackedEditsToDocument({
+                documentId,
+                userId: caller.userId,
+                userEmail: caller.userEmail,
+                db,
+                edits: [
+                    {
+                        find,
+                        replace: missing ? `${find}\n\n${finding.suggestedText.trim()}` : finding.suggestedText.trim(),
+                        context_before: "",
+                        context_after: "",
+                        reason: finding.ruleName,
+                    },
+                ],
+            });
+            if (!applied.ok || !applied.annotations[0])
+                return failure("conflict", "Não consegui colocar a sugestão no documento. Recarregue e tente de novo.");
+            edit = applied.annotations[0];
         } else if (decision === "rejeitado" && pending && documentId) {
             const rejected = await resolveEdit("reject", documentId, pending.edit_id, caller.userId, caller.userEmail ?? undefined, db);
             if (!rejected.ok) return failure("conflict", "O documento mudou desde a revisão. Recarregue e tente de novo.");
@@ -561,7 +609,7 @@ export async function decideReviewClause(
             decision: decision as Decision["decision"],
             edited_text: decision === "editado" ? editedText : null,
             reason: decision === "rejeitado" ? reason : null,
-            decided_by: caller.userEmail ?? caller.userId,
+            decided_by: await callerName(db, caller),
             decided_at: new Date().toISOString(),
             edit,
         };
@@ -580,6 +628,16 @@ export async function decideReviewClause(
             documentId,
             title: finding.ruleName,
             detail: { run_id: runId, finding_id: findingId, rule_id: finding.ruleId, reason: decided.reason },
+        });
+        void recordCardEvent(db, {
+            projectId,
+            orgId: allowed.access.project?.org_id ?? null,
+            actorType: "user",
+            actorId: caller.userId,
+            actorName: decided.decided_by,
+            action: `review.clause_${decision}`,
+            field: finding.ruleName,
+            after: { run: runId, clause: finding.ruleName, reason: decided.reason },
         });
         return ok({ decision: decided, edit });
     } catch (error) {
