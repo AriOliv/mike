@@ -59,6 +59,16 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "assignee.changed", after: null }))).toEqual({
             verb: "removeu o responsável",
         });
+        expect(
+            describeEvent(event({ action: "assignee.changed", after: { name: "Legal Demo", steps: ["x"] } })),
+        ).toEqual({ verb: "atribuiu a", object: "Legal Demo" });
+        expect(describeEvent(event({ action: "assignee.changed", after: { email: "ana@x.com" } })).object).toBe("ana");
+        expect(describeEvent(event({ action: "assignee.suggested", after: { name: "Duda" } }))).toEqual({
+            verb: "sugeriu como responsável",
+            object: "Duda",
+        });
+        expect(describeEvent(event({ action: "assignee.suggested", after: { email: "duda@x.com" } })).object).toBe("duda");
+        expect(describeEvent(event({ action: "assignee.suggested" })).object).toBeUndefined();
     });
 
     it("describes progress, known and unknown", () => {
@@ -92,7 +102,20 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "review.accepted" })).verb).toBe("aceitou a revisão");
         expect(describeEvent(event({ action: "field.updated", field: "prazo" })).object).toBe("prazo");
         expect(describeEvent(event({ action: "field.updated" })).object).toBeUndefined();
-        expect(describeEvent(event({ action: "x.y" })).verb).toBe("x.y");
+        expect(describeEvent(event({ action: "x.y" })).verb).toBe("registrou uma atualização");
+        expect(describeEvent(event({ action: "agent.started" })).verb).toBe("começou a trabalhar neste contrato");
+        expect(describeEvent(event({ action: "agent.suggested", field: "risco", after: { sources: 2 } }))).toEqual({
+            verb: "fez uma sugestão",
+            object: "sobre risco",
+            sources: 2,
+        });
+        expect(describeEvent(event({ action: "agent.suggested" })).object).toBeUndefined();
+        expect(describeEvent(event({ action: "agent.failed" })).verb).toBe("não conseguiu terminar o trabalho");
+        expect(describeEvent(event({ action: "document.version_added", after: { document: "v2.docx" } })).object).toBe(
+            "v2.docx",
+        );
+        expect(describeEvent(event({ action: "notification.sent", after: { to: "Slack" } })).object).toBe("Slack");
+        expect(describeEvent(event({ action: "kb.ask" })).verb).toBe("perguntou à base");
     });
 });
 

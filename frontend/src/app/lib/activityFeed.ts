@@ -99,8 +99,13 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "moveu para", object: (lane && LANE_LABEL[lane]) ?? lane ?? "fora da esteira" };
         }
         case "assignee.changed": {
-            const who = text(event.after);
+            // A plain e-mail from the pipeline, or { name, email } from an agent.
+            const who = text(event.after) ?? text(after.name) ?? text(after.email);
             return who ? { verb: "atribuiu a", object: who.split("@")[0] } : { verb: "removeu o responsável" };
+        }
+        case "assignee.suggested": {
+            const who = text(after.name) ?? text(after.email);
+            return { verb: "sugeriu como responsável", object: who?.split("@")[0] };
         }
         case "status.changed": {
             const status = text(event.after);
@@ -128,8 +133,21 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
         case "review.clause_editado":
         case "review.clause_rejeitado":
             return clauseDecision(event, after);
+        case "agent.started":
+            return { verb: "começou a trabalhar neste contrato" };
+        case "agent.suggested":
+            return { verb: "fez uma sugestão", object: event.field ? `sobre ${event.field}` : undefined, sources };
+        case "agent.failed":
+            return { verb: "não conseguiu terminar o trabalho" };
+        case "document.version_added":
+            return { verb: "adicionou uma nova versão", object: text(after.document) };
+        case "notification.sent":
+            return { verb: "avisou", object: text(after.to) };
+        case "kb.ask":
+            return { verb: "perguntou à base" };
         default:
-            return { verb: event.action };
+            // An action this screen does not know yet: say something true, never the raw name.
+            return { verb: "registrou uma atualização" };
     }
 }
 
