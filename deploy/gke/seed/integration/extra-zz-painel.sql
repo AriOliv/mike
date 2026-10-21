@@ -8,6 +8,10 @@
 --      card sem área de propósito (o Painel mostra "Sem área").
 --   3. As duas varreduras do seed ficam com mudanças em aberto (já vêm de
 --      extra-integration.sql; aqui só garante que nenhuma foi arquivada).
+--   4. Os 3 cards concluídos (10, 11, 12) ganham abertura, conclusão e prazo
+--      coerentes: sem isso a conclusão (lane_updated_at) caía antes da
+--      abertura e o Painel dizia "3 concluídos" ao lado de "nenhum concluído".
+--      Ciclos de cerca de 9, 6 e 7 dias; 2 de 3 no prazo.
 
 begin;
 
@@ -69,5 +73,18 @@ update public.regulatory_changes
 set status = 'nova'
 where scan_id in ('00000000-0000-4000-e000-000000000001', '00000000-0000-4000-e000-000000000002')
   and status = 'arquivada';
+
+-- 4. Datas dos concluídos. Só preenche o que ainda está vazio (idempotente).
+update public.projects p
+set created_at = now() - v.opened_ago,
+    completed_at = current_date - v.closed_days_ago,
+    lane_updated_at = (current_date - v.closed_days_ago) + time '17:00',
+    deadline = current_date - v.deadline_days_ago
+from (values
+  ('00000000-0000-4000-a000-000000000010'::uuid, interval '30 days', 21, 20),  -- no prazo
+  ('00000000-0000-4000-a000-000000000011'::uuid, interval '18 days', 12, 14),  -- 2 dias atrasado
+  ('00000000-0000-4000-a000-000000000012'::uuid, interval '9 days',   2,  1)   -- no prazo
+) as v(id, opened_ago, closed_days_ago, deadline_days_ago)
+where p.id = v.id and p.status = 'concluido' and p.completed_at is null;
 
 commit;
