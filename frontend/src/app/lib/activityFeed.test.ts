@@ -96,6 +96,37 @@ describe("describeEvent", () => {
     });
 });
 
+describe("clause decisions from a playbook review", () => {
+    const decide = (action: string, after: unknown, field: string | null = null) =>
+        activitySentence(toActivityItems([event({ actor_name: "Duda", action, after, field })])[0]);
+
+    it("names the clause by number, with the reason when there is one", () => {
+        expect(decide("review.clause_aceito", { clause: "9" })).toBe("Duda aceitou a edição da cl. 9");
+        expect(decide("review.clause_editado", { clause: "12.1", reason: null })).toBe(
+            "Duda editou a edição da cl. 12.1",
+        );
+        expect(decide("review.clause_rejeitado", { clause: "4", reason: "posição do cliente" })).toBe(
+            "Duda rejeitou a sugestão da cl. 4: posição do cliente",
+        );
+    });
+
+    it("names it by the rule when there is no number, falling back to the event's field", () => {
+        expect(decide("review.clause_aceito", { run: "r", clause: "Cessão do contrato", reason: null })).toBe(
+            "Duda aceitou a edição em Cessão do contrato",
+        );
+        expect(decide("review.clause_rejeitado", null, "Lei aplicável e foro")).toBe(
+            "Duda rejeitou a sugestão em Lei aplicável e foro",
+        );
+    });
+
+    it("still reads without a clause", () => {
+        expect(decide("review.clause_rejeitado", { reason: "fora do escopo" })).toBe(
+            "Duda rejeitou a sugestão: fora do escopo",
+        );
+        expect(decide("review.clause_aceito", {})).toBe("Duda aceitou a edição");
+    });
+});
+
 describe("toActivityItems", () => {
     it("sorts newest first and links each line", () => {
         const items = toActivityItems(
