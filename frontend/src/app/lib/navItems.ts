@@ -35,6 +35,7 @@ export const NAV_MAIN: readonly NavItem[] = [
     { href: "/pipeline", label: "Esteira", icon: "folder" },
     { href: "/contratos", label: "Contratos", icon: "tabular" },
     { href: "/radar", label: "Prazos", icon: "workflow" },
+    { href: "/radar-regulatorio", label: "Radar regulatório", icon: "workflow" },
     { href: "/acervo", label: "Perguntar", icon: "library" },
 ];
 
@@ -50,6 +51,7 @@ export const NAV_MORE: readonly NavItem[] = [
     { href: "/workflows", label: "Workflows", icon: "workflow" },
     { href: "/projects", label: "Projetos", icon: "folder", exact: true },
     { href: "/assistant", label: "Assistente", icon: "chat", exact: true },
+    { href: "/painel", label: "Painel do Legal", icon: "tabular" },
 ];
 
 /** Whether `item` is the page the user is on. */

@@ -4,6 +4,7 @@ import { handleAccountDelete, handleExportBuild, handleMcpRefreshToken } from ".
 import { handleDocumentCleanup, handleDocumentExtractText, markDocumentTextFailed, handleDocumentPrecomputeText, handleConversionConvert, markConversionFailed } from "../modules/documents/documents.service";
 import { handleExtractionExtract, markExtractionJobFailed } from "../modules/tabular/tabular.service";
 import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../modules/memory/memory.service";
+import { handleRegulatoryScan } from "../modules/regulatory/regulatory.service";
 import { handleRequestNotify, handleRequestTriage } from "../modules/requests/requests.service";
 import { AUTO_REVIEW_JOB, handleAutoReview, markAutoReviewFailed } from "../modules/contracts/contracts.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
@@ -22,6 +23,7 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   "document.precompute_text": handleDocumentPrecomputeText,
   "document.extract_text": handleDocumentExtractText,
   "memory.consolidate": handleMemoryConsolidation,
+  "regulatory.scan": handleRegulatoryScan,
   "request.triage": handleRequestTriage,
   "request.notify": (db) => handleRequestNotify(db),
   [AUTO_REVIEW_JOB]: handleAutoReview,
