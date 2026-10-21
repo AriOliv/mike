@@ -57,7 +57,16 @@ export interface DescribeErrorOptions {
     fallback?: string;
     /** Per-call-site overrides keyed by backend `code`. */
     codeMessages?: Readonly<Record<string, string>>;
+    /**
+     * "pt" for the Legal screens, which are Portuguese end to end: the title
+     * reads "Não consegui <action>" (pass `action` in Portuguese, infinitive,
+     * lower case: "carregar os pedidos") and the generic messages are in
+     * Portuguese. A 4xx `detail` from the backend is shown as written.
+     */
+    lang?: UserErrorLang;
 }
+
+export type UserErrorLang = "en" | "pt";
 
 /**
  * Throw this (or any object with `userVisible: true`) when the message is
@@ -139,6 +148,49 @@ const KIND_MESSAGES: Record<UserErrorKind, string> = {
         "Mike is temporarily unavailable. Try again in a moment.",
     server: SERVER_FAILURE_MESSAGE,
     unknown: GENERIC_FAILURE_MESSAGE,
+};
+
+const KIND_TITLES_PT: Record<UserErrorKind, string> = {
+    offline: "Você está sem conexão",
+    network: "Problema de conexão",
+    timeout: "Demorou demais",
+    aborted: "Cancelado",
+    unauthenticated: "Entre de novo",
+    forbidden: "Sem permissão",
+    not_found: "Não encontrado",
+    conflict: "Mudou em outro lugar",
+    validation: "Confira os dados",
+    payload_too_large: "Grande demais",
+    rate_limited: "Muitas tentativas",
+    unavailable: "Fora do ar",
+    server: "Algo deu errado",
+    unknown: "Algo deu errado",
+};
+
+const KIND_MESSAGES_PT: Record<UserErrorKind, string> = {
+    offline: "Seu dispositivo está sem internet. Confira a conexão e tente de novo.",
+    network: "Não consegui falar com o servidor. Confira a conexão e tente de novo.",
+    timeout: "O servidor demorou demais para responder. Tente de novo.",
+    aborted: "O pedido foi cancelado.",
+    unauthenticated: "Sua sessão expirou. Entre de novo para continuar.",
+    forbidden: "Você não tem permissão para fazer isso.",
+    not_found: "Isso não existe mais ou foi movido.",
+    conflict: "Alguém mudou isso em outro lugar. Atualize e tente de novo.",
+    validation: "Algum dado informado não é válido.",
+    payload_too_large: "O arquivo é grande demais para enviar.",
+    rate_limited: "Muitas tentativas seguidas. Espere um pouco e tente de novo.",
+    unavailable: "O Mike está fora do ar por um instante. Tente de novo em seguida.",
+    server: "Algo deu errado do nosso lado. Tente de novo.",
+    unknown: "Algo deu errado. Tente de novo e, se continuar, fale com o suporte.",
+};
+
+/** The labels a notice puts on its own buttons, in the notice's language. */
+export const NOTICE_LABELS: Record<
+    UserErrorLang,
+    { retry: string; signIn: string; support: string }
+> = {
+    en: { retry: "Retry", signIn: "Sign in", support: "Contact support" },
+    pt: { retry: "Tentar de novo", signIn: "Entrar", support: "Falar com o suporte" },
 };
 
 const RETRYABLE: ReadonlySet<UserErrorKind> = new Set([
@@ -284,12 +336,12 @@ function kindForStatus(status: number): UserErrorKind {
     return "unknown";
 }
 
-function titleFor(kind: UserErrorKind, action?: string): string {
+function titleFor(kind: UserErrorKind, action?: string, lang: UserErrorLang = "en"): string {
     if (action) {
         const trimmed = action.trim().replace(/[.!]+$/, "");
-        if (trimmed) return `Couldn't ${trimmed}`;
+        if (trimmed) return lang === "pt" ? `Não consegui ${trimmed}` : `Couldn't ${trimmed}`;
     }
-    return KIND_TITLES[kind];
+    return (lang === "pt" ? KIND_TITLES_PT : KIND_TITLES)[kind];
 }
 
 /**
@@ -351,7 +403,7 @@ export function describeError(
         message =
             kind === "unknown" && options.fallback
                 ? options.fallback
-                : KIND_MESSAGES[kind];
+                : (options.lang === "pt" ? KIND_MESSAGES_PT : KIND_MESSAGES)[kind];
     }
 
     let retryable = RETRYABLE.has(kind);
@@ -361,7 +413,7 @@ export function describeError(
 
     return {
         kind,
-        title: titleFor(kind, options.action),
+        title: titleFor(kind, options.action, options.lang),
         message,
         retryable,
         supportable: SUPPORTABLE.has(kind),

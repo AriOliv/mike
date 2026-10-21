@@ -14,6 +14,7 @@
  */
 import {
     describeError,
+    NOTICE_LABELS,
     type DescribeErrorOptions,
     type UserFacingError,
 } from "./userError";
@@ -92,8 +93,10 @@ export function createErrorNotifier<O extends NotifyErrorOptions>(
         const actions: ToastAction[] = [...(options.actions ?? [])];
         if (options.onRetry && described.retryable) {
             actions.push(
-                retryToastAction(options.onRetry, (retryError) =>
-                    notify(retryError, options),
+                retryToastAction(
+                    options.onRetry,
+                    (retryError) => notify(retryError, options),
+                    NOTICE_LABELS[options.lang ?? "en"].retry,
                 ),
             );
         }
@@ -105,6 +108,7 @@ export function createErrorNotifier<O extends NotifyErrorOptions>(
             message: described.message,
             actions,
             supportHref: own.supportHref,
+            ...(options.lang === "pt" ? { supportLabel: NOTICE_LABELS.pt.support } : {}),
             dedupeKey: options.dedupeKey,
         });
 
