@@ -76,7 +76,7 @@ describe("AppSidebar failures", () => {
 
         await waitFor(() =>
             expect(screen.getByRole("alert")).toHaveTextContent(
-                "Couldn't load your recent projects",
+                "Não consegui carregar seus projetos recentes",
             ),
         );
     });
@@ -90,7 +90,7 @@ describe("AppSidebar failures", () => {
         renderSidebar();
 
         await waitFor(() => screen.getByRole("alert"));
-        await user.click(screen.getByRole("button", { name: "Retry" }));
+        await user.click(screen.getByRole("button", { name: "Tentar de novo" }));
 
         await waitFor(() =>
             expect(listProjectsPage).toHaveBeenCalledTimes(2),
@@ -110,11 +110,11 @@ describe("AppSidebar failures", () => {
 
         await waitFor(() =>
             expect(screen.getByRole("alert")).toHaveTextContent(
-                "Couldn't sign out",
+                "Não consegui sair",
             ),
         );
         expect(
-            screen.getByRole("button", { name: "Retry" }),
+            screen.getByRole("button", { name: "Tentar de novo" }),
         ).toBeInTheDocument();
     });
 });

@@ -6,6 +6,8 @@
  * listed here only once its page exists, so the preview never links to a
  * 404: a feature adds its own line in the same change that adds the route.
  * `more` keeps the platform's other tools one click away under "Mais".
+ * "Contratos" (/contratos) is the portfolio, one row per contract with the
+ * Ficha's columns.
  */
 
 export type NavIconKey =
@@ -27,20 +29,25 @@ export type NavItem = {
 
 export const NAV_MAIN: readonly NavItem[] = [
     { href: "/pipeline", label: "Esteira", icon: "folder" },
+    { href: "/contratos", label: "Contratos", icon: "tabular" },
     { href: "/radar", label: "Prazos", icon: "workflow" },
     { href: "/radar-regulatorio", label: "Radar regulatório", icon: "workflow" },
     { href: "/acervo", label: "Perguntar", icon: "library" },
 ];
 
+/**
+ * The platform's other tools. The generic grid (/tabular-reviews) and the IDE
+ * are left out on purpose: next to "Contratos" the grid reads as the
+ * portfolio, and the IDE means nothing to the Legal team. Both routes still
+ * work for whoever has the link.
+ */
 export const NAV_MORE: readonly NavItem[] = [
     { href: "/painel", label: "Painel do Legal", icon: "tabular" },
     { href: "/playbooks", label: "Playbooks", icon: "playbook" },
-    { href: "/tabular-reviews", label: "Revisão em grade", icon: "tabular" },
     { href: "/library", label: "Biblioteca", icon: "library" },
     { href: "/workflows", label: "Workflows", icon: "workflow" },
     { href: "/projects", label: "Projetos", icon: "folder", exact: true },
     { href: "/assistant", label: "Assistente", icon: "chat", exact: true },
-    { href: "/ide", label: "IDE", icon: "ide" },
 ];
 
 /** Whether `item` is the page the user is on. */
