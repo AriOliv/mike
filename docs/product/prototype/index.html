@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mike Legal · protótipo</title>
+<title>Mike Legal protótipo</title>
 <style>
 :root{
   --paper:#F5F0E6; --paper-2:#FBF8F1; --paper-3:#EFE9DB; --card:#FFFFFF;
@@ -195,6 +195,161 @@ label.mono{display:block}
   .kpi b{font-size:20px}
 }
 </style>
+<style>
+/* ===== Paridade (docs/product/05 (paridade) §4): vocabulário visual compartilhado ===== */
+:root{ --info:#2F6FDB; --info-soft:#E4ECFB; }
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --info:#8FB2F7; --info-soft:#1B2A45; }}
+:root[data-theme="dark"]{ --info:#8FB2F7; --info-soft:#1B2A45; }
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slidein{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+svg.i{flex:none;vertical-align:-2px}
+.muted{color:var(--muted)}
+.linkbtn{border:0;background:transparent;padding:0;color:var(--violet-deep);cursor:pointer;font-size:12px}
+.kbd{font-family:var(--mono);font-size:10px;padding:0 4px;border:1px solid var(--line-strong);border-radius:4px;margin-left:5px;color:var(--muted);text-transform:none}
+/* StatusChip */
+.sc{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap;background:var(--paper-3);color:var(--ink-soft)}
+.sc i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.sc.pronto{background:var(--paper-3);color:var(--ink)} .sc.pronto i{background:var(--info)}
+.sc.rodando{background:var(--info-soft);color:var(--info)}
+.sc.rodando i{width:9px;height:9px;background:transparent;border:1.5px solid currentColor;border-right-color:transparent;animation:spin .9s linear infinite}
+.sc.bloqueado{background:var(--err-soft);color:var(--err)} .sc.bloqueado i{border-radius:1px}
+.sc.concluido{background:transparent;color:var(--muted);padding-left:0} .sc.concluido i{display:none}
+.sc.a_fazer{background:transparent;border:1px solid var(--line-strong);color:var(--ink-soft)} .sc.a_fazer i{background:transparent;border:1.5px solid currentColor;width:7px;height:7px}
+@media (prefers-reduced-motion:reduce){.sc.rodando i{animation:none}}
+/* VerdictCounts / VerdictLabel */
+.vc{display:inline-flex;gap:10px;font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.vc span{display:inline-flex;gap:3px;align-items:center}
+.vc .a{color:var(--ok)} .vc .p{color:var(--warn)} .vc .d{color:var(--err)} .vc .z{color:var(--muted-2)}
+.vt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:4px 0 10px}
+.vt button{text-align:left;border:1px solid var(--line);background:var(--paper-2);border-radius:12px;padding:8px 10px;cursor:pointer}
+.vt button b{display:block;font-size:22px;letter-spacing:-.02em;color:var(--ink)}
+.vt button span{display:inline-flex;gap:4px;align-items:center;font-size:12.5px}
+.vt .a span{color:var(--ok)} .vt .p span{color:var(--warn)} .vt .d span{color:var(--err)}
+.vt button.on{border-color:var(--ink);background:var(--card)}
+.vl{display:inline-flex;gap:4px;align-items:center;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.vl.d{background:var(--err-soft);color:var(--err)} .vl.p{background:var(--warn-soft);color:var(--warn)} .vl.a{background:var(--ok-soft);color:var(--ok)} .vl.n{background:var(--paper-3);color:var(--muted)}
+/* StatTiles */
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.tile{text-align:left;background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;cursor:pointer;min-width:0}
+.tile:hover{border-color:var(--line-strong)}
+.tile b{display:block;font-size:26px;letter-spacing:-.02em;line-height:1.15}
+.tile .lbl{color:var(--muted);font-size:12.5px}
+.tile.on{border-color:var(--ink);background:var(--paper-2)}
+.tile.static{cursor:default}
+.tile b.err{color:var(--err)} .tile b.warn{color:var(--warn)}
+/* Saudação */
+.greet{display:flex;align-items:center;gap:10px;font-size:18px;letter-spacing:-.01em;margin:2px 0 14px;flex-wrap:wrap}
+.greet .ag-av{width:22px;height:22px}
+.greet ul{flex-basis:100%;margin:2px 0 0 32px;padding:0;font-size:14px;color:var(--ink-soft)}
+.greet ul li{margin:3px 0}
+/* ReviewTable */
+.rt{border:1px solid var(--line);border-radius:var(--r-md);background:var(--card);overflow-x:auto}
+.rt-in{min-width:880px}
+.rt-row{display:grid;align-items:center;gap:12px;padding:0 14px;min-height:52px;border-top:1px solid var(--line);cursor:pointer}
+.rt-row:hover{background:var(--paper-2)}
+.rt-row.sel{background:var(--violet-soft)}
+.rt-row.foc{box-shadow:inset 3px 0 0 var(--violet)}
+.rt-head{min-height:34px;border-top:0;background:var(--paper-2);cursor:default;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.rt-head:hover{background:var(--paper-2)}
+.rt-row .t{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-row .s{color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-row>*{min-width:0}
+.rt-rev{grid-template-columns:minmax(240px,2.4fr) 150px 170px 70px 90px 170px}
+.rt-ped{grid-template-columns:86px minmax(220px,2.2fr) 150px 130px 120px 96px 180px}
+.who{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.af-av{width:22px;height:22px;border-radius:50%;display:inline-grid;place-items:center;font-size:9.5px;font-weight:700;background:var(--paper-3);color:var(--ink-soft);flex:none}
+.ag-av{width:22px;height:22px;border-radius:7px;display:inline-grid;place-items:center;background:var(--violet-soft);color:var(--violet-deep);flex:none}
+.agn{color:var(--violet-deep)}
+.sugg{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--violet-soft);color:var(--violet-deep);white-space:nowrap}
+/* DetailPanel */
+.dp{position:fixed;top:0;right:0;bottom:0;width:min(440px,100%);background:var(--paper-2);border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(0,0,0,.08);z-index:30;display:flex;flex-direction:column;animation:slidein .22s cubic-bezier(.22,1,.36,1)}
+.dp-h{display:flex;gap:6px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+.dp-b{overflow:auto;padding:12px 18px 28px;flex:1}
+.dp-t{font-size:19px;letter-spacing:-.01em;margin:4px 0 12px;line-height:1.3}
+.kv{display:grid;grid-template-columns:104px minmax(0,1fr);gap:9px 10px;font-size:13px;margin:0 0 14px;align-items:center}
+.kv dt{color:var(--muted)} .kv dd{margin:0;min-width:0}
+.kv select{padding:2px 6px;border-radius:999px;border:1px solid var(--line-strong);background:var(--card)}
+.dp-sec{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:18px 0 6px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.summ{font-size:13.5px;line-height:1.6}
+@media (prefers-reduced-motion:reduce){.dp{animation:none}}
+@media (min-width:1180px){ body.dp-open main{padding-right:470px} }
+@media (min-width:1180px){ body.dp-open .rt-rev{grid-template-columns:minmax(200px,2.4fr) 140px 150px 64px 160px} body.dp-open .c-upd{display:none} body.dp-open .rt-in{min-width:0} }
+/* CitationPill */
+.cite{display:inline-flex;align-items:center;gap:3px;padding:0 7px;height:19px;border-radius:999px;background:var(--violet-soft);color:var(--violet-deep);font-size:11.5px;cursor:pointer;border:0;white-space:nowrap;vertical-align:1px;font-family:var(--sans)}
+.cite:hover{background:var(--violet);color:#fff}
+/* ActivityFeed */
+.af-row{display:flex;gap:10px;padding:7px 0;font-size:13px;align-items:flex-start;border-top:1px solid var(--line)}
+.af-row:first-child{border-top:0}
+.af-row .grow{flex:1;min-width:0}
+.af-meta{color:var(--muted);font-size:12px;margin-top:1px}
+.af-steps{margin:6px 0 0 16px;padding:0;color:var(--ink-soft);font-size:12.5px}
+/* AgentSuggestion */
+.sg{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px 12px;margin:10px 0;cursor:pointer}
+.sg.foc{border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-soft)}
+.sg-h{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.sg-h .agn{font-weight:600}
+.sg-t{font-weight:600;margin:7px 0 3px}
+.sg-p{font-size:13px;color:var(--ink-soft);margin:3px 0}
+.sg-src{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin:6px 0;font-size:12px;color:var(--muted)}
+.sg-edit{background:var(--paper-2);border-radius:8px;padding:8px 10px;font-family:Georgia,'Times New Roman',serif;font-size:13.5px;margin:6px 0;line-height:1.55}
+.sg-edit textarea{font-family:inherit;font-size:13.5px;margin-top:4px}
+.sg-acts{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.sg-acts input{flex:1;min-width:160px;border:1px solid var(--line-strong);border-radius:999px;padding:4px 10px;background:var(--card)}
+.sg.done{padding:7px 12px;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+.sg.done .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+del{background:var(--err-soft);color:var(--err);text-decoration:line-through}
+ins{background:var(--ok-soft);color:var(--ok);text-decoration:underline}
+.doc section{transition:background .2s;border-radius:8px}
+.doc section.cl-sel{background:var(--violet-soft);box-shadow:0 0 0 10px var(--violet-soft)}
+.doc mark.del{background:var(--err-soft);color:var(--err);box-shadow:none}
+.clb{font-family:var(--sans);margin-left:6px;text-transform:none;letter-spacing:0;vertical-align:1px}
+/* AgentPlan */
+.plan{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:6px 12px}
+.plan-h{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;flex-wrap:wrap}
+.plan-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.plan-n{font-family:var(--mono);color:var(--muted);font-size:11px}
+.plan-row select{max-width:150px;padding:1px 4px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:12px}
+.plan-row .ok{font-size:11.5px;color:var(--warn)}
+.plan-sum{font-size:12.5px;color:var(--muted);padding:8px 0}
+/* Mais ▾ */
+details.more{position:relative}
+details.more summary{list-style:none;padding:7px 12px;border-radius:999px;cursor:pointer;color:var(--ink-soft);white-space:nowrap}
+details.more summary::-webkit-details-marker{display:none}
+details.more[open] summary,details.more.on summary{background:var(--paper-3)}
+.more-menu{position:absolute;top:calc(100% + 6px);left:0;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:6px;min-width:220px;z-index:50}
+.more-menu a{display:block;padding:7px 10px;border-radius:8px;text-decoration:none;color:var(--ink)}
+.more-menu a:hover{background:var(--paper-2)}
+.more-menu a span{display:block;font-size:12px;color:var(--muted)}
+/* Estado vazio */
+.es{text-align:center;padding:34px 16px}
+.es h3{font-size:17px;margin:0 0 6px}
+.es p{color:var(--muted);margin:0 auto;max-width:52ch}
+.es .toolbar{justify-content:center;margin:14px 0 0}
+/* radar regulatório */
+.chg{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:12px 14px;margin-bottom:10px}
+.chg-h{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.chg h3{font-size:15px;margin:8px 0 4px}
+.chg .why{background:var(--paper-2);border-radius:8px;padding:8px 10px;font-size:13px;margin:8px 0}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chips .pill{cursor:pointer}
+.scan{display:flex;gap:10px;align-items:center;padding:10px 10px;border-radius:10px;cursor:pointer;border:1px solid transparent}
+.scan:hover{background:var(--paper-2)}
+.scan.on{background:var(--paper-2);border-color:var(--line-strong)}
+.scan .grow{flex:1;min-width:0}
+.g-2{grid-template-columns:minmax(0,320px) minmax(0,1fr)}
+.toast2{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:6px 6px 6px 16px;border-radius:999px;z-index:61;display:none;align-items:center;gap:12px;max-width:calc(100% - 32px)}
+.toast2.on{display:flex}
+.toast2 button{border:1px solid rgba(255,255,255,.3);background:transparent;color:var(--lime);border-radius:999px;padding:4px 12px;cursor:pointer}
+.hbar{height:8px;border-radius:99px;background:var(--paper-3);overflow:hidden;flex:1}
+.hbar i{display:block;height:100%;background:var(--violet)}
+.proto-note{font-family:var(--mono);font-size:11px;color:var(--muted);margin:22px 0 0}
+@media (max-width:900px){
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g-2{grid-template-columns:1fr}
+  .greet{font-size:16px}
+  details.more summary{padding:7px 8px}
+}
+</style>
 </head>
 <body>
 <header class="top">
@@ -306,20 +461,20 @@ const PRIO=['Baixa','Média','Alta'];
 const LEGAL=['Fernanda','Duda','Téo'];
 const thread=(...m)=>m.map(([who,txt,at])=>({who,txt,at}));
 const R = [
- {id:'P-128',titulo:'NDA · Polaris Exchange',tipo:'NDA',contraparte:'Polaris Exchange Ltd.',sol:'Rafael',areaSol:'Comercial',canal:'Slack #doc-agent',criado:'20/10 08:40',slaH:24,usadoH:3,resp:null,etapa:'entrada',prog:'A fazer',prio:'Média',prazo:'2026-10-21',ctx:'Vamos abrir conversa de parceria de liquidez com a Polaris. Eles mandaram o NDA deles, mas pode ser o nosso padrão.',
+ {id:'LEG-0128',titulo:'NDA · Polaris Exchange',tipo:'NDA',contraparte:'Polaris Exchange Ltd.',sol:'Rafael',areaSol:'Comercial',canal:'Slack #doc-agent',criado:'20/10 08:40',slaH:24,usadoH:3,resp:null,etapa:'entrada',prog:'A fazer',prio:'Média',prazo:'2026-10-21',ctx:'Vamos abrir conversa de parceria de liquidez com a Polaris. Eles mandaram o NDA deles, mas pode ser o nosso padrão.',
   triagem:{tipo:'NDA mútuo',risco:'baixo',playbook:'NDA padrão Avenia v3',nota:'Contraparte aceita o NDA padrão. Sem desvio: dá para aprovar direto.'},
-  thread:thread(['Rafael','@Mike preciso de um NDA com a Polaris Exchange pra parceria de liquidez','08:40'],['Mike','Recebi, virou o card P-128 na Entrada. Só falta saber: é mútuo? Tem o registro da Polaris?','08:40'],['Rafael','mútuo. registro em anexo','08:52'],['Mike','Valeu. Triagem: NDA padrão v3, sem desvio. Prazo do Legal: 1 dia útil. Te aviso aqui.','08:53'])},
- {id:'P-127',titulo:'MSA cliente · Vela Pay',tipo:'Cliente',contraparte:'Vela Pay IP S.A.',sol:'Rafael',areaSol:'Comercial',canal:'Formulário',criado:'19/10 17:10',slaH:120,usadoH:16,resp:null,etapa:'triagem',prog:'A fazer',prio:'Alta',prazo:'2026-10-30',ctx:'Cliente novo de payout, volume estimado 8M/mês. Querem assinar até o fim do mês.',
+  thread:thread(['Rafael','@Mike preciso de um NDA com a Polaris Exchange pra parceria de liquidez','08:40'],['Mike','Recebi, virou o card LEG-0128 na Entrada. Só falta saber: é mútuo? Tem o registro da Polaris?','08:40'],['Rafael','mútuo. registro em anexo','08:52'],['Mike','Valeu. Triagem: NDA padrão v3, sem desvio. Prazo do Legal: 1 dia útil. Te aviso aqui.','08:53'])},
+ {id:'LEG-0127',titulo:'MSA cliente · Vela Pay',tipo:'Cliente',contraparte:'Vela Pay IP S.A.',sol:'Rafael',areaSol:'Comercial',canal:'Formulário',criado:'19/10 17:10',slaH:120,usadoH:16,resp:null,etapa:'triagem',prog:'A fazer',prio:'Alta',prazo:'2026-10-30',ctx:'Cliente novo de payout, volume estimado 8M/mês. Querem assinar até o fim do mês.',
   triagem:{tipo:'MSA cliente + order form',risco:'médio',playbook:'Cliente API v4',nota:'Volume alto: aplicar cláusula de mínimo e cap de responsabilidade de 12 meses de fees.'},thread:[]},
- {id:'P-126',titulo:'Aditivo de preço · Nimbus Cloud',tipo:'Fornecedor',contraparte:'Nimbus Cloud Ltda.',sol:'Carla',areaSol:'Tecnologia',canal:'Slack #doc-agent',criado:'17/10 10:05',slaH:72,usadoH:70,resp:'Téo',etapa:'revisao',prog:'Em andamento',prio:'Média',prazo:'2026-10-23',ctx:'Aumento de 18% no preço com nova região. Precisa do ok até sexta.',contractId:'nimbus',
+ {id:'LEG-0126',titulo:'Aditivo de preço · Nimbus Cloud',tipo:'Fornecedor',contraparte:'Nimbus Cloud Ltda.',sol:'Carla',areaSol:'Tecnologia',canal:'Slack #doc-agent',criado:'17/10 10:05',slaH:72,usadoH:70,resp:'Téo',etapa:'revisao',prog:'Em andamento',prio:'Média',prazo:'2026-10-23',ctx:'Aumento de 18% no preço com nova região. Precisa do ok até sexta.',contractId:'nimbus',
   triagem:{tipo:'Aditivo de preço',risco:'baixo',playbook:'Fornecedor SaaS v2',nota:'Reajuste acima do IGP-M; o contrato vigente permite renegociar com 30 dias.'},thread:thread(['Carla','@Mike a Nimbus mandou aditivo com +18%, consegue olhar até sexta?','10:05'],['Mike','Card P-126 criado. Liguei ao contrato vigente da Nimbus. Téo pegou.','10:20'])},
- {id:'P-125',titulo:'Parecer · cessão do contrato Trópico',tipo:'Parecer',contraparte:'Trópico Payments S.A.',sol:'Bruno',areaSol:'Financeiro',canal:'E-mail',criado:'16/10 14:30',slaH:48,usadoH:60,resp:'Duda',etapa:'revisao',prog:'Em andamento',prio:'Alta',prazo:'2026-10-18',ctx:'Se fizermos a reorganização societária, o contrato da Trópico cai?',contractId:'tropico',
+ {id:'LEG-0125',titulo:'Parecer · cessão do contrato Trópico',tipo:'Parecer',contraparte:'Trópico Payments S.A.',sol:'Bruno',areaSol:'Financeiro',canal:'E-mail',criado:'16/10 14:30',slaH:48,usadoH:60,resp:'Duda',etapa:'revisao',prog:'Em andamento',prio:'Alta',prazo:'2026-10-18',ctx:'Se fizermos a reorganização societária, o contrato da Trópico cai?',contractId:'tropico',
   triagem:{tipo:'Parecer',risco:'alto',playbook:'—',nota:'Cl. 7.1 exige autorização prévia em mudança de controle, sob multa de R$ 500 mil.'},thread:[]},
- {id:'P-124',titulo:'Renovação · Lumen Identidade',tipo:'Fornecedor',contraparte:'Lumen Identidade Ltda.',sol:'Marina',areaSol:'Compliance',canal:'Formulário',criado:'14/10 09:00',slaH:72,usadoH:30,resp:'Duda',etapa:'negociacao',prog:'Bloqueado',bloqueio:'Aguardando a Marina: faixas de volume',prio:'Alta',prazo:'2026-11-04',ctx:'Queremos renovar, mas com preço por faixa de volume.',contractId:'lumen',
+ {id:'LEG-0124',titulo:'Renovação · Lumen Identidade',tipo:'Fornecedor',contraparte:'Lumen Identidade Ltda.',sol:'Marina',areaSol:'Compliance',canal:'Formulário',criado:'14/10 09:00',slaH:72,usadoH:30,resp:'Duda',etapa:'negociacao',prog:'Bloqueado',bloqueio:'Aguardando a Marina: faixas de volume',prio:'Alta',prazo:'2026-11-04',ctx:'Queremos renovar, mas com preço por faixa de volume.',contractId:'lumen',
   triagem:{tipo:'Renovação',risco:'médio',playbook:'Fornecedor SaaS v2',nota:'A janela de aviso fechou em 06/09; a renovação automática ocorre em 05/11. Dá para renegociar preço.'},thread:[]},
- {id:'P-122',titulo:'NDA · Orion Labs',tipo:'NDA',contraparte:'Orion Labs Inc.',sol:'Pedro',areaSol:'Produto',canal:'Slack #doc-agent',criado:'13/10 15:00',slaH:24,usadoH:12,resp:'Téo',etapa:'assinatura',prog:'Em andamento',prio:'Baixa',prazo:'2026-10-22',ctx:'NDA para integração de API.',
+ {id:'LEG-0122',titulo:'NDA · Orion Labs',tipo:'NDA',contraparte:'Orion Labs Inc.',sol:'Pedro',areaSol:'Produto',canal:'Slack #doc-agent',criado:'13/10 15:00',slaH:24,usadoH:12,resp:'Téo',etapa:'assinatura',prog:'Em andamento',prio:'Baixa',prazo:'2026-10-22',ctx:'NDA para integração de API.',
   triagem:{tipo:'NDA mútuo',risco:'baixo',playbook:'NDA padrão Avenia v3',nota:'Aprovado sem desvio. DocuSign: 1 de 2 assinaturas.'},thread:[]},
- {id:'P-121',titulo:'NDA · Sigma Analytics',tipo:'NDA',contraparte:'Sigma Analytics',sol:'Rafael',areaSol:'Comercial',canal:'Slack #doc-agent',criado:'09/10 11:00',slaH:24,usadoH:20,resp:'Téo',etapa:'arquivado',prog:'Concluído',prio:'Baixa',prazo:'2026-10-10',ctx:'NDA para piloto de dados.',
+ {id:'LEG-0121',titulo:'NDA · Sigma Analytics',tipo:'NDA',contraparte:'Sigma Analytics',sol:'Rafael',areaSol:'Comercial',canal:'Slack #doc-agent',criado:'09/10 11:00',slaH:24,usadoH:20,resp:'Téo',etapa:'arquivado',prog:'Concluído',prio:'Baixa',prazo:'2026-10-10',ctx:'NDA para piloto de dados.',
   triagem:{tipo:'NDA mútuo',risco:'baixo',playbook:'NDA padrão Avenia v3',nota:'Aprovado automaticamente (sem desvio).'},thread:[]},
 ];
 R.forEach(r=>{ r.activity=[{t:'ev',who:'Mike',txt:`criou o card a partir de ${r.canal}`,at:r.criado}]; if(r.resp) r.activity.push({t:'ev',who:'Fernanda',txt:`atribuiu a ${r.resp}`,at:r.criado}); });
@@ -531,7 +686,7 @@ function openNovoPedido(){
   pick('#oTipo','tipo'); pick('#oQuando','quando'); $('#nCp').addEventListener('input',upd);
   $('#nSend').onclick=()=>{
     const cp=$('#nCp').value.trim()||'Contraparte a definir';
-    const id='P-'+(129+R.length-7);
+    const id='LEG-0'+(129+R.length-7);
     const sol=S.persona==='solicitante'?'Rafael':me().name;
     R.unshift({id,titulo:`${st.tipo} · ${cp}`,tipo:st.tipo,contraparte:cp,sol,areaSol:S.persona==='solicitante'?'Comercial':'Legal',canal:'Formulário',criado:'20/10 agora',slaH:st.tipo==='NDA'?24:st.tipo==='Contrato de cliente'?120:72,usadoH:0,resp:null,etapa:'entrada',prog:'A fazer',prio:'Média',prazo:'',ctx:$('#nCtx').value.trim()||'(sem contexto)',triagem:{tipo:st.tipo,risco:'a definir',playbook:st.tipo==='NDA'?'NDA padrão Avenia v3':'a definir',nota:'Triagem automática em andamento.'},thread:[],activity:[{t:'ev',who:sol,txt:'abriu o pedido pelo formulário',at:'20/10 agora'}]});
     close(); toast(`Pedido ${id} entrou na Entrada da esteira. Você acompanha aqui e no Slack.`); render();
@@ -782,7 +937,7 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('change',e=>{
   const t=e.target;
-  if(t.id==='persona'){ S.persona=t.value; try{localStorage.setItem('mike-proto-persona',t.value);}catch(_){} S.chips=[]; S.view='Todos'; go('#/inicio'); render(); toast('Agora você vê como '+me().full+' ('+me().role+').'); }
+  if(t.id==='persona'){ S.persona=t.value; S.revTab=null; S.dp=null; try{localStorage.setItem('mike-proto-persona',t.value);}catch(_){} S.chips=[]; S.view='Todos'; go('#/inicio'); render(); toast('Agora você vê como '+me().full+' ('+me().role+').'); }
   if(t.dataset.task){ const r=curCard(); const k=t.dataset.task; const label={prog:'Progresso',resp:'Responsável',prio:'Prioridade',prazo:'Prazo'}[k]; r[k]=t.value||null; if(k==='prog'&&t.value==='Bloqueado') r.bloqueio=prompt('O que está bloqueando?','Aguardando o solicitante')||'Bloqueado'; r.activity.push({t:'ev',who:me().name,txt:`mudou ${label} para ${k==='prazo'?isoBR(t.value):t.value||'—'}`,at:'20/10 agora'}); toast(`${label} atualizado. Espelhado no Notion${r.sol&&k==='prog'?' e avisado a '+r.sol+' no Slack':''}.`); render(); }
 });
 document.addEventListener('submit',e=>{
@@ -803,7 +958,7 @@ document.addEventListener('drop',e=>{ const l=e.target.closest('[data-lane]'); i
 function act(a,t){
   const d=t.dataset;
   if(a==='renovar'||a==='adiar'){ S.done.add(d.k); toast(a==='renovar'?'Renovação registrada. O alerta foi fechado e a decisão está na atividade do card.':'Lembrete adiado por 7 dias.'); render(); return; }
-  if(a==='encerrar'||a==='renegociar'){ const c=C.find(x=>'renov-'+x.id===d.k); confirmAct(a==='encerrar'?'Não renovar · '+c.contraparte:'Renegociar · '+c.contraparte,[a==='encerrar'?`Gerar a minuta de notificação de não renovação (aviso de ${esc(c.aviso)}, cl. 5.1) para ${esc(c.resp)} revisar`:`Abrir um card na Entrada da esteira ligado a este contrato, com ${esc(c.resp)} como responsável`,'Registrar a decisão na atividade do contrato','Avisar a área responsável ('+esc(c.area)+') no Slack'],()=>{ S.done.add(d.k); if(a==='renegociar'){ R.unshift({id:'P-'+(130+R.length),titulo:'Renegociação · '+c.contraparte.split(' ')[0],tipo:c.tipo,contraparte:c.contraparte,sol:me().name,areaSol:'Legal',canal:'Prazos',criado:'20/10 agora',slaH:120,usadoH:0,resp:c.resp,etapa:'entrada',prog:'A fazer',prio:'Alta',prazo:'',ctx:'Renegociar antes da renovação.',contractId:c.id,triagem:{tipo:'Renegociação',risco:c.risco,playbook:'—',nota:'Aberto a partir do alerta de renovação.'},thread:[],activity:[{t:'ev',who:me().name,txt:'abriu a partir do alerta de renovação',at:'20/10 agora'}]}); } toast(a==='encerrar'?'Minuta de não renovação gerada para revisão.':'Card de renegociação criado na Entrada.'); render(); }); return; }
+  if(a==='encerrar'||a==='renegociar'){ const c=C.find(x=>'renov-'+x.id===d.k); confirmAct(a==='encerrar'?'Não renovar · '+c.contraparte:'Renegociar · '+c.contraparte,[a==='encerrar'?`Gerar a minuta de notificação de não renovação (aviso de ${esc(c.aviso)}, cl. 5.1) para ${esc(c.resp)} revisar`:`Abrir um card na Entrada da esteira ligado a este contrato, com ${esc(c.resp)} como responsável`,'Registrar a decisão na atividade do contrato','Avisar a área responsável ('+esc(c.area)+') no Slack'],()=>{ S.done.add(d.k); if(a==='renegociar'){ R.unshift({id:'LEG-0'+(130+R.length),titulo:'Renegociação · '+c.contraparte.split(' ')[0],tipo:c.tipo,contraparte:c.contraparte,sol:me().name,areaSol:'Legal',canal:'Prazos',criado:'20/10 agora',slaH:120,usadoH:0,resp:c.resp,etapa:'entrada',prog:'A fazer',prio:'Alta',prazo:'',ctx:'Renegociar antes da renovação.',contractId:c.id,triagem:{tipo:'Renegociação',risco:c.risco,playbook:'—',nota:'Aberto a partir do alerta de renovação.'},thread:[],activity:[{t:'ev',who:me().name,txt:'abriu a partir do alerta de renovação',at:'20/10 agora'}]}); } toast(a==='encerrar'?'Minuta de não renovação gerada para revisão.':'Card de renegociação criado na Entrada.'); render(); }); return; }
   if(a==='atribuir'){ const r=R.find(x=>x.id===d.r); r.resp='Duda'; r.activity.push({t:'ev',who:me().name,txt:'atribuiu a Duda',at:'20/10 agora'}); toast('Atribuído a Duda. '+r.sol+' foi avisado no Slack.'); render(); return; }
   if(a==='assumir'){ const r=R.find(x=>x.id===d.r); r.resp=me().name; if(r.etapa==='entrada') r.etapa='triagem'; r.prog='Em andamento'; r.activity.push({t:'ev',who:me().name,txt:'assumiu o card',at:'20/10 agora'}); toast('Card é seu e foi para a Triagem. '+r.sol+' foi avisado no Slack.'); render(); return; }
   if(a==='avancar'){ moveEtapa(R.find(x=>x.id===d.r),'revisao'); return; }
@@ -825,7 +980,501 @@ function act(a,t){
 }
 
 $('#persona').value=S.persona;
+</script>
+<div id="dp"></div>
+<div class="toast2" id="toast2" role="status"><span id="toast2t"></span><button id="toast2u">Desfazer</button></div>
+<script>
+// =====================================================================================
+// Paridade (docs/product/05 (paridade)): Início com auto-revisão, Pedidos com
+// orquestração, Revisão por playbook com redline, Radar regulatório, Spaces, Painel.
+// Reaproveita dados (C, R, SCHEMA, PEOPLE) e utilidades do bloco anterior.
+// Componentes com o mesmo nome do doc §4: statusChip, verdictCounts, verdictLabel,
+// statTiles, reviewTable, detailPanel, feedHtml (ActivityFeed), suggHtml (AgentSuggestion),
+// planHtml (AgentPlan), citeBtn (CitationPill), deadlineBadge, emptyState.
+// =====================================================================================
+
+// ---------- ícones (traço lucide) ----------
+const IC={
+  ok:'<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  half:'<path d="M10.1 2.18a10 10 0 0 1 3.8 0"/><path d="M13.9 21.82a10 10 0 0 1-3.8 0"/><path d="M17.61 3.72a10 10 0 0 1 2.69 2.7"/><path d="M2.18 13.9a10 10 0 0 1 0-3.8"/><path d="M20.28 17.61a10 10 0 0 1-2.7 2.69"/><path d="M21.82 10.1a10 10 0 0 1 0 3.8"/><path d="M3.72 6.39a10 10 0 0 1 2.7-2.69"/><path d="M6.39 20.28a10 10 0 0 1-2.69-2.7"/>',
+  alert:'<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  diamond:'<path d="M2.7 10.3a2.41 2.41 0 0 0 0 3.41l7.59 7.59a2.41 2.41 0 0 0 3.41 0l7.59-7.59a2.41 2.41 0 0 0 0-3.41L13.7 2.71a2.41 2.41 0 0 0-3.41 0Z"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  ext:'<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  quote:'<path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/>',
+  folder:'<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  chev:'<path d="m6 9 6 6 6-6"/>',
+};
+const ico=(n,s=13)=>`<svg class="i" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
+
+// ---------- agentes (nomes fixos, doc 05 §4.8) ----------
+const AG={intake:'Agente de intake',atribuicao:'Agente de atribuição',extracao:'Agente de extração',revisao:'Agente de revisão',redacao:'Agente de redação',prazos:'Agente de prazos',regulatorio:'Agente regulatório'};
+const isAg=w=>typeof w==='string'&&w.startsWith('ag:');
+const wName=w=>isAg(w)?AG[w.slice(3)]:w;
+const iniOf=n=>{ const p=byName(n); return p?p.ini:String(n||'?').split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase(); };
+const avatar=w=>isAg(w)?`<span class="ag-av" title="${esc(wName(w))}">${ico('diamond',12)}</span>`:`<span class="af-av" title="${esc(w)}">${esc(iniOf(w))}</span>`;
+const whoHtml=w=>w?`<span class="who">${avatar(w)}<span class="${isAg(w)?'agn':''}">${esc(wName(w))}</span></span>`:'<span class="muted">sem dono</span>';
+
+// ---------- StatusChip ----------
+const SC_L={rodando:'Rodando',pronto:'Pronto p/ revisão',em_andamento:'Em andamento',bloqueado:'Bloqueado',concluido:'Concluído',a_fazer:'A fazer'};
+const PROG_SC={'A fazer':'a_fazer','Em andamento':'em_andamento','Bloqueado':'bloqueado','Concluído':'concluido'};
+const statusChip=(st,label)=>`<span class="sc ${st}"${st==='rodando'?' role="status"':''}><i></i>${st==='concluido'?ico('check',12):''}${esc(label||SC_L[st])}</span>`;
+
+// ---------- VerdictCounts / VerdictLabel ----------
+const VL={d:['Diverge','alert'],p:['Precisa revisão','half'],a:['Alinhado','ok'],n:['Não se aplica','']};
+const verdictLabel=(k,label)=>`<span class="vl ${k}">${VL[k][1]?ico(VL[k][1],12):''}${esc(label||VL[k][0])}</span>`;
+function verdictCounts(v,variant='compact',sel=null){
+  if(variant==='compact') return `<span class="vc" aria-label="${v.a} alinhado, ${v.p} precisam revisão, ${v.d} divergem"><span class="${v.a?'a':'z'}">${ico('ok',12)}${v.a}</span><span class="${v.p?'p':'z'}">${ico('half',12)}${v.p}</span><span class="${v.d?'d':'z'}">${ico('alert',12)}${v.d}</span></span>`;
+  return `<div class="vt">${[['a','Alinhado'],['p','Precisa revisão'],['d','Diverge']].map(([k,l])=>`<button class="${k} ${sel===k?'on':''}" data-x="vfilter" data-v="${k}" aria-pressed="${sel===k}"><b>${v[k]}</b><span>${l} ${ico(VL[k][1],12)}</span></button>`).join('')}</div>`;
+}
+// ---------- StatTiles ----------
+const statTiles=(tiles,sel)=>`<div class="tiles">${tiles.map(t=>`<button class="tile ${sel===t.k?'on':''} ${t.static?'static':''}" ${t.static?'':`data-x="tile" data-k="${t.k}"`} aria-pressed="${sel===t.k}"><b class="${t.cls||''}">${t.n}</b><span class="lbl">${t.l}</span></button>`).join('')}</div>`;
+// ---------- CitationPill / DeadlineBadge / EmptyState ----------
+const citeBtn=(label,target)=>`<button class="cite" data-x="cite" data-t="${esc(target)}">${ico('quote',11)}${esc(label)}</button>`;
+function deadlineBadge(c){ const nd=noticeDeadline(c); if(!nd) return '—'; const n=days(nd); if(n>90) return `<span class="muted" style="font-size:12px" title="aviso até ${fmt(nd)}">&gt; 90 d</span>`; return `<span title="aviso até ${fmt(nd)} (vencimento ${esc(c.vencimento)} − ${esc(c.aviso)} de aviso)">${dBadge(days(nd))}</span>`; }
+const emptyState=(t,p,actions)=>`<div class="es"><h3>${t}</h3><p>${p}</p><div class="toolbar">${actions}</div></div>`;
+
+// ---------- ActivityFeed ----------
+let EVN=0; const ev=(w,v,at,x={})=>({id:'e'+(++EVN),w,v,at,...x});
+function feedHtml(list,limit){
+  const l=limit?list.slice(0,limit):list;
+  if(!l.length) return '<div class="muted" style="font-size:13px">Nada ainda. Tudo o que pessoas e agentes fizerem aqui aparece nesta linha do tempo.</div>';
+  return l.map(e=>`<div class="af-row">${avatar(e.w)}<div class="grow"><div><b class="${isAg(e.w)?'agn':''}">${esc(wName(e.w))}</b> ${e.v}${e.src?` com <button class="linkbtn" data-x="steps" data-e="${e.id}">${e.src} fontes</button>`:''}</div><div class="af-meta">${esc(e.at)}${e.ok?` · ${esc(e.ok)}`:''}${e.steps&&!e.src?` · <button class="linkbtn" data-x="steps" data-e="${e.id}">ver o que fez ▸</button>`:''}</div>${e.steps&&S.openSteps===e.id?`<ol class="af-steps">${e.steps.map(s=>`<li>${s}</li>`).join('')}</ol>`:''}</div></div>`).join('');
+}
+
+// ---------- toast com Desfazer (10 s) ----------
+function undoToast(msg,undo){
+  const t=$('#toast2'); $('#toast2t').textContent=msg; t.classList.add('on'); $('#toast')?.classList.remove('on');
+  clearTimeout(undoToast._t); undoToast._t=setTimeout(()=>t.classList.remove('on'),10000);
+  $('#toast2u').onclick=()=>{ t.classList.remove('on'); undo&&undo(); render(); toast('Desfeito.'); };
+}
+
+// ---------- ID legível: LEG-nnnn ----------
+R.forEach(r=>{ r.activity.forEach(a=>{ if(a.who==='Mike') a.who='ag:intake'; }); });
+
+// ---------- dados: revisões automáticas (Início) ----------
+const NDA_DOC=[
+ {n:'1',t:'1. Partes',p:'De um lado, Avenia Pagamentos S.A. ("Avenia"), e de outro, Polaris Exchange Ltd. ("Polaris"), celebram este Acordo de Confidencialidade Mútuo ("Acordo").'},
+ {n:'2',t:'2. Objeto',p:'2.1 Este Acordo regula a troca de Informações Confidenciais entre as partes para a avaliação de uma parceria de liquidez.'},
+ {n:'3',t:'3. Informação Confidencial',p:'3.1 Considera-se Informação Confidencial toda informação, escrita ou oral, revelada por uma parte à outra, desde que identificada como confidencial no ato ou em até 10 (dez) dias.'},
+ {n:'4',t:'4. Prazo de confidencialidade',p:'4.1 As obrigações de confidencialidade vigorarão por prazo indeterminado, inclusive após o término deste Acordo.'},
+ {n:'5',t:'5. Exceções',p:'5.1 Não é confidencial a informação (a) já pública, (b) já conhecida pela parte receptora, (c) desenvolvida de forma independente ou (d) exigida por ordem judicial, caso em que a parte receptora avisará a outra antes de revelá-la.'},
+ {n:'6',t:'6. Devolução e destruição',p:'6.1 Ao fim da avaliação, a parte receptora devolverá ou destruirá a Informação Confidencial em até 15 (quinze) dias e declarará isso por escrito.'},
+ {n:'7',t:'7. Penalidade',p:'7.1 A violação deste Acordo sujeitará a parte infratora ao pagamento de multa não compensatória de R$ 1.000.000,00 (um milhão de reais) por violação, sem prejuízo de perdas e danos.'},
+ {n:'8',t:'8. Não aliciamento',p:'8.1 As partes não contratarão empregados uma da outra por 36 (trinta e seis) meses contados da assinatura.'},
+ {n:'9',t:'9. Vigência',p:'9.1 Este Acordo vigorará por prazo indeterminado, não podendo ser rescindido unilateralmente.'},
+ {n:'10',t:'10. Idioma',p:'10.1 Este Acordo é firmado em português e inglês. Em caso de divergência, prevalecerá a versão em inglês.'},
+ {n:'11',t:'11. Lei aplicável e foro',p:'11.1 Este Acordo é regido pela lei brasileira. Fica eleito o foro da Comarca de São Paulo/SP.'},
+ {n:'12',t:'12. Proteção de dados',p:'12.1 Havendo tratamento de dados pessoais, as partes observarão a Lei nº 13.709/2018 (LGPD) e comunicarão à outra parte qualquer incidente de segurança em até 48 (quarenta e oito) horas.'},
+];
+const PB=[['Playbook NDA padrão Avenia v3','pb']];
+const POL_F=[
+ {id:'f4',cl:'4',k:'d',t:'Confidencialidade por prazo indeterminado',a:'Prazo indeterminado é difícil de cumprir e de provar. O playbook limita a confidencialidade a 5 anos após o término.',pos:'5 anos contados do término do Acordo.',src:[['Playbook NDA §4','pb'],['Precedente: NDA Delta Liquidez cl. 8','delta']],old:'por prazo indeterminado, inclusive',neu:'pelo prazo de 5 (cinco) anos contados do término deste Acordo, inclusive',sim:94},
+ {id:'f9',cl:'9',k:'d',t:'Vigência perpétua, sem direito de rescisão',a:'Sem prazo e sem rescisão unilateral, a Avenia fica presa ao Acordo. O playbook pede 2 anos e rescisão com aviso de 30 dias.',pos:'2 anos, rescindível por qualquer parte com 30 dias de aviso.',src:[['Playbook NDA §2','pb'],['Precedente: NDA Delta Liquidez cl. 3','delta']],old:'por prazo indeterminado, não podendo ser rescindido unilateralmente',neu:'pelo prazo de 2 (dois) anos, podendo ser rescindido por qualquer das partes mediante aviso prévio de 30 (trinta) dias',sim:91},
+ {id:'f7',cl:'7',k:'p',t:'Multa fixa de R$ 1 milhão por violação',a:'O playbook prefere indenização por perdas e danos comprovados. Se a contraparte insistir em multa, o teto aceito é R$ 200 mil.',pos:'Perdas e danos comprovados; multa, se houver, até R$ 200.000,00.',src:[['Playbook NDA §7','pb']],old:'multa não compensatória de R$ 1.000.000,00 (um milhão de reais) por violação, sem prejuízo de perdas e danos',neu:'indenização pelas perdas e danos comprovadamente causados',sim:88},
+ {id:'f8',cl:'8',k:'p',t:'Não aliciamento por 36 meses',a:'O playbook aceita 12 meses, e só para quem participou da avaliação.',pos:'12 meses, limitado a quem participou.',src:[['Playbook NDA §8','pb']],old:'por 36 (trinta e seis) meses contados da assinatura',neu:'por 12 (doze) meses contados da assinatura, limitado às pessoas que participaram da avaliação',sim:90},
+ {id:'f10',cl:'10',k:'p',t:'Prevalência da versão em inglês',a:'Comum com contraparte estrangeira, mas com foro no Brasil o playbook pede que a versão em português prevaleça.',pos:'Prevalece a versão em português.',src:[['Playbook NDA §10','pb']],old:'prevalecerá a versão em inglês',neu:'prevalecerá a versão em português'},
+ {id:'f3',cl:'3',k:'a',t:'Definição de Informação Confidencial',a:'Igual à posição padrão, inclusive a informação oral identificada em até 10 dias.',src:[['Playbook NDA §3','pb']]},
+ {id:'f5',cl:'5',k:'a',t:'Exceções à confidencialidade',a:'As 4 exceções do playbook estão presentes, com aviso prévio em caso de ordem judicial.',src:[['Playbook NDA §5','pb']]},
+ {id:'f6',cl:'6',k:'a',t:'Devolução e destruição',a:'15 dias, com declaração por escrito. Dentro do padrão.',src:[['Playbook NDA §6','pb']]},
+ {id:'f11',cl:'11',k:'a',t:'Lei aplicável e foro',a:'Lei brasileira e foro de São Paulo/SP, como no playbook.',src:[['Playbook NDA §11','pb']]},
+ {id:'f12',cl:'12',k:'a',t:'Proteção de dados (LGPD)',a:'Prevê a LGPD e comunicação de incidente em 48 h. O NDA não envolve tratamento contínuo de dados.',src:[['Playbook NDA §12','pb']]},
+];
+const tally=fs=>({a:fs.filter(f=>f.k==='a').length,p:fs.filter(f=>f.k==='p').length,d:fs.filter(f=>f.k==='d').length});
+const REV=[
+ {id:'polaris',doc:'NDA Mútuo Polaris.docx',cp:'Polaris Exchange Ltd.',st:'pronto',resp:'Duda',ped:'LEG-0128',prazo:'21/10/2026',upd:'há 12 min',playbook:'NDA padrão Avenia v3',findings:POL_F,
+  summary:`Duas cláusulas divergem do playbook: confidencialidade por prazo indeterminado ${citeBtn('cl. 4','polaris|4')} e vigência perpétua sem direito de rescisão ${citeBtn('cl. 9','polaris|9')}. A multa fixa de R$ 1 milhão ${citeBtn('cl. 7','polaris|7')}, o não aliciamento por 36 meses ${citeBtn('cl. 8','polaris|8')} e a prevalência do inglês ${citeBtn('cl. 10','polaris|10')} pedem sua revisão. Foro e LGPD estão alinhados.`,
+  feed:[ev('Duda','abriu a revisão','há 5 min'),ev('ag:revisao','revisou contra o playbook NDA padrão Avenia v3','há 12 min',{src:3,steps:['Leu as 12 cláusulas da minuta da contraparte','Comparou com 10 regras do playbook NDA padrão Avenia v3','Buscou precedentes nossos: NDA Delta Liquidez (cl. 3 e 8)','Redigiu 5 edições na posição padrão, como alterações controladas']}),ev('ag:atribuicao','sugeriu Duda (2 pedidos abertos, contra 4 do Téo)','há 2 h',{ok:'confirmado por Fernanda'}),ev('ag:intake','criou LEG-0128 a partir do Slack #doc-agent','ontem',{steps:['Leu a mensagem do Rafael e o anexo','Classificou como NDA mútuo','Perguntou na thread o que faltava (mútuo? registro?)']})]},
+ {id:'velapay',doc:'MSA Vela Pay (minuta do cliente).docx',cp:'Vela Pay IP S.A.',st:'rodando',step:'Redigindo edições…',resp:'ag:revisao',ped:'LEG-0127',prazo:'30/10/2026',upd:'agora',
+  feed:[ev('ag:revisao','está redigindo edições na posição padrão do playbook Cliente API v4','agora'),ev('ag:extracao','extraiu 24 campos da Ficha','há 4 min',{steps:['Leu 31 cláusulas','Preencheu 22 de 24 campos com citação','2 campos sem previsão no contrato: cessão e alteração de controle']}),ev('ag:intake','criou LEG-0127 a partir do formulário','ontem')]},
+ {id:'nimbus2',doc:'Aditivo de preço Nimbus v2.docx',cp:'Nimbus Cloud Ltda.',st:'rodando',step:'Lendo o contrato…',resp:'Téo',ped:'LEG-0126',contractId:'nimbus',prazo:'23/10/2026',upd:'agora',
+  feed:[ev('ag:revisao','está lendo a nova versão enviada pela Nimbus','agora'),ev('Téo','subiu a versão 2 do aditivo','há 3 min')]},
+ {id:'tropico',doc:'MSA Trópico · versão vigente.pdf',cp:'Trópico Payments S.A.',st:'pronto',resp:'Duda',ped:'LEG-0125',contractId:'tropico',prazo:'18/10/2026',upd:'há 1 h',v:{a:14,p:6,d:3},
+  summary:`A mudança de controle exige autorização prévia, sob multa de R$ 500 mil ${citeBtn('cl. 7.1','card|tropico')}. A cessão também depende de autorização ${citeBtn('cl. 6.1','card|tropico')}. Para a reorganização societária, recomendo pedir a anuência da Trópico antes.`,
+  feed:[ev('ag:revisao','revisou contra o playbook Cliente API v4','há 1 h',{src:4,steps:['Leu o contrato vigente','Comparou com 23 regras do playbook','Cruzou com o pedido de parecer de Bruno']}),ev('Fernanda','comentou: "@Duda a multa de mudança de controle está fora do playbook"','15/10')]},
+ {id:'lumen',doc:'Proposta de renovação Lumen.docx',cp:'Lumen Identidade Ltda.',st:'pronto',resp:'Duda',ped:'LEG-0124',contractId:'lumen',prazo:'04/11/2026',upd:'há 3 h',v:{a:10,p:4,d:1},
+  summary:`A proposta mantém a renovação automática com aviso de 60 dias ${citeBtn('cl. 3.2','card|lumen')}; a janela de aviso do contrato atual já passou. O preço por faixa ainda não veio.`,
+  feed:[ev('ag:revisao','revisou a proposta contra o playbook Fornecedor SaaS v2','há 3 h',{src:2}),ev('Duda','marcou como Bloqueado: aguardando a Marina','ontem')]},
+ {id:'kappa',doc:'Aditivo 2 · Custódia Kappa.docx',cp:'Kappa Custódia S.A.',st:'pronto',resp:null,sugg:'Téo',why:'Téo é o responsável pelo contrato vigente da Kappa e tem 2 pedidos abertos.',contractId:'kappa',prazo:'—',upd:'há 5 h',v:{a:9,p:5,d:4},
+  summary:`O aditivo amplia a responsabilidade da Avenia sobre ativos em trânsito ${citeBtn('cl. 4','card|kappa')} e mantém o aviso de 180 dias ${citeBtn('cl. 5.1','card|kappa')}. Quatro desvios do playbook Parceiro v1.`,
+  feed:[ev('ag:atribuicao','sugeriu Téo','há 5 h'),ev('ag:revisao','revisou contra o playbook Parceiro v1','há 5 h',{src:5}),ev('ag:intake','detectou o arquivo novo em Drive · Minutas recebidas','há 5 h')]},
+ {id:'ferrovia',doc:'Renovação Ferrovia Dados.docx',cp:'Ferrovia Dados S.A.',st:'pronto',resp:'Duda',contractId:'ferrovia',prazo:'—',upd:'ontem',v:{a:16,p:2,d:0},
+  summary:`Renovação nas mesmas condições, com reajuste pelo IGP-M ${citeBtn('cl. 4.2','card|ferrovia')}. Sem desvios.`,
+  feed:[ev('ag:revisao','revisou contra o playbook Fornecedor v2','ontem',{src:2})]},
+ {id:'orion',doc:'NDA Orion Labs (assinado).pdf',cp:'Orion Labs Inc.',st:'concluido',resp:'Téo',ped:'LEG-0122',prazo:'22/10/2026',upd:'há 2 d',v:{a:12,p:0,d:0},
+  summary:'Versão assinada igual à versão aprovada (verificação de assinatura).',
+  feed:[ev('ag:revisao','confirmou que a versão assinada é a aprovada','há 2 d'),ev('Téo','aprovou sem desvios','há 3 d')]},
+];
+REV.forEach(r=>{ if(r.findings) r.v=tally(r.findings); });
+const FOLDERS=[['Drive · Contratos assinados',142,'há 20 min'],['Drive · Minutas recebidas',37,'há 5 h'],['legal@avenia.io · encaminhados',12,'ontem']];
+
+// ---------- estado novo ----------
+Object.assign(S,{revTab:null,revFilter:null,dp:null,foc:-1,greetOpen:false,openSteps:null,pedFilter:null,vf:null,sgFoc:0,editingF:null,rejecting:null,scan:'bcb',lastRoute:null});
+
+// ---------- nav: Início · Pedidos · Esteira · Contratos · Prazos · Radar regulatório · Mais ▾ ----------
+function renderNav(route){
+  const cur = route==='card' ? (C.find(c=>c.id===location.hash.split('/')[2])?'contratos':'esteira') : route==='revisao'?'inicio':route;
+  let items;
+  if(S.persona==='solicitante') items=[['inicio','Início'],['pedidos','Meus pedidos']];
+  else if(S.persona==='founder') items=[['inicio','Início'],['contratos','Contratos'],['prazos','Prazos'],['radar-regulatorio','Radar regulatório']];
+  else items=[['inicio','Início'],['pedidos','Pedidos',R.filter(r=>!r.resp&&openCard(r)).length||null],['esteira','Esteira'],['contratos','Contratos'],['prazos','Prazos',prazosList(30).length||null],['radar-regulatorio','Radar regulatório']];
+  const more=[['spaces','Spaces','áreas e escritórios externos'],['painel','Painel do Legal','adoção, tempo e horas poupadas'],['#playbooks','Playbooks','posições padrão por tipo'],['#biblioteca','Biblioteca','cláusulas e modelos'],['#workflows','Workflows','rotinas salvas'],['#assistente','Assistente livre','chat sem escopo']];
+  const moreOn=['spaces','painel'].includes(cur);
+  $('#nav').innerHTML = items.map(([k,l,n])=>`<a href="#/${k}" class="${cur===k?'on':''}">${l}${n!=null?`<span class="n" title="${k==='pedidos'?'sem dono':'avisos em até 30 dias'}">${n}</span>`:''}</a>`).join('')
+   + (S.persona==='solicitante'?'':`<details class="more ${moreOn?'on':''}"><summary>Mais ${ico('chev',12)}</summary><div class="more-menu">${more.filter(m=>S.persona!=='founder'||m[0]==='painel').map(([k,l,s])=>k.startsWith('#')?`<a href="#" data-x="soon" data-l="${l}">${l}<span>${s}</span></a>`:`<a href="#/${k}">${l}<span>${s}</span></a>`).join('')}</div></details>`);
+}
+
+// ---------- Início com auto-revisão ----------
+function revRows(list){
+  return list.map((r,i)=>{ const c=r.contractId&&C.find(x=>x.id===r.contractId);
+    return `<div class="rt-row rt-rev ${S.dp&&S.dp.id===r.id?'sel':''} ${S.foc===i?'foc':''}" data-x="row" data-kind="rev" data-id="${r.id}" data-i="${i}">
+      <div><div class="t">${esc(r.doc)}</div><div class="s">${esc(r.cp)}${r.ped?` · ${r.ped}`:''}</div></div>
+      <div>${r.st==='rodando'?statusChip('rodando','Em andamento'):statusChip(r.st)}</div>
+      <div>${r.st==='rodando'?`<span class="muted" style="font-size:12.5px">${ico('diamond',11)} ${esc(r.step)}</span>`:verdictCounts(r.v)}</div>
+      <div>${c?deadlineBadge(c):'<span class="muted">—</span>'}</div>
+      <div class="muted c-upd" style="font-size:12.5px">${esc(r.upd)}</div>
+      <div>${r.resp?whoHtml(r.resp):r.sugg?`<span class="sugg">${ico('diamond',11)} sugerido: ${esc(r.sugg)}</span>`:whoHtml(null)}</div>
+    </div>`; }).join('');
+}
+function revList(){
+  const p=me(); const mine=r=>r.resp===p.name||(S.persona==='head'&&!r.resp);
+  if(!S.revTab) S.revTab=S.persona==='head'?'Todas':'Minhas';
+  let l=REV.filter(r=>S.revTab==='Todas'||mine(r));
+  const f=S.revFilter;
+  if(f==='pronto') l=REV.filter(r=>r.st==='pronto');
+  if(f==='meus') l=REV.filter(r=>r.resp===p.name);
+  if(f==='avisos') l=REV.filter(r=>{ const c=r.contractId&&C.find(x=>x.id===r.contractId); return c&&days(noticeDeadline(c))<=30; });
+  return l;
+}
+function renderInicio(){
+  if(S.persona==='solicitante') return renderInicioSolicitante();
+  if(S.persona==='founder') return renderInicioFounder();
+  const p=me(); const list=revList(); const mineN=REV.filter(r=>r.resp===p.name||(S.persona==='head'&&!r.resp)).length;
+  const done=REV.filter(r=>r.st!=='rodando');
+  const ex=exigeVoce().filter(x=>S.persona==='head'||!x.k.startsWith('atr-'));
+  return `
+  <div class="greet">${avatar('ag:revisao')}<span>Bom dia, ${p.name}. Revisei <b>${done.length} contratos</b> para você desde sua última visita.</span><button class="linkbtn" data-x="greet" aria-expanded="${S.greetOpen}">${S.greetOpen?'recolher':'o que mudou'} ${ico('chev',12)}</button>
+    ${S.greetOpen?`<ul>${done.slice(0,6).map(r=>`<li><b>${esc(r.cp)}</b>: ${r.v.d?`${r.v.d} ${r.v.d>1?'divergem':'diverge'}`:'sem desvios'}${r.v.p?`, ${r.v.p} para revisar`:''} · <button class="linkbtn" data-x="row" data-kind="rev" data-id="${r.id}">abrir</button></li>`).join('')}<li class="muted">2 ainda em andamento: ${REV.filter(r=>r.st==='rodando').map(r=>esc(r.cp)).join(' e ')}.</li></ul>`:''}</div>
+  ${statTiles([{k:'pronto',n:REV.filter(r=>r.st==='pronto').length,l:'Prontos p/ revisar'},{k:'meus',n:REV.filter(r=>r.resp===p.name).length,l:'Atribuídos a você'},{k:'pastas',n:FOLDERS.length,l:'Pastas conectadas'},{k:'avisos',n:prazosList(30).length,l:'Avisos em 30 dias',cls:prazosList(30).length?'warn':''}],S.revFilter)}
+  <div class="toolbar"><div class="tabs" style="margin:0">${['Minhas','Todas'].map(t=>`<button class="${S.revTab===t&&!S.revFilter?'on':''}" data-x="revtab" data-t="${t}">${t==='Minhas'?'Minhas revisões':'Todas'} (${t==='Minhas'?mineN:REV.length})</button>`).join('')}</div>
+    ${S.revFilter?`<span class="chip">${{pronto:'prontos p/ revisar',meus:'atribuídos a você',avisos:'avisos em 30 dias'}[S.revFilter]}<button data-x="clearf" aria-label="limpar filtro">✕</button></span>`:''}
+    <div class="spacer"></div><span class="mono" style="text-transform:none;letter-spacing:0"><span class="kbd">j</span><span class="kbd">k</span> navegar · <span class="kbd">Enter</span> abrir · <span class="kbd">Esc</span> fechar</span></div>
+  <div class="rt"><div class="rt-in"><div class="rt-row rt-rev rt-head"><div>Documento revisado</div><div>Status</div><div>Resumo do agente</div><div>Aviso</div><div class="c-upd">Atualizado</div><div>Responsável</div></div>
+  ${list.length?revRows(list):emptyState('Nada aqui com esse filtro.','Os contratos que eu revisar entram nesta tabela assim que chegam numa pasta conectada.','<button class="btn" data-x="clearf">Limpar filtro</button><button class="btn" data-x="tile" data-k="pastas">Ver pastas conectadas</button>')}</div></div>
+  <div class="grid g-home" style="margin-top:16px">
+    <section class="card"><div class="card-h"><h2>Exige você</h2><span class="mono">${ex.length}</span></div>${ex.slice(0,4).map(x=>`<div class="row clickable" data-go="${x.go}">${x.html}</div>`).join('')||'<div class="empty">Nada pendente.</div>'}</section>
+    <section class="card"><div class="card-h"><h2>Prazos de aviso · 90 dias</h2><a href="#/prazos" class="mono">prazos →</a></div>${prazoRows(prazosList(90, S.persona==='analista'?'Duda':null).slice(0,5))}</section>
+  </div>`;
+}
+function dpRev(r){
+  const c=r.contractId&&C.find(x=>x.id===r.contractId); const canEdit=S.persona==='head'||S.persona==='analista';
+  return `<div class="dp-t">${esc(r.doc)}</div>
+  <dl class="kv">
+    <dt>Contraparte</dt><dd>${esc(r.cp)}</dd>
+    <dt>Status</dt><dd>${r.st==='rodando'?statusChip('rodando',r.step):statusChip(r.st)}</dd>
+    <dt>Responsável</dt><dd>${canEdit?`<select data-x2="resp" data-id="${r.id}" aria-label="Responsável"><option value="">sem dono</option>${LEGAL.map(n=>`<option ${n===r.resp?'selected':''}>${n}</option>`).join('')}${isAg(r.resp)?`<option value="${r.resp}" selected>${esc(wName(r.resp))}</option>`:''}</select>`:whoHtml(r.resp)}</dd>
+    ${r.ped?`<dt>Pedido</dt><dd><button class="linkbtn" data-x="goped" data-id="${r.ped}">${r.ped} ${ico('ext',11)}</button> <span class="muted">· Slack #doc-agent</span></dd>`:''}
+    <dt>Prazo</dt><dd>${esc(r.prazo||'—')}</dd>
+    ${c?`<dt>Aviso</dt><dd>${deadlineBadge(c)} até ${fmt(noticeDeadline(c))} · ${c.renovAuto==='Sim'?'renova sozinho':'vence'} em ${esc(c.vencimento)}</dd>
+    <dt>Ficha</dt><dd><button class="linkbtn" data-x="gocard" data-id="${c.id}">${validCount(c)}/${SCHEMA.length} campos verificados</button><div class="bar" style="margin-top:4px"><i style="width:${validCount(c)/SCHEMA.length*100}%"></i></div></dd>`:''}
+  </dl>
+  ${!r.resp&&r.sugg?`<div class="sg" style="cursor:default"><div class="sg-h">${ico('diamond',12)}<span class="agn">Agente de atribuição</span> · sugestão</div><div class="sg-p" style="margin-top:6px">Sugiro <b>${esc(r.sugg)}</b>. ${esc(r.why)}</div><div class="sg-acts"><button class="btn sm pri" data-x="assign" data-id="${r.id}" data-who="${esc(r.sugg)}">Aceitar<span class="kbd">a</span></button><button class="btn sm ghost" data-x="assignno" data-id="${r.id}">Rejeitar<span class="kbd">r</span></button></div></div>`:''}
+  ${r.st==='rodando'?`<div class="dp-sec">Resumo</div><div class="summ muted">${ico('diamond',11)} ${esc(r.step)} O resumo aparece aqui quando eu terminar, com a citação de cada frase.</div>`
+   :`<div class="dp-sec">Resumo</div><div class="summ">${r.summary||''}</div><div class="dp-sec">Resultado contra o playbook</div>${verdictCounts(r.v,'tiles')}`}
+  <div class="toolbar" style="margin-top:4px">${r.findings?`<a class="btn pri" href="#/revisao/${r.id}">Abrir revisão</a>`:c?`<button class="btn pri" data-x="gocard" data-id="${c.id}">Abrir contrato</button>`:''}<button class="btn" data-act="share">Compartilhar</button></div>
+  <div class="dp-sec">Atividade <span>${r.feed.length}</span></div>${feedHtml(r.feed,5)}`;
+}
+function dpFolders(){
+  return `<div class="dp-t">Pastas conectadas</div><p class="muted" style="margin-top:-6px;font-size:13px">Todo arquivo novo ou nova versão nestas pastas é lido e revisado contra o playbook do tipo. Você vê o resultado no Início.</p>
+  ${FOLDERS.map(([n,q,t])=>`<div class="row">${ico('folder',16)}<div class="grow"><div class="t">${n}</div><div class="s">${q} documentos · último arquivo ${t}</div></div><span class="sc concluido">${ico('check',12)}ativa</span></div>`).join('')}
+  <div class="toolbar" style="margin-top:12px"><button class="btn pri" data-x="soon" data-l="Conectar pasta do Drive">Conectar outra pasta</button></div>`;
+}
+
+// ---------- Pedidos com orquestração ----------
+R.find(r=>r.id==='LEG-0128').sugg='Duda'; R.find(r=>r.id==='LEG-0128').why='2 pedidos abertos, contra 4 do Téo, e já fez 3 NDAs de exchanges este mês.';
+R.find(r=>r.id==='LEG-0127').sugg='Fernanda'; R.find(r=>r.id==='LEG-0127').why='MSA de cliente com volume alto: o playbook pede a Head na primeira revisão.';
+const EXT_SHARED=new Set(['LEG-0125']);
+function planOf(r){
+  if(r.plan) return r.plan;
+  const owner=r.resp||r.sugg||'Duda'; const fwd=['revisao','negociacao','assinatura','arquivado'].includes(r.etapa);
+  const st=(i)=>r.id==='LEG-0128'?(i===0?'concluido':'a_fazer'): r.prog==='Concluído'?'concluido': i===0?'concluido': i===1?(fwd?'concluido':'rodando'): i===2?(r.prog==='Bloqueado'?'bloqueado':fwd?'em_andamento':'a_fazer'):'a_fazer';
+  const steps = r.tipo==='Parecer'
+    ? [{w:'ag:intake',t:'Classificar o pedido e checar o que falta'},{w:'ag:extracao',t:'Localizar cessão e mudança de controle no contrato vigente'},{w:owner,t:'Redigir o parecer'},{w:'ag:redacao',t:'Enviar o parecer ao solicitante por e-mail',out:true}]
+    : [{w:'ag:intake',t:'Classificar o pedido e checar o que falta'},{w:'ag:revisao',t:`Rodar o playbook "${r.triagem.playbook}"`},{w:owner,t:'Conferir os desvios e decidir'},{w:'ag:redacao',t:'Devolutiva ao solicitante no Slack',out:true}];
+  steps.forEach((s,i)=>{ s.st=st(i); if(s.st==='rodando') s.lbl='Lendo o contrato…'; });
+  r.plan={state:r.id==='LEG-0128'?'rascunho':r.prog==='Concluído'?'feito':'rodando',steps};
+  return r.plan;
+}
+function planHtml(r){
+  const p=planOf(r); const canEdit=S.persona==='head'||S.persona==='analista';
+  if(p.state==='feito') return `<div class="plan"><div class="plan-sum">${ico('check',12)} ${p.steps.length} passos · ${p.steps.filter(s=>isAg(s.w)).length} de agentes · concluído <button class="linkbtn" data-x="planopen" data-id="${r.id}">ver passos</button></div>${S.planOpen===r.id?p.steps.map((s,i)=>planRow(r,s,i,false)).join(''):''}</div>`;
+  return `<div class="plan"><div class="plan-h"><b>${p.state==='rascunho'?'Plano proposto':'Plano em execução'}</b><span class="muted">${p.state==='rascunho'?'nada roda antes de você mandar':'trocar o dono de um passo não reinicia os outros'}</span><div class="spacer"></div>${p.state==='rascunho'&&canEdit?`<button class="btn sm" data-x="soon" data-l="Ajustar plano">Ajustar</button><button class="btn sm pri" data-x="planrun" data-id="${r.id}">Rodar</button>`:''}</div>
+  ${p.steps.map((s,i)=>planRow(r,s,i,canEdit)).join('')}</div>`;
+}
+function planRow(r,s,i,canEdit){
+  const opts=[...LEGAL,...Object.keys(AG).map(k=>'ag:'+k)];
+  return `<div class="plan-row"><span class="plan-n">${i+1}</span><div style="min-width:0"><div>${esc(s.t)}${s.out?` <span class="ok" title="ação que sai do Mike: mostra o que vai enviar e espera seu ok">· pede ok antes</span>`:''}</div><div style="margin-top:3px">${canEdit&&s.st!=='concluido'?`<select data-x2="stepowner" data-id="${r.id}" data-i="${i}" aria-label="Dono do passo ${i+1}">${opts.map(o=>`<option value="${o}" ${o===s.w?'selected':''}>${esc(wName(o))}</option>`).join('')}</select>`:whoHtml(s.w)}</div></div><div>${statusChip(s.st,s.lbl)}</div></div>`;
+}
+function pedList(){
+  let l=R.filter(r=>r.etapa!=='arquivado'||r.prog!=='Concluído'||S.pedFilter==='concl');
+  const f=S.pedFilter;
+  if(f==='semdono') l=R.filter(r=>!r.resp&&openCard(r));
+  if(f==='sla') l=R.filter(r=>openCard(r)&&r.prog!=='Bloqueado'&&slaInfo(r).left<0);
+  if(f==='aguard') l=R.filter(r=>r.prog==='Bloqueado');
+  if(f==='concl') l=R.filter(r=>r.prog==='Concluído');
+  return l;
+}
+function renderPedidos(){
+  const l=pedList();
+  return `<h1>Pedidos</h1><p class="sub">Tudo o que as outras áreas pediram ao Legal, com ID, SLA e quem (pessoa ou agente) cuida de cada passo.</p>
+  ${statTiles([{k:'semdono',n:R.filter(r=>!r.resp&&openCard(r)).length,l:'Sem dono',cls:'warn'},{k:'sla',n:R.filter(r=>openCard(r)&&r.prog!=='Bloqueado'&&slaInfo(r).left<0).length,l:'SLA estourado',cls:'err'},{k:'aguard',n:R.filter(r=>r.prog==='Bloqueado').length,l:'Aguardando solicitante'},{k:'concl',n:R.filter(r=>r.prog==='Concluído').length,l:'Concluídos na semana'}],S.pedFilter)}
+  <div class="toolbar">${S.pedFilter?`<span class="chip">filtro ativo<button data-x="clearf" aria-label="limpar filtro">✕</button></span>`:''}<div class="spacer"></div><button class="btn pri" data-act="novo">+ Novo pedido</button></div>
+  <div class="rt"><div class="rt-in"><div class="rt-row rt-ped rt-head"><div>ID</div><div>Pedido</div><div>Solicitante</div><div>Canal</div><div>SLA</div><div>Etapa</div><div>Responsável</div></div>
+  ${l.length?l.map((r,i)=>{ const s=slaInfo(r); return `<div class="rt-row rt-ped ${S.dp&&S.dp.id===r.id?'sel':''} ${S.foc===i?'foc':''}" data-x="row" data-kind="ped" data-id="${r.id}" data-i="${i}">
+    <div class="mono" style="text-transform:none">${r.id}</div>
+    <div><div class="t">${esc(r.titulo)}</div><div class="s">${esc(r.contraparte)}${EXT_SHARED.has(r.id)?' · <span class="pill amb" style="font-size:11px">Externo</span>':''}</div></div>
+    <div class="s" style="color:var(--ink-soft)">${esc(r.sol)} · ${esc(r.areaSol)}</div>
+    <div class="s">${esc(r.canal)}</div>
+    <div><span class="mono" style="text-transform:none;${s.left<0&&openCard(r)&&r.prog!=='Bloqueado'?'color:var(--err)':''}">${s.txt}</span><div class="bar ${s.cls}" style="margin-top:4px"><i style="width:${s.pct}%"></i></div></div>
+    <div>${statusChip(PROG_SC[r.prog],LANE[r.etapa])}</div>
+    <div>${r.resp?whoHtml(r.resp):r.sugg?`<span class="sugg">${ico('diamond',11)} sugerido: ${esc(r.sugg)}</span>`:whoHtml(null)}</div></div>`; }).join('')
+   :emptyState('Nenhum pedido com esse filtro.','Pedidos chegam pelo Slack #doc-agent (mencione @Mike), pelo formulário ou por e-mail encaminhado para legal@.','<button class="btn" data-x="clearf">Limpar filtro</button><button class="btn pri" data-act="novo">+ Novo pedido</button>')}</div></div>`;
+}
+function dpPed(r){
+  const s=slaInfo(r); const c=r.contractId&&C.find(x=>x.id===r.contractId); const canEdit=S.persona==='head'||S.persona==='analista';
+  const feed=r.activity.slice().reverse().map(a=>({id:'a'+a.at+a.txt.length,w:a.who,v:esc(a.txt),at:a.at}));
+  return `<div class="mono" style="text-transform:none">${r.id}${EXT_SHARED.has(r.id)?' · <span class="pill amb">Externo: Moura &amp; Lins</span>':''}</div><div class="dp-t">${esc(r.titulo)}</div>
+  <dl class="kv"><dt>Solicitante</dt><dd>${whoHtml(r.sol)} <span class="muted">· ${esc(r.areaSol)}</span></dd>
+   <dt>Canal</dt><dd>${esc(r.canal)}${r.thread.length?` · <button class="linkbtn" data-x="gocard" data-id="${r.id}">thread ${ico('ext',11)}</button>`:''}</dd>
+   <dt>Etapa</dt><dd>${statusChip(PROG_SC[r.prog],LANE[r.etapa])}${r.bloqueio&&r.prog==='Bloqueado'?` <span class="muted">${esc(r.bloqueio)}</span>`:''}</dd>
+   <dt>SLA</dt><dd><span style="${s.left<0&&r.prog!=='Bloqueado'?'color:var(--err)':''}">${s.txt}</span></dd>
+   <dt>Responsável</dt><dd>${whoHtml(r.resp)}</dd>
+   ${c?`<dt>Contrato</dt><dd><button class="linkbtn" data-x="gocard" data-id="${c.id}">${esc(c.contraparte)}</button> ${deadlineBadge(c)}</dd>`:''}</dl>
+  <div class="dp-sec">O pedido</div><div class="summ" style="background:var(--card);border-radius:10px;padding:8px 10px">"${esc(r.ctx)}"</div>
+  ${!r.resp&&r.sugg&&canEdit?`<div class="sg" style="cursor:default"><div class="sg-h">${ico('diamond',12)}<span class="agn">Agente de atribuição</span> · sugestão</div><div class="sg-p" style="margin-top:6px">Sugiro <b>${esc(r.sugg)}</b>: ${esc(r.why)}</div><div class="sg-acts"><button class="btn sm pri" data-x="passign" data-id="${r.id}" data-who="${esc(r.sugg)}">Aceitar<span class="kbd">a</span></button><select data-x2="passignother" data-id="${r.id}" class="btn sm" aria-label="Escolher outra pessoa"><option value="">Editar: outra pessoa…</option>${LEGAL.filter(n=>n!==r.sugg).map(n=>`<option>${n}</option>`).join('')}</select><button class="btn sm ghost" data-x="passignno" data-id="${r.id}">Rejeitar<span class="kbd">r</span></button></div></div>`:''}
+  <div class="dp-sec">Plano</div>${planHtml(r)}
+  <div class="toolbar" style="margin-top:12px"><button class="btn" data-x="gocard" data-id="${r.id}">Abrir card completo</button>${r.id==='LEG-0128'?'<a class="btn" href="#/revisao/polaris">Ver revisão do NDA</a>':''}</div>
+  <div class="dp-sec">Atividade <span>${feed.length}</span></div>${feedHtml(feed,6)}`;
+}
+
+// ---------- Revisão por playbook com redline ----------
+function renderRevisao(id){
+  const r=REV.find(x=>x.id===id&&x.findings); if(!r) return emptyState('Revisão não encontrada.','Abra uma revisão a partir do Início.','<a class="btn" href="#/inicio">Ir para o Início</a>');
+  const fs=sortedFindings(r); const v=tally(r.findings); const decided=r.findings.filter(f=>f.state).length;
+  const foc=fs[S.sgFoc]; const pendA=r.findings.filter(f=>f.k==='a'&&!f.state).length;
+  const doc=NDA_DOC.map(cl=>{ const f=r.findings.find(x=>x.cl===cl.n); let p=esc(cl.p);
+    if(f&&f.old){ const o=esc(f.old); if(f.state==='aceito'||f.state==='editado') p=p.replace(o,`<del>${o}</del> <ins>${esc(f.state==='editado'?f.txt:f.neu)}</ins>`); else if(foc&&foc.id===f.id) p=p.replace(o,`<mark class="del">${o}</mark>`); }
+    const lab=f&&!f.state&&f.k!=='a'?verdictLabel(f.k):'';
+    return `<section id="rcl-${cl.n}" class="${foc&&foc.cl===cl.n?'cl-sel':''}"><h3>${cl.t}<span class="clb">${lab}</span></h3><p>${p}</p></section>`; }).join('');
+  return `<div class="cp-head"><a href="#/inicio" class="mono">← início</a><div class="spacer"></div><span class="mono" style="text-transform:none"><span class="kbd">j</span><span class="kbd">k</span> próximo · <span class="kbd">a</span> aceitar · <span class="kbd">e</span> editar · <span class="kbd">r</span> rejeitar</span></div>
+  <div class="cp-head"><h1>${esc(r.doc)}</h1>${statusChip(decided===r.findings.length?'concluido':'pronto',decided===r.findings.length?'Revisão concluída':`${decided} de ${r.findings.length} decididos`)}<div class="spacer"></div>
+    <select class="btn sm" aria-label="Versões" data-x2="ver"><option>v2 · com minhas edições</option><option>v1 · minuta da contraparte</option></select><button class="btn" data-act="share">Compartilhar</button><button class="btn" data-x="export">Exportar .docx</button></div>
+  <p class="sub" style="margin-top:-6px">${esc(r.cp)} · pedido <button class="linkbtn" data-x="goped" data-id="${r.ped}">${r.ped}</button> · playbook <b>${esc(r.playbook)}</b> · responsável ${esc(r.resp)} · cada edição aceita vira alteração controlada no .docx</p>
+  <div class="cp"><article class="doc" id="rdoc">${doc}</article>
+  <aside class="side"><div class="tabs">${['Primeira revisão','Atividade'].map(t=>`<button class="${(S.revSide||'Primeira revisão')===t?'on':''}" data-x="revside" data-t="${t}">${t}${t==='Atividade'?' · '+r.feed.length:''}</button>`).join('')}</div>
+  <div class="side-body" id="sgList">${(S.revSide||'Primeira revisão')==='Atividade'?feedHtml(r.feed):`
+    ${verdictCounts(v,'tiles',S.vf)}
+    <div class="toolbar" style="margin:0 0 4px">${S.vf?`<span class="chip">${VL[S.vf][0]}<button data-x="vfilter" data-v="${S.vf}" aria-label="limpar filtro">✕</button></span>`:'<span class="muted" style="font-size:12.5px">Divergências primeiro. Clique num número para filtrar.</span>'}<div class="spacer"></div>${pendA?`<button class="btn sm" data-x="bulka" data-id="${r.id}">Conferir os ${pendA} alinhados</button>`:''}</div>
+    ${fs.map((f,i)=>suggHtml(f,i)).join('')||emptyState('Nada com esse filtro.','Limpe o filtro para ver todos os itens da revisão.','<button class="btn" data-x="vfilter" data-v="'+S.vf+'">Limpar filtro</button>')}`}</div></aside></div>`;
+}
+function sortedFindings(r){ const o={d:0,p:1,a:2}; return r.findings.filter(f=>!S.vf||f.k===S.vf).slice().sort((a,b)=>(!!a.state-!!b.state)||(o[a.k]-o[b.k])); }
+function suggHtml(f,i){
+  const foc=S.sgFoc===i;
+  if(f.state){ const T={aceito:`${ico('check',12)} Aceito por ${esc(f.by)} · ${esc(f.at)}`,editado:`${ico('check',12)} Editado por ${esc(f.by)} · ${esc(f.at)}`,rejeitado:`Rejeitado por ${esc(f.by)}${f.why?`: "${esc(f.why)}"`:''}`,conferido:`${ico('check',12)} Conferido por ${esc(f.by)}`};
+    return `<div class="sg done ${foc?'foc':''}" data-x="sgfoc" data-i="${i}">${verdictLabel(f.k)}<div class="grow">cl. ${f.cl} · ${esc(f.t)}</div><span>${T[f.state]}</span><button class="linkbtn" data-x="sgreopen" data-f="${f.id}">reabrir</button></div>`; }
+  const editing=S.editingF===f.id, rej=S.rejecting===f.id;
+  return `<div class="sg ${foc?'foc':''}" data-x="sgfoc" data-i="${i}">
+   <div class="sg-h">${ico('diamond',12)}<span class="agn">Agente de revisão</span><span>· há 12 min · ${f.src.length} ${f.src.length>1?'fontes':'fonte'}</span></div>
+   <div class="sg-t">${verdictLabel(f.k)} ${citeBtn('cl. '+f.cl,'rcl|'+f.cl)} ${esc(f.t)}</div>
+   <div class="sg-p">${esc(f.a)}</div>
+   ${f.pos?`<div class="sg-p"><b>Posição padrão:</b> ${esc(f.pos)}</div>`:''}
+   <div class="sg-src">Fontes: ${f.src.map(([l,t])=>citeBtn(l,t==='pb'?'pb|'+l:'card|'+t)).join('')}</div>
+   ${f.neu?(editing?`<div class="sg-edit"><span class="mono">sua redação</span><textarea id="sgTxt" rows="3">${esc(f.neu)}</textarea><div class="sg-acts"><button class="btn sm pri" data-x="sgsave" data-f="${f.id}">Salvar edição</button><button class="btn sm ghost" data-x="sgcancel">Cancelar</button></div></div>`
+     :`<div class="sg-edit"><span class="mono">edição sugerida${f.sim?` · <span title="similaridade calculada com a cláusula padrão do playbook">${f.sim}% igual à posição padrão</span>`:''}</span><br><del>${esc(f.old)}</del> <ins>${esc(f.neu)}</ins></div>`):''}
+   ${editing?'':`<div class="sg-acts">${rej?`<input id="rejIn" data-f="${f.id}" placeholder="Por quê? Opcional. Enter confirma e ensina o playbook."><button class="btn sm" data-x="sgrejok" data-f="${f.id}">Rejeitar</button><button class="btn sm ghost" data-x="sgcancel">Cancelar</button>`
+     :`<button class="btn sm pri" data-x="sgacc" data-f="${f.id}">${f.neu?'Aceitar':'Conferir'}<span class="kbd">a</span></button>${f.neu?`<button class="btn sm" data-x="sgedit" data-f="${f.id}">Editar<span class="kbd">e</span></button>`:''}<button class="btn sm ghost" data-x="sgrej" data-f="${f.id}">Rejeitar<span class="kbd">r</span></button>`}</div>`}
+  </div>`;
+}
+function curRev(){ return REV.find(x=>x.id===location.hash.split('/')[2]); }
+function findF(id){ const r=curRev(); return r&&r.findings.find(f=>f.id===id); }
+function decide(f,state,extra={}){
+  const r=curRev(); const prev={state:f.state,by:f.by,at:f.at,txt:f.txt,why:f.why};
+  Object.assign(f,{state,by:me().name,at:'agora'},extra); S.editingF=null; S.rejecting=null;
+  const verb={aceito:'aceitou a edição',editado:'editou a edição',rejeitado:'rejeitou a sugestão',conferido:'conferiu'}[state];
+  const e=ev(me().name,`${verb} da cl. ${f.cl} (${esc(f.t.toLowerCase())})`,'agora'); r.feed.unshift(e);
+  render(); scrollToCl(f.cl);
+  undoToast(state==='aceito'||state==='editado'?`Cl. ${f.cl}: alteração controlada aplicada no .docx.`:state==='rejeitado'?`Cl. ${f.cl} rejeitada${extra.why?'; o motivo vai para o playbook':''}.`:`Cl. ${f.cl} conferida.`,()=>{ Object.assign(f,prev); r.feed.splice(r.feed.indexOf(e),1); });
+}
+function scrollToCl(n){ const d=$('#rdoc'), s=$('#rcl-'+n); if(d&&s) d.scrollTo({top:s.offsetTop-d.offsetTop-40,behavior:'smooth'}); }
+
+// ---------- Radar regulatório ----------
+const aff=pred=>C.filter(pred).map(c=>c.id);
+const SCANS=[
+ {id:'bcb',nome:'BCB · Pix, câmbio e pagamentos',fontes:'BCB, DOU',ult:'hoje 07:00',lidas:14,changes:[
+   {id:'b1',k:'d',imp:'Exige ação',t:'Prazo menor para o reporte mensal de correspondentes cambiais',fonte:'Resolução BCB nº 9.101/2026 · DOU 17/10/2026',res:'Correspondentes cambiais passam a reportar o volume do mês até o dia 3 (antes, dia 5). O contrato com a instituição precisa prever esse prazo.',why:'O contrato com o Banco Austral prevê o reporte no dia 5 (cl. 2.1).',vig:'01/02/2027',af:['austral']},
+   {id:'b2',k:'p',imp:'Avaliar',t:'Pix Automático: cancelamento pelo pagador até a véspera',fonte:'Resolução BCB nº 9.087/2026 · DOU 15/10/2026',res:'O pagador pode cancelar cobranças recorrentes até as 23h59 da véspera. Arranjos de payout com cobrança recorrente podem precisar de cláusula de estorno.',why:'Dois clientes de payout usam cobrança recorrente.',vig:'02/03/2027',af:['tropico','mercadosul']},
+   {id:'b3',k:'a',imp:'Sem impacto',t:'Ajuste de redação no regulamento de arranjos de pagamento',fonte:'Circular BCB nº 4.512/2026 · DOU 14/10/2026',res:'Correção de remissões internas, sem mudança de obrigação.',why:'Nenhum contrato nosso depende dos trechos alterados.',vig:'14/10/2026',af:[]}]},
+ {id:'lgpd',nome:'LGPD e ANPD',fontes:'ANPD, DOU',ult:'hoje 07:00',lidas:6,changes:[
+   {id:'l1',k:'d',imp:'Exige ação',t:'Comunicação de incidente de segurança em 2 dias úteis',fonte:'Resolução CD/ANPD nº 31/2026 · DOU 16/10/2026',res:'Incidentes de risco alto devem ser comunicados à ANPD e aos titulares em até 2 dias úteis. Operadores precisam avisar o controlador a tempo.',why:'Contratos em que a contraparte é operadora preveem 72 h ou não preveem prazo.',vig:'16/01/2027',af:aff(c=>c.dados==='Sim'&&c.agente==='Operador')},
+   {id:'l2',k:'p',imp:'Avaliar',t:'Guia de transferência internacional: cláusulas-padrão',fonte:'Guia orientativo ANPD · 13/10/2026',res:'A ANPD publicou o modelo de cláusulas-padrão para transferência internacional de dados.',why:'Fornecedores com dados fora do Brasil podem precisar do anexo.',vig:'—',af:['nimbus','kappa']}]},
+ {id:'cvm',nome:'CVM e BCB · ativos virtuais',fontes:'CVM, BCB',ult:'hoje 07:00',lidas:4,changes:[
+   {id:'c1',k:'p',imp:'Avaliar',t:'Segregação patrimonial na custódia de ativos virtuais',fonte:'Resolução BCB nº 9.095/2026 · DOU 16/10/2026',res:'Custodiantes devem segregar os ativos dos clientes e comprovar reservas mensalmente (antes, trimestralmente).',why:'O contrato com a Kappa prevê prova de reservas trimestral.',vig:'01/04/2027',af:['kappa']}]},
+ {id:'rf',nome:'Receita Federal · tributos sobre serviços',fontes:'RFB, DOU',ult:'hoje 07:00',lidas:9,changes:[]},
+];
+function renderRadarReg(){
+  const sc=SCANS.find(s=>s.id===S.scan)||SCANS[0]; const live=sc.changes.filter(c=>!c.arq);
+  return `<h1>Radar regulatório</h1><p class="sub">O que mudou na regulação que importa para a Avenia, e quais contratos isso afeta.</p>
+  <div class="ai-box" style="background:var(--paper-3);color:var(--ink-soft)">Exemplos fictícios para o protótipo. No produto, cada mudança cita e liga a publicação oficial (DOU, BCB, CVM, ANPD).</div>
+  <div class="grid g-2">
+   <section class="card" style="padding:10px"><div class="card-h" style="padding:4px 6px 0"><h2>Varreduras</h2><button class="btn sm" data-x="soon" data-l="Nova varredura">+ Nova</button></div>
+    ${SCANS.map(s=>{ const n=s.changes.filter(c=>!c.arq&&c.k!=='a').length; return `<div class="scan ${s.id===sc.id?'on':''}" data-x="scan" data-id="${s.id}"><div class="grow"><div class="t" style="font-weight:600">${esc(s.nome)}</div><div class="s muted" style="font-size:12.5px">${n?`${n} ${n>1?'mudanças pedem':'mudança pede'} atenção`:'nada novo'} · ${esc(s.ult)}</div></div>${n?`<span class="pill amb">${n}</span>`:''}</div>`; }).join('')}
+   </section>
+   <div>
+    <div class="greet" style="font-size:17px">${avatar('ag:regulatorio')}<span>Sua varredura <b>${esc(sc.nome)}</b> encontrou <b>${live.length} ${live.length===1?'mudança':'mudanças'}</b>.</span></div>
+    <div class="af-meta" style="margin:-8px 0 12px 32px">${esc(AG.regulatorio)} leu ${sc.lidas} publicações de ${esc(sc.fontes)} e cruzou com a Ficha de ${C.length} contratos · ${esc(sc.ult)}</div>
+    ${live.length?live.map(ch=>`<div class="chg"><div class="chg-h">${verdictLabel(ch.k,ch.imp)}${citeBtn(ch.fonte,'fonte|'+ch.fonte)}${ch.vig!=='—'?`<span>· vigência ${esc(ch.vig)}</span>`:''}</div>
+      <h3>${esc(ch.t)}</h3><div style="font-size:13.5px">${esc(ch.res)}</div>
+      <div class="why"><b>Por que afeta a Avenia:</b> ${esc(ch.why)}</div>
+      <div class="chips"><span class="mono">contratos afetados</span>${ch.af.length?ch.af.map(id=>{const c=C.find(x=>x.id===id);return `<span class="pill" data-x="gocard" data-id="${id}">${esc(c.contraparte)} ${deadlineBadge(c)}</span>`;}).join(''):'<span class="muted" style="font-size:12.5px">nenhum</span>'}</div>
+      <div class="toolbar" style="margin:10px 0 0">${ch.k!=='a'?`<button class="btn sm pri" data-x="regped" data-id="${ch.id}">Criar pedido</button><button class="btn sm" data-x="regpb" data-id="${ch.id}">Adicionar ao playbook</button>`:''}<button class="btn sm ghost" data-x="regarq" data-id="${ch.id}">Arquivar</button>${ch.ped?`<span class="muted" style="font-size:12.5px">pedido ${ch.ped} criado</span>`:''}</div></div>`).join('')
+     :emptyState('Nada novo nesta varredura.',`Li ${sc.lidas} publicações desde a última segunda e nenhuma afeta os contratos da Avenia. A próxima leitura é amanhã às 07:00.`,'<button class="btn" data-x="soon" data-l="Ajustar o que vigiar">Ajustar o que vigiar</button>')}
+   </div></div>`;
+}
+
+// ---------- Spaces ----------
+const SPACES=[
+ {id:'legal',nome:'Legal Avenia',tipo:'Interno',ext:false,membros:['Fernanda','Duda','Téo'],ve:'Tudo, inclusive confidenciais (Admin: Fernanda)',cards:[]},
+ {id:'comercial',nome:'Comercial',tipo:'Área de negócio',ext:false,membros:['Rafael','Marina','Pedro'],ve:'Só os próprios pedidos, com o status em 4 passos',cards:['LEG-0128','LEG-0127']},
+ {id:'financeiro',nome:'Financeiro e CFO',tipo:'Área de negócio',ext:false,membros:['Bruno','Carla'],ve:'Contratos e Prazos sem confidenciais; pode perguntar à base',cards:['LEG-0125']},
+ {id:'moura',nome:'Moura & Lins Advogados · Societário',tipo:'Escritório externo',ext:true,membros:['Ana Moura','Lucas Lins'],ve:'Só os cards compartilhados; sem o Perguntar e sem a base',perm:'comentar',cards:['LEG-0125']},
+ {id:'vertice',nome:'Vértice Auditores',tipo:'Auditoria externa',ext:true,membros:['Paula Reis'],ve:'Só os cards compartilhados',perm:'ver',cards:[]},
+];
+function renderSpaces(){
+  return `<h1>Spaces</h1><p class="sub">Espaços seguros com as áreas da Avenia e com escritórios externos. Cada um vê só o que foi compartilhado com ele, inclusive nas respostas do Perguntar.</p>
+  <div class="rt"><div class="rt-in" style="min-width:720px"><div class="rt-row rt-head" style="grid-template-columns:minmax(220px,2fr) 150px 140px minmax(200px,2fr) 90px"><div>Espaço</div><div>Tipo</div><div>Pessoas</div><div>O que vê</div><div>Cards</div></div>
+  ${SPACES.map((s,i)=>`<div class="rt-row ${S.dp&&S.dp.id===s.id?'sel':''} ${S.foc===i?'foc':''}" style="grid-template-columns:minmax(220px,2fr) 150px 140px minmax(200px,2fr) 90px" data-x="row" data-kind="space" data-id="${s.id}" data-i="${i}"><div class="t">${esc(s.nome)}</div><div>${s.ext?'<span class="pill amb">Externo</span>':`<span class="s" style="color:var(--ink-soft)">${esc(s.tipo)}</span>`}</div><div style="display:flex;gap:2px">${s.membros.map(m=>avatar(m)).join('')}</div><div class="s">${esc(s.ve)}</div><div class="mono" style="text-transform:none">${s.cards.length||'—'}</div></div>`).join('')}</div></div>
+  <p class="proto-note">no código: organizations + workspaces + grants do upstream; convidado externo = grant por card</p>`;
+}
+function dpSpace(s){
+  return `${s.ext?'<span class="pill amb">Externo</span> ':''}<span class="muted">${esc(s.tipo)}</span><div class="dp-t">${esc(s.nome)}</div>
+  <dl class="kv"><dt>Vê</dt><dd>${esc(s.ve)}</dd>${s.perm?`<dt>Pode</dt><dd>${s.perm}</dd>`:''}</dl>
+  <div class="dp-sec">Pessoas <span>${s.membros.length}</span></div>${s.membros.map(m=>`<div class="row">${avatar(m)}<div class="grow">${esc(m)}</div>${s.ext?'<span class="pill amb">Externo</span>':''}</div>`).join('')}
+  <div class="dp-sec">Cards compartilhados <span>${s.cards.length}</span></div>
+  ${s.cards.length?s.cards.map(id=>{const r=R.find(x=>x.id===id);return `<div class="row clickable" data-x="gocard" data-id="${id}"><span class="mono" style="text-transform:none">${id}</span><div class="grow"><div class="t">${esc(r.titulo)}</div><div class="s">${LANE[r.etapa]}</div></div></div>`;}).join('')
+   :emptyState('Nada compartilhado ainda.','Compartilhe um contrato ou pedido: só ele fica visível para quem está neste espaço.','<button class="btn pri" data-act="share">Compartilhar um card</button>')}
+  <div class="toolbar" style="margin-top:12px"><button class="btn" data-x="invite" data-id="${s.id}">Convidar pessoa</button></div>`;
+}
+
+// ---------- Painel do Legal ----------
+function renderPainel(){
+  const ver=Math.round(C.reduce((a,c)=>a+validCount(c),0)/(C.length*SCHEMA.length)*100);
+  const areas=[['Comercial',9],['Tecnologia',4],['Financeiro',4],['Compliance',3],['Produto',2],['Marketing',1]];
+  return `<h1>Painel do Legal</h1><p class="sub">Outubro de 2026 · 4 números que a Head usa, com a conta à vista.</p>
+  ${statTiles([{k:'t',n:'1,6 d',l:'Tempo médio Entrada → Revisão',static:true},{k:'v',n:ver+'%',l:'Campos da Ficha verificados',static:true},{k:'p',n:'23',l:'Pedidos no mês',static:true},{k:'h',n:'≈ 32 h',l:'Horas poupadas no mês',static:true}])}
+  <p class="muted" style="font-size:12.5px;margin:-6px 0 16px">Horas poupadas = 23 primeiras revisões × 1,8 h (1ª leitura manual medida em setembro) − 23 × 0,4 h de conferência humana. Ajuste os fatores em Configurações.</p>
+  <div class="grid g-home"><section class="card"><div class="card-h"><h2>Pedidos por área</h2></div>${areas.map(([a,n])=>`<div class="row"><div style="width:110px">${a}</div><div class="hbar"><i style="width:${n/9*100}%"></i></div><span class="mono">${n}</span></div>`).join('')}</section>
+  <section class="card"><div class="card-h"><h2>O que os agentes fizeram</h2><span class="mono">decisão humana</span></div>
+   ${[['revisao',61,72,18,10],['extracao',288,81,15,4],['atribuicao',19,84,11,5],['regulatorio',7,57,0,43]].map(([k,n,a,e,r])=>`<div class="row">${avatar('ag:'+k)}<div class="grow"><div class="t">${AG[k]}</div><div class="s">${n} sugestões · ${a}% aceitas · ${e}% editadas · ${r}% rejeitadas</div></div></div>`).join('')}
+  </section></div>`;
+}
+
+// ---------- DetailPanel ----------
+function renderDP(route){
+  const host=$('#dp');
+  if(!S.dp||S.dp.route!==route){ host.innerHTML=''; document.body.classList.remove('dp-open'); return; }
+  const k=S.dp.kind, id=S.dp.id;
+  const body = k==='rev'?dpRev(REV.find(r=>r.id===id)) : k==='folders'?dpFolders() : k==='ped'?dpPed(R.find(r=>r.id===id)) : k==='space'?dpSpace(SPACES.find(s=>s.id===id)) : '';
+  host.innerHTML=`<aside class="dp" role="dialog" aria-label="Detalhes"><div class="dp-h"><span class="mono">${{rev:'revisão',folders:'pastas',ped:'pedido',space:'espaço'}[k]}</span><div class="spacer"></div><button class="btn ghost sm" data-x="dpclose" aria-label="Fechar (Esc)">${ico('x',14)}</button></div><div class="dp-b">${body}</div></aside>`;
+  document.body.classList.add('dp-open');
+}
+
+// ---------- router ----------
+function render(){
+  const [ , route='inicio', arg] = (location.hash||'#/inicio').split('/');
+  if(S.persona==='solicitante' && !['inicio','pedidos'].includes(route)) { go('#/inicio'); return; }
+  if(S.persona==='founder' && ['pedidos','esteira','spaces'].includes(route)) { go('#/inicio'); return; }
+  if(S.lastRoute!==route){ $('#toast2')?.classList.remove('on'); S.foc=-1; S.sgFoc=0; S.vf=null; S.editingF=null; S.rejecting=null; } S.lastRoute=route;
+  renderNav(route);
+  const app=$('#app');
+  const V={inicio:renderInicio,pedidos:()=>S.persona==='solicitante'?renderEsteira():renderPedidos(),esteira:renderEsteira,contratos:renderContratos,card:()=>renderCard(arg),prazos:renderPrazos,revisao:()=>renderRevisao(arg),'radar-regulatorio':renderRadarReg,spaces:renderSpaces,painel:renderPainel};
+  app.innerHTML=(V[route]||renderInicio)();
+  const inp=app.querySelector('[data-editcell],[data-editfield]'); if(inp){ inp.focus(); inp.select(); }
+  if(route==='card' && S.selField) highlight(S.selField);
+  renderDP(route);
+  const ri=$('#rejIn'); if(ri) ri.focus(); const st=$('#sgTxt'); if(st) st.focus();
+}
+const routeNow=()=>(location.hash||'#/inicio').split('/')[1]||'inicio';
+function openDP(kind,id){ S.dp={route:routeNow(),kind,id}; render(); }
+
+// ---------- eventos (bloco novo) ----------
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-x]'); if(!t) return; const d=t.dataset; const x=d.x;
+  if(t.tagName==='A'&&x==='soon') e.preventDefault();
+  if(x==='row'){ if(e.target.closest('select')) return; S.foc=+d.i||S.foc; return openDP(d.kind,d.id); }
+  if(x==='dpclose'){ S.dp=null; render(); return; }
+  if(x==='tile'){ if(d.k==='pastas') return openDP('folders','f'); if(routeNow()==='pedidos'){ S.pedFilter=S.pedFilter===d.k?null:d.k; } else { S.revFilter=S.revFilter===d.k?null:d.k; } render(); return; }
+  if(x==='clearf'){ S.revFilter=null; S.pedFilter=null; render(); return; }
+  if(x==='revtab'){ S.revTab=d.t; S.revFilter=null; render(); return; }
+  if(x==='greet'){ S.greetOpen=!S.greetOpen; render(); return; }
+  if(x==='steps'){ S.openSteps=S.openSteps===d.e?null:d.e; render(); return; }
+  if(x==='goped'){ S.dp={route:'pedidos',kind:'ped',id:d.id}; go('#/pedidos'); return; }
+  if(x==='gocard'){ S.dp=null; go('#/card/'+d.id); return; }
+  if(x==='cite'){ const [k,v]=d.t.split('|'); if(k==='rcl'){ const r=curRev(); const i=sortedFindings(r).findIndex(f=>f.cl===v); if(i>=0) S.sgFoc=i; render(); scrollToCl(v); return; } if(k==='polaris'){ const i=sortedFindings(REV[0]).findIndex(f=>f.cl===v); S.sgFoc=Math.max(0,i); S.dp=null; go('#/revisao/polaris'); setTimeout(()=>scrollToCl(v),60); return; } if(k==='card'){ S.dp=null; go('#/card/'+v); return; } if(k==='pb'){ toast('No produto, abre a regra "'+v+'" no Playbook.'); return; } toast('No produto, abre a publicação oficial: '+v); return; }
+  if(x==='assign'){ const r=REV.find(y=>y.id===d.id); r.resp=d.who; r.feed.unshift(ev(me().name,`confirmou a sugestão: ${esc(d.who)} é responsável`,'agora')); render(); undoToast(`${d.who} é responsável pela revisão.`,()=>{ r.resp=null; r.feed.shift(); }); return; }
+  if(x==='assignno'){ const r=REV.find(y=>y.id===d.id); const s=r.sugg; r.sugg=null; r.feed.unshift(ev(me().name,'rejeitou a sugestão de responsável','agora')); render(); undoToast('Sugestão rejeitada. Escolha alguém no campo Responsável.',()=>{ r.sugg=s; r.feed.shift(); }); return; }
+  if(x==='passign'||x==='passignno'){ const r=R.find(y=>y.id===d.id); if(x==='passign'){ r.resp=d.who; r.activity.push({t:'ev',who:me().name,txt:`aceitou a sugestão do agente de atribuição: ${d.who}`,at:'agora'}); planOf(r).steps.forEach(s=>{ if(!isAg(s.w)) s.w=d.who; }); render(); undoToast(`${d.who} é responsável por ${r.id}. ${r.sol} foi avisado no Slack.`,()=>{ r.resp=null; r.activity.pop(); }); } else { const s=r.sugg; r.sugg=null; render(); undoToast('Sugestão rejeitada.',()=>{ r.sugg=s; }); } return; }
+  if(x==='planopen'){ S.planOpen=S.planOpen===d.id?null:d.id; render(); return; }
+  if(x==='planrun'){ const r=R.find(y=>y.id===d.id); const p=planOf(r); p.state='rodando'; const s1=p.steps[1]; s1.st='rodando'; s1.lbl='Lendo o contrato…'; r.activity.push({t:'ev',who:me().name,txt:'mandou rodar o plano (4 passos)',at:'agora'}); render(); toast('Plano rodando. Os passos de agente andam sozinhos; os seus esperam você.');
+    setTimeout(()=>{ s1.lbl='Conferindo citações…'; render(); },1600);
+    setTimeout(()=>{ s1.st='concluido'; s1.lbl=null; p.steps[2].st='em_andamento'; r.activity.push({t:'ev',who:'ag:revisao',txt:'revisou contra o playbook: 2 divergem, 3 para revisar',at:'agora'}); if(r.etapa==='entrada'){ r.etapa='triagem'; r.prog='Em andamento'; } render(); toast('Revisão pronta: 2 divergem, 3 para revisar.'); },3400); return; }
+  if(x==='vfilter'){ S.vf=S.vf===d.v?null:d.v; S.sgFoc=0; render(); return; }
+  if(x==='revside'){ S.revSide=d.t; render(); return; }
+  if(x==='sgfoc'){ if(e.target.closest('button,textarea,input,select')) return; S.sgFoc=+d.i; const f=sortedFindings(curRev())[S.sgFoc]; render(); f&&scrollToCl(f.cl); return; }
+  if(x==='sgacc'){ const f=findF(d.f); decide(f,f.neu?'aceito':'conferido'); return; }
+  if(x==='sgedit'){ S.editingF=d.f; S.rejecting=null; render(); return; }
+  if(x==='sgsave'){ const f=findF(d.f); decide(f,'editado',{txt:$('#sgTxt').value}); return; }
+  if(x==='sgrej'){ S.rejecting=d.f; S.editingF=null; render(); return; }
+  if(x==='sgrejok'){ const f=findF(d.f); decide(f,'rejeitado',{why:($('#rejIn')||{}).value||''}); return; }
+  if(x==='sgcancel'){ S.editingF=null; S.rejecting=null; render(); return; }
+  if(x==='sgreopen'){ const f=findF(d.f); f.state=null; render(); return; }
+  if(x==='bulka'){ const r=curRev(); const l=r.findings.filter(f=>f.k==='a'&&!f.state); l.forEach(f=>Object.assign(f,{state:'conferido',by:me().name,at:'agora'})); const e2=ev(me().name,`conferiu ${l.length} cláusulas alinhadas em lote`,'agora'); r.feed.unshift(e2); render(); undoToast(`${l.length} cláusulas alinhadas conferidas.`,()=>{ l.forEach(f=>f.state=null); r.feed.shift(); }); return; }
+  if(x==='export'){ const r=curRev(); const n=r.findings.filter(f=>f.state==='aceito'||f.state==='editado').length; toast(`No produto: baixa o .docx com ${n} alteraç${n===1?'ão controlada':'ões controladas'} e um comentário por cláusula.`); return; }
+  if(x==='scan'){ S.scan=d.id; render(); return; }
+  if(x==='regped'){ const ch=SCANS.flatMap(s=>s.changes).find(c=>c.id===d.id); const id='LEG-0'+(129+R.length-7); const c=C.find(y=>y.id===ch.af[0]); R.unshift({id,titulo:'Regulatório · '+ch.t.split(':')[0],tipo:'Parecer',contraparte:c?c.contraparte:'—',sol:me().name,areaSol:'Legal',canal:'Radar regulatório',criado:'20/10 agora',slaH:72,usadoH:0,resp:null,sugg:c?c.resp:'Duda',why:'responsável pelo contrato afetado.',etapa:'entrada',prog:'A fazer',prio:ch.k==='d'?'Alta':'Média',prazo:'',ctx:ch.res+' '+ch.why,contractId:c&&c.id,triagem:{tipo:'Adequação regulatória',risco:ch.k==='d'?'alto':'médio',playbook:'—',nota:ch.fonte},thread:[],activity:[{t:'ev',who:'ag:regulatorio',txt:'abriu a partir do Radar regulatório: '+ch.fonte,at:'20/10 agora'}]}); ch.ped=id; render(); undoToast(`Pedido ${id} criado em Pedidos, ligado a ${ch.af.length} contrato(s).`,()=>{ R.shift(); ch.ped=null; }); return; }
+  if(x==='regpb'){ toast('Regra sugerida no playbook. A Fernanda aprova antes de valer para as próximas revisões.'); return; }
+  if(x==='regarq'){ const ch=SCANS.flatMap(s=>s.changes).find(c=>c.id===d.id); ch.arq=true; render(); undoToast('Mudança arquivada.',()=>{ ch.arq=false; }); return; }
+  if(x==='invite'){ const s=SPACES.find(y=>y.id===d.id); confirmAct('Convidar para '+s.nome,[`Enviar convite por e-mail para a pessoa que você indicar${s.ext?' (fora da Avenia)':''}`,`Ela vê: ${s.ve.toLowerCase()}`,'Registrar o convite na atividade do espaço'],()=>toast('Convite enviado.')); return; }
+  if(x==='soon'){ toast(`${d.l}: fica em Mais ▾ no produto, sem mudança nesta rodada.`); return; }
+});
+document.addEventListener('change',e=>{
+  const t=e.target; const x=t.dataset.x2; if(!x) return;
+  if(x==='resp'){ const r=REV.find(y=>y.id===t.dataset.id); const old=r.resp; r.resp=t.value||null; r.feed.unshift(ev(me().name,`mudou o responsável para ${esc(t.value||'ninguém')}`,'agora')); render(); undoToast('Responsável atualizado. Espelhado no Notion.',()=>{ r.resp=old; r.feed.shift(); }); }
+  if(x==='stepowner'){ const r=R.find(y=>y.id===t.dataset.id); const s=planOf(r).steps[+t.dataset.i]; const old=s.w; s.w=t.value; r.activity.push({t:'ev',who:me().name,txt:`trocou o dono do passo ${+t.dataset.i+1} para ${wName(t.value)} (os outros passos seguem)`,at:'agora'}); render(); undoToast(`Passo ${+t.dataset.i+1} agora é de ${wName(t.value)}. Nada foi reiniciado.`,()=>{ s.w=old; r.activity.pop(); }); }
+  if(x==='passignother'&&t.value){ const r=R.find(y=>y.id===t.dataset.id); r.resp=t.value; r.activity.push({t:'ev',who:me().name,txt:`atribuiu a ${t.value} (sugestão editada)`,at:'agora'}); render(); undoToast(`${t.value} é responsável por ${r.id}.`,()=>{ r.resp=null; r.activity.pop(); }); }
+  if(x==='ver'&&t.selectedIndex===1) toast('No produto, mostra a minuta original da contraparte, sem as edições.');
+});
+document.addEventListener('keydown',e=>{
+  if(e.target.id==='rejIn'){ if(e.key==='Enter'){ e.preventDefault(); decide(findF(e.target.dataset.f),'rejeitado',{why:e.target.value}); } if(e.key==='Escape'){ S.rejecting=null; render(); } return; }
+  if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.metaKey||e.ctrlKey||e.altKey) return;
+  const route=routeNow();
+  if(S.gPending){ S.gPending=false; const m={i:'inicio',p:'pedidos',e:'esteira',c:'contratos',z:'prazos',r:'radar-regulatorio'}; if(m[e.key]){ e.preventDefault(); go('#/'+m[e.key]); } return; }
+  if(e.key==='g'){ S.gPending=true; setTimeout(()=>S.gPending=false,1200); return; }
+  if(e.key==='Escape'&&S.dp){ S.dp=null; render(); return; }
+  if(route==='revisao'){ const r=curRev(); if(!r) return; const fs=sortedFindings(r); const f=fs[S.sgFoc];
+    if(e.key==='j'||e.key==='k'){ S.sgFoc=Math.max(0,Math.min(fs.length-1,S.sgFoc+(e.key==='j'?1:-1))); render(); const g=sortedFindings(r)[S.sgFoc]; g&&scrollToCl(g.cl); document.querySelector('.sg.foc')?.scrollIntoView({block:'nearest'}); return; }
+    if(!f||f.state) return;
+    if(e.key==='a'){ decide(f,f.neu?'aceito':'conferido'); return; }
+    if(e.key==='e'&&f.neu){ e.preventDefault(); S.editingF=f.id; render(); return; }
+    if(e.key==='r'){ e.preventDefault(); S.rejecting=f.id; render(); return; }
+    return; }
+  const rows=[...document.querySelectorAll('.rt-row[data-x="row"]')]; if(!rows.length) return;
+  if(e.key==='j'||e.key==='k'){ S.foc=Math.max(0,Math.min(rows.length-1,(S.foc<0?-1:S.foc)+(e.key==='j'?1:-1))); render(); document.querySelector('.rt-row.foc')?.scrollIntoView({block:'nearest'}); return; }
+  if(e.key==='Enter'&&S.foc>=0&&rows[S.foc]){ const d=rows[S.foc].dataset; openDP(d.kind,d.id); return; }
+  if(S.dp&&(e.key==='a'||e.key==='r')){ const btn=document.querySelector(`.dp [data-x="${{rev:e.key==='a'?'assign':'assignno',ped:e.key==='a'?'passign':'passignno'}[S.dp.kind]}"]`); if(btn){ btn.click(); } }
+});
 render();
 </script>
+
 </body>
 </html>
