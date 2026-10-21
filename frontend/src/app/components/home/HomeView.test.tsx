@@ -194,6 +194,8 @@ describe("HomeView", () => {
         expect(within(panel).getByRole("button", { name: "Ver a cláusula 9 na revisão" })).toBeInTheDocument();
         expect(within(panel).getByRole("link", { name: "7 de 10 campos preenchidos" })).toHaveAttribute("href", "/projects/p1");
         expect(within(panel).getByText("Revisão")).toBeInTheDocument();
+        fireEvent.click(within(panel).getByRole("button", { name: "3 divergem: filtrar" }));
+        expect(nav.push).toHaveBeenLastCalledWith("/playbooks/pb1?tab=runs&run=run1&veredito=diverge");
         expect(within(panel).getByRole("link", { name: /Abrir revisão/ })).toHaveAttribute(
             "href",
             "/playbooks/pb1?tab=runs&run=run1",

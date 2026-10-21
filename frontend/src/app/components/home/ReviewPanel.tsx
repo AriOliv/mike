@@ -10,7 +10,7 @@ import { StatusChip } from "@/app/components/ui/status-chip";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { pillButtonUIClassName } from "@/shared/ui/PillButtonUI.styles";
 import { CitationPillUI } from "@/shared/ui/CitationPillUI";
-import { VerdictCountsUI } from "@/shared/ui/VerdictUI";
+import { VerdictCountsUI, type Verdict } from "@/shared/ui/VerdictUI";
 import { toActivityItems } from "@/app/lib/activityFeed";
 import { brDate, personName, reviewChip, summarySentences } from "@/app/lib/home";
 import {
@@ -31,11 +31,14 @@ const LANE_LABEL: Record<string, string> = {
     arquivado: "Arquivado",
 };
 
-/** Where "Abrir" goes: the playbook's findings when there are some, else the card. */
-export function reviewHref(review: HomeReview): string {
-    return review.playbook_id && review.playbook_run_id
-        ? playbookRunPath({ id: review.playbook_run_id, playbookId: review.playbook_id })
-        : `/projects/${review.project_id}`;
+/**
+ * Where "Abrir" goes: the playbook's findings when there are some, else the
+ * card. With a verdict the review opens filtered to it (`&veredito=`).
+ */
+export function reviewHref(review: HomeReview, verdict?: Verdict | null): string {
+    if (!review.playbook_id || !review.playbook_run_id) return `/projects/${review.project_id}`;
+    const path = playbookRunPath({ id: review.playbook_run_id, playbookId: review.playbook_id });
+    return verdict ? `${path}&veredito=${verdict}` : path;
 }
 
 type Person = { email: string; name: string };
@@ -233,8 +236,7 @@ export function ReviewPanel({
                             alinhado={review.aligned}
                             precisa_revisao={review.needs_review}
                             diverge={review.deviates}
-                            // TODO(Quill): open pre-filtered once the review screen takes a verdict param.
-                            onSelect={() => router.push(href)}
+                            onSelect={(verdict) => router.push(reviewHref(review, verdict))}
                         />
                     ) : null}
                     <div className="flex flex-wrap gap-2">
