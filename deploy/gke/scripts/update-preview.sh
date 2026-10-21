@@ -16,6 +16,9 @@
 # Never touches namespace staging (except the shared Gateway, which only the
 # staging overlay applies).
 set -euo pipefail
+# kubectl always targets mike-gke (see kube.sh); from the repo, since this
+# script re-runs itself from a temp copy
+. "$(git rev-parse --show-toplevel)/deploy/gke/scripts/kube.sh"
 # The checkout below rewrites this file; run from a copy.
 if [ -z "${_PREVIEW_COPY:-}" ]; then
   c=$(mktemp); cp "$0" "$c"; _PREVIEW_COPY=1 exec bash "$c" "$@"

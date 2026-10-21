@@ -17,6 +17,11 @@ configMapGenerator:
       - PUBLIC_URL=https://staging.clm.avenia.tech
       # temporary second origin while the Cloudflare record does not exist
       - ALLOWED_ORIGINS=https://34-120-191-197.nip.io
+      # Avenia LiteLLM (US$ 50 / 30 days on the key). The key comes from the
+      # mike-litellm Secret (patch below), never from here. Every call carries
+      # LiteLLM's message-redaction header (needs the per-model headers of PR #21).
+      - MIKE_MODEL_CONFIG_JSON={"models":[{"id":"claude-sonnet-5-5","label":"Claude Sonnet 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}},{"id":"claude-opus-5-5","label":"Claude Opus 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}},{"id":"claude-haiku-5-5","label":"Claude Haiku 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}}]}
+      - LLM_MAX_OUTPUT_TOKENS=32000
 images:
   - name: mike-backend
     newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend
@@ -47,3 +52,11 @@ patches:
       - op: add
         path: /spec/default/logging
         value: { enabled: true, sampleRate: 1000000 }
+  # the LiteLLM key for the backend only, from the Secret the LiteLLM session made
+  - target: { kind: Deployment, name: backend }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LITELLM_API_KEY
+          valueFrom: { secretKeyRef: { name: mike-litellm, key: LITELLM_API_KEY } }

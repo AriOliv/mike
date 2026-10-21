@@ -12,6 +12,8 @@
 # The demo password is the only value a person needs; read it with:
 #   kubectl -n <ns> get secret mike-secrets -o jsonpath='{.data.DEMO_PASSWORD}' | base64 -d
 set -euo pipefail
+# kubectl always targets mike-gke (see kube.sh)
+. "$(dirname "${BASH_SOURCE[0]}")/kube.sh"
 NS="${1:?namespace}"
 
 if kubectl -n "$NS" get secret mike-secrets >/dev/null 2>&1 && [ "${ROTATE:-0}" != 1 ]; then
