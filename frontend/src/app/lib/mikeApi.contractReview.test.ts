@@ -16,6 +16,7 @@ import {
     extractContractFicha,
     getContractFicha,
     getContractReview,
+    listContractFichas,
     listContractReviews,
     startContractReview,
 } from "./mikeApi";
@@ -78,3 +79,13 @@ describe("Ficha", () => {
         });
     });
 });
+
+describe("contract portfolio", () => {
+    it("lists the portfolio with paging and sort", async () => {
+        await listContractFichas();
+        expect(lastCall().url).toMatch(/\/contracts\/fichas$/);
+        await listContractFichas({ limit: 25, offset: 50, sort: "aviso" });
+        expect(lastCall().url).toMatch(/\/contracts\/fichas\?limit=25&offset=50&sort=aviso$/);
+    });
+});
+

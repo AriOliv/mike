@@ -4952,3 +4952,41 @@ export async function decideFichaField(
         body: JSON.stringify(input),
     });
 }
+
+// ── Contract portfolio (/contracts/fichas) ─────────────────────────────────
+export interface ContractPortfolioRow {
+    project_id: string;
+    name: string;
+    counterparty: string | null;
+    contract_type: string | null;
+    lane: string | null;
+    /** YYYY-MM-DD. */
+    term_end: string | null;
+    notice_days: number | null;
+    /** YYYY-MM-DD: the last day to give notice. */
+    notice_deadline: string | null;
+    /** Ficha fields with a reading of the contract, of `total`. */
+    filled: number;
+    verified: number;
+    total: number;
+    risk: "critico" | "atencao" | "ok" | null;
+}
+
+export interface ContractPortfolio {
+    rows: ContractPortfolioRow[];
+    total: number;
+    next_offset: number | null;
+}
+
+/** Every contract the caller can open, one row each; paged, sorted by name or nearest notice. */
+export async function listContractFichas(
+    options: { limit?: number; offset?: number; sort?: "nome" | "aviso" } = {},
+): Promise<ContractPortfolio> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    if (options.sort) params.set("sort", options.sort);
+    const qs = params.toString();
+    return apiRequest(`/contracts/fichas${qs ? `?${qs}` : ""}`);
+}
+

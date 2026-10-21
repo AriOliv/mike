@@ -1,5 +1,6 @@
 // HTTP layer for the contract-review module, mounted at
-// /projects/:projectId/contract-review. Handlers read the caller, call the
+// /projects/:projectId/contract-review (one contract) and /contracts (the
+// portfolio). Handlers read the caller, call the
 // service, and map its ServiceResult onto status codes.
 
 import { Router, type Response } from "express";
@@ -13,6 +14,7 @@ import {
     extractFicha,
     getContractReview,
     getFicha,
+    listContractPortfolio,
     listContractReviews,
     startContractReview,
     type Caller,
@@ -97,3 +99,16 @@ contractReviewRouter.patch(
 );
 
 contractReviewRouter.use(routerErrorHandler("[contract-review]"));
+
+// ── /contracts: the portfolio across every contract the caller can open ─────
+export const contractPortfolioRouter = Router();
+contractPortfolioRouter.use(requireAuth);
+
+contractPortfolioRouter.get(
+    "/fichas",
+    asyncRoute(async (req, res) => {
+        send(res, await listContractPortfolio(createServerSupabase(), caller(res), req.query as Record<string, unknown>));
+    }),
+);
+
+contractPortfolioRouter.use(routerErrorHandler("[contracts]"));

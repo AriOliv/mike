@@ -31,7 +31,7 @@ import {
   userMemoryRouter,
 } from "./modules/memory/memory.routes";
 import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
-import { contractReviewRouter } from "./modules/contract-review/contractReview.routes";
+import { contractPortfolioRouter, contractReviewRouter } from "./modules/contract-review/contractReview.routes";
 import {
   acervoRouter,
   integrationsRouter,
@@ -370,6 +370,7 @@ app.use("/pipeline", pipelineRouter);
 app.use("/obligations", obligationsRouter);
 app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
+app.use("/contracts", contractPortfolioRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
