@@ -92,7 +92,8 @@ describe("AppSidebar account dropdown", () => {
     expect(esteira.compareDocumentPosition(mais) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(mais.compareDocumentPosition(playbooks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Pipeline" })).toBeNull();
-    expect(screen.getByRole("button", { name: "IDE" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "IDE" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Contratos" })).toBeVisible();
   });
 
   it("shows a recovery toast when sign out fails", async () => {
@@ -104,8 +105,8 @@ describe("AppSidebar account dropdown", () => {
     await user.click(screen.getByText("Alice").closest("button")!);
     await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't sign out");
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não consegui sair");
+    expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeInTheDocument();
     clearToasts();
   });
 
@@ -286,7 +287,7 @@ describe("AppSidebar account dropdown", () => {
     rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     expect(screen.getByText("Esteira")).toHaveClass("sidebar-fade-in-2");
-    expect(screen.getByText("Recent Projects").closest("button")).toHaveClass(
+    expect(screen.getByText("Projetos recentes").closest("button")).toHaveClass(
       "sidebar-fade-in",
     );
   });

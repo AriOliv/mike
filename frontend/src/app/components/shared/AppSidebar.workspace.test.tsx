@@ -117,7 +117,7 @@ describe("AppSidebar workspace switcher", () => {
     const review = { id: "review", title: "Running review", updated_at: "2026-10-15T00:00:00Z", is_running: true } as TabularReview;
     vi.mocked(listTabularReviews).mockResolvedValueOnce([review]);
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
-    const history = within(screen.getByRole("region", { name: "History" }));
+    const history = within(screen.getByRole("region", { name: "Histórico" }));
     const row = await history.findByRole("link", { name: "Tabular review: Running review (Running)" });
     const chat = history.getByRole("button", { name: "Keep this chat" });
     let resolve!: (rows: TabularReview[]) => void;
@@ -142,9 +142,9 @@ describe("AppSidebar workspace switcher", () => {
     ] as TabularReview[]);
     state.pathname = "/projects/matter/tabular-reviews/project-review";
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "History" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Histórico" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByText("Assistant History")).toBeNull();
-    const history = within(screen.getByRole("region", { name: "History" }));
+    const history = within(screen.getByRole("region", { name: "Histórico" }));
     const projectReview = await history.findByRole("link", { name: "Tabular review: Matter Alpha: Older review edited today" });
     expect(projectReview).toHaveAttribute("title", "Matter Alpha: Older review edited today");
     expect(projectReview).toHaveTextContent("Matter Alpha: Older review edited today");
@@ -275,7 +275,7 @@ describe("AppSidebar workspace switcher", () => {
     // `hidden`: the open menu takes the rest of the page out of the
     // accessibility tree.
     expect(
-      screen.getByRole("button", { name: "Recent Projects", hidden: true }),
+      screen.getByRole("button", { name: "Projetos recentes", hidden: true }),
     ).toHaveClass("text-xs", "font-semibold");
     expect(label).not.toHaveClass("uppercase");
     expect(label).not.toHaveClass("tracking-wider");
@@ -543,8 +543,8 @@ describe("AppSidebar workspace switcher", () => {
   it("lines the empty projects placeholder up with the Recent Projects button", async () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    const placeholder = await screen.findByText("No projects yet");
-    const button = screen.getByRole("button", { name: "Recent Projects" });
+    const placeholder = await screen.findByText("Nenhum projeto ainda");
+    const button = screen.getByRole("button", { name: "Projetos recentes" });
     const horizontalPadding = (element: HTMLElement) =>
       [...element.classList].filter((name) => /^px-/.test(name));
     expect(horizontalPadding(placeholder)).toEqual(horizontalPadding(button));
