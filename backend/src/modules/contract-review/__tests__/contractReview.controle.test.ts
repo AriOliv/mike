@@ -94,6 +94,10 @@ describe("computed columns", () => {
         expect(parseSheetDate("01/03/2025")?.toISOString()).toBe("2025-03-01T00:00:00.000Z");
         expect(parseSheetDate("2025-03-01")?.toISOString()).toBe("2025-03-01T00:00:00.000Z");
         expect(parseSheetDate("31/02/2025")).toBeNull();
+        expect(parseSheetDate("01/07/2026.")?.toISOString()).toBe("2026-07-01T00:00:00.000Z");
+        expect(parseSheetDate("16/06/2026 (data do preâmbulo)")?.toISOString()).toBe("2026-06-16T00:00:00.000Z");
+        expect(parseSheetDate("Assinado em 01/07/2026")).toBeNull();
+        expect(parseSheetDate("01/07/20261")).toBeNull();
         expect(parseSheetDate(NAO_ENCONTRADO)).toBeNull();
         expect(parseSheetDate(null)).toBeNull();
         expect(parseSheetDuration("12 (doze) meses")).toEqual({ amount: 12, unit: "meses", day_count: "nao_especificado" });

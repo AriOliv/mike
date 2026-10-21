@@ -309,9 +309,12 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** "DD/MM/AAAA" or "AAAA-MM-DD" to a UTC date; anything else is no date. */
 export function parseSheetDate(text: string | null | undefined): Date | null {
+    // The model often trails the date with a period or a note in parentheses
+    // ("01/07/2026.", "01/07/2026 (data do preâmbulo)"): the cell's leading date
+    // counts, a date further into the text does not.
     const value = (text ?? "").trim();
-    const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
-    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?![\d/])/.exec(value);
+    const iso = /^(\d{4})-(\d{2})-(\d{2})(?![\d-])/.exec(value);
     const [y, m, d] = br ? [+br[3], +br[2], +br[1]] : iso ? [+iso[1], +iso[2], +iso[3]] : [NaN, NaN, NaN];
     if (!Number.isInteger(y)) return null;
     const date = new Date(Date.UTC(y, m - 1, d));
