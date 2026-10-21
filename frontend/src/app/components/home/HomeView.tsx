@@ -12,6 +12,7 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { showToast } from "@/app/components/ui/toast";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { toActivityItems } from "@/app/lib/activityFeed";
 import { brDate, filterReviews, greeting, isMine, noticeHint, type HomeFilter, type HomeTab } from "@/app/lib/home";
@@ -95,20 +96,33 @@ export function HomeView() {
         [params, router],
     );
 
-    const shortcuts = useRef<{ accept: (r: HomeReview) => void; retry: (r: HomeReview) => void } | null>(null);
+    // What the keyboard acts on, current as of the last committed render.
+    const keys = useRef<{
+        rows: HomeReview[];
+        selectedId: string | null;
+        sending: boolean;
+        open: (review: HomeReview | null) => void;
+        accept: (review: HomeReview) => void;
+        retry: (review: HomeReview) => void;
+    } | null>(null);
 
     // j/k move through the queue, a accepts, r reviews again; Enter opens and
     // Escape closes are the row's and the panel's. Never while typing or with
-    // the send dialog open.
+    // the send dialog open. One listener for the page's lifetime, reading the
+    // latest state through `keys`, so a key pressed right after a render never
+    // sees the render before it.
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
+            const state = keys.current;
+            if (!state) return;
+            const { rows, selectedId, sending, open } = state;
             const target = event.target as HTMLElement | null;
             if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
             if (event.metaKey || event.ctrlKey || event.altKey || sending) return;
             const current = rows.find((r) => r.id === selectedId) ?? null;
-            if (event.key === "a" && current?.status === "ready") return shortcuts.current?.accept(current);
+            if (event.key === "a" && current?.status === "ready") return state.accept(current);
             if (event.key === "r" && current && (current.status === "ready" || current.status === "done" || current.status === "failed"))
-                return shortcuts.current?.retry(current);
+                return state.retry(current);
             if (event.key !== "j" && event.key !== "k") return;
             if (rows.length === 0) return;
             const index = rows.findIndex((r) => r.id === selectedId);
@@ -118,7 +132,7 @@ export function HomeView() {
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [rows, selectedId, open, sending]);
+    }, []);
 
     const patchReview = useCallback((id: string, patch: Partial<HomeReview>) => {
         setHome((current) =>
@@ -205,9 +219,7 @@ export function HomeView() {
         },
         [load, patchReview],
     );
-    useEffect(() => {
-        shortcuts.current = { accept, retry };
-    }, [accept, retry]);
+    useAssignLatest(keys, { rows, selectedId, sending, open, accept, retry });
 
     const loading = home === null && error === null;
     const hello = home ? greeting(home) : null;
