@@ -64,6 +64,23 @@ Depois faça o login no Mike normalmente, pela tela `/login`, com uma conta demo
 (`DEMO_PASSWORD` no env do teste, lida do Secret como acima). O token expira em
 1 h: gere um novo por rodada, nunca o salve em arquivo versionado.
 
+### Screenshots para a revisão de um PR
+
+`scripts/preview-shots.mjs` tira as capturas de uma lista de telas em JSON:
+- quem loga (`legal` ou `solicitante`), a rota, as larguras e os temas;
+- os passos antes da foto (abrir um painel, escolher uma aba).
+
+Ele usa um Chromium headless para a rodada inteira, uma página por vez, e só contra a prévia remota: nada de `next dev`, stack local ou e2e completo. O header do IAP vai só para o host do Mike. Em 390 px, o script avisa quando a página rola para o lado.
+
+```bash
+export MIKE_URL=https://preview.34-120-191-197.nip.io
+export IAP_TOKEN=$(deploy/gke/scripts/iap-token.sh "$MIKE_URL")
+export DEMO_PASSWORD=...   # do Secret preview/mike-secrets; nunca em arquivo
+node deploy/gke/scripts/preview-shots.mjs deploy/gke/shots/pedidos.json /tmp/shots/pedidos
+```
+
+Cada feature mantém o seu roteiro em `deploy/gke/shots/<feature>.json`. O de Pedidos (`pedidos.json`) serve de exemplo de passos: ele clica na linha "Triagem pronta" para fotografar o painel aberto. Precisa de `playwright-core` (vem com o `@playwright/test` da raiz) e de um Chromium no cache do Playwright, ou `CHROME=<caminho>`.
+
 ## Prévia de integração: um comando
 
 ```bash

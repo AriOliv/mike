@@ -1,0 +1,60 @@
+{
+  "about": "Início (PR #11): a fila de revisões com o resumo desde a última visita, o painel de uma revisão pronta (aviso prévio, Ficha, pedido LEG, feed), o modal de envio em lote e a visão do solicitante.",
+  "shots": [
+    {
+      "name": "inicio",
+      "as": "legal",
+      "path": "/inicio",
+      "widths": [1280, 390],
+      "themes": ["light", "dark"],
+      "steps": [
+        { "waitFor": "section[aria-label='Resumo'] >> text=Revisei" },
+        { "waitFor": "[role=list][aria-label='Revisões'] [role=listitem]", "wait": 400 }
+      ]
+    },
+    {
+      "name": "inicio-painel",
+      "as": "legal",
+      "path": "/inicio?doc=00000000-0000-4000-c100-000000000001",
+      "widths": [1280, 390],
+      "themes": ["light", "dark"],
+      "steps": [
+        { "waitFor": "aside[aria-label='Detalhes'] >> text=Aceitar revisão" },
+        { "waitFor": "aside[aria-label='Detalhes'] >> text=verificados" },
+        { "waitFor": "aside[aria-label='Detalhes'] >> text=Agente de revisão", "wait": 400 }
+      ]
+    },
+    {
+      "name": "inicio-todas",
+      "as": "legal",
+      "path": "/inicio",
+      "widths": [1280],
+      "themes": ["light"],
+      "steps": [
+        { "waitFor": "[role=list][aria-label='Revisões'] [role=listitem]" },
+        { "click": "button:has-text('Todas')" },
+        { "waitFor": "text=Comparando com o playbook", "wait": 300 }
+      ]
+    },
+    {
+      "name": "inicio-enviar",
+      "as": "legal",
+      "path": "/inicio",
+      "widths": [1280, 390],
+      "themes": ["light"],
+      "steps": [
+        { "waitFor": "section[aria-label='Resumo']" },
+        { "click": "button:has-text('Enviar contratos')" },
+        { "waitFor": "text=PDF ou DOCX", "wait": 300 }
+      ]
+    },
+    {
+      "name": "inicio-solicitante",
+      "as": "solicitante",
+      "path": "/inicio",
+      "widths": [1280, 390],
+      "themes": ["light"],
+      "steps": [{ "waitFor": "section[aria-label='Resumo']", "wait": 400 }]
+    }
+  ]
+}
