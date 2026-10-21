@@ -116,6 +116,7 @@ async function main() {
     }
 
     let taken = 0;
+    let failures = 0;
     for (const shot of shots) {
         for (const theme of shot.themes ?? ["light"]) {
             const page = await session(shot.as ?? "legal", theme);
@@ -130,20 +131,29 @@ async function main() {
                         document.documentElement.style.colorScheme = t;
                     }, theme);
                 await applyTheme();
-                for (const step of shot.steps ?? []) await run(page, step);
+                // a failed step still gets its picture (it shows what went wrong)
+                // and the run goes on: every run costs logins (see session())
+                let failed = "";
+                try {
+                    for (const step of shot.steps ?? []) await run(page, step);
+                } catch (error) {
+                    failed = String(error?.message ?? error).split("\n")[0];
+                    failures += 1;
+                }
                 await applyTheme();
                 await page.waitForTimeout(shot.settle ?? 800);
                 const file = join(outDir, `${shot.name}-${width}-${theme}.png`);
                 await page.screenshot({ path: file, fullPage: !!shot.fullPage });
                 // Horizontal page scroll at phone width is a review failure; say so.
                 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-                console.log(`${file}${overflow > 1 ? `  ⚠ page scrolls sideways by ${overflow}px` : ""}`);
+                console.log(`${file}${overflow > 1 ? `  ⚠ page scrolls sideways by ${overflow}px` : ""}${failed ? `  ⚠ step failed: ${failed}` : ""}`);
                 taken += 1;
             }
         }
     }
     await browser.close();
-    console.log(`${taken} screenshots in ${outDir}`);
+    console.log(`${taken} screenshots in ${outDir}${failures ? `, ${failures} with a failed step` : ""}`);
+    if (failures) process.exitCode = 1;
 }
 
 main().catch((error) => fail(error?.message ?? String(error)));
