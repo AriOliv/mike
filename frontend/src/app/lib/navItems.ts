@@ -56,3 +56,28 @@ export function isNavItemActive(item: NavItem, pathname: string): boolean {
     if (item.exact) return pathname === item.href;
     return pathname === item.href || pathname.startsWith(item.href + "/");
 }
+
+/** Who the caller is to the Legal team, as GET /requests/me answers it. */
+export type NavRole = "head" | "team" | "requester";
+
+/** The only pages someone outside the Legal team works in (docs/product/05 §1). */
+const REQUESTER_HREFS: readonly string[] = ["/inicio", "/pedidos"];
+
+/**
+ * The menu for `role`. Whoever only asks the Legal team for things sees
+ * Início and their Pedidos, with no "Mais" and no project lists: the team's
+ * workstation is not theirs. An unknown role (still loading, or a server
+ * without the requests module) gets the whole menu, as before.
+ */
+export function navForRole(role: NavRole | null): {
+    main: readonly NavItem[];
+    more: readonly NavItem[];
+    workLists: boolean;
+} {
+    if (role !== "requester") return { main: NAV_MAIN, more: NAV_MORE, workLists: true };
+    return {
+        main: NAV_MAIN.filter((item) => REQUESTER_HREFS.includes(item.href)),
+        more: [],
+        workLists: false,
+    };
+}
