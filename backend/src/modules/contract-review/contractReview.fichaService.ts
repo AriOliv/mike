@@ -202,8 +202,8 @@ export async function decideFichaField(
 ): Promise<ServiceResult<FichaView>> {
     const path = body.path;
     const action = body.action;
-    if (!isFichaPath(path)) return failure("validation", "Campo da Ficha desconhecido.");
-    if (action !== "confirmar" && action !== "corrigir") return failure("validation", "Ação deve ser confirmar ou corrigir.");
+    if (!isFichaPath(path)) return failure("validation", "Este campo não faz parte da Ficha.");
+    if (action !== "confirmar" && action !== "corrigir") return failure("validation", "Escolha Verificar ou Corrigir.");
     if (action === "corrigir" && !("value" in body)) return failure("validation", "Informe o valor corrigido.");
     if (action === "corrigir" && !validCorrection(path, body.value))
         return failure("validation", "Escolha um dos valores deste campo.");

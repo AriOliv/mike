@@ -333,10 +333,10 @@ export async function askAcervo(
     body: Record<string, unknown>,
 ): Promise<ServiceResult<AcervoAnswer>> {
     const question = typeof body.question === "string" ? body.question.trim() : "";
-    if (!question) return failure("validation", "question is required");
-    if (question.length > 2000) return failure("validation", "question is too long");
+    if (!question) return failure("validation", "Escreva uma pergunta.");
+    if (question.length > 2000) return failure("validation", "A pergunta está longa demais. Resuma em até 2.000 caracteres.");
     const parsedScope = parseScope(body.scope);
-    if (!parsedScope.ok) return failure("validation", "invalid scope");
+    if (!parsedScope.ok) return failure("validation", "Não entendi o filtro de contratos. Escolha o escopo de novo.");
     const scope = parsedScope.scope;
     const includeLaw = body.include_law === true;
 

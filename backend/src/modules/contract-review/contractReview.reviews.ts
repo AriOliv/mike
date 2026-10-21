@@ -505,7 +505,7 @@ export async function decideReviewClause(
 ): Promise<ServiceResult<{ decision: Decision | null; edit: EditAnnotation | null }>> {
     const decision = body.decision;
     if (typeof decision !== "string" || !DECISIONS.has(decision))
-        return failure("validation", "Decisão deve ser aceito, editado, rejeitado ou desfeito.");
+        return failure("validation", "Não reconheci a decisão. Escolha Aceitar, Editar ou Rejeitar.");
     const editedText = typeof body.edited_text === "string" ? body.edited_text.trim().slice(0, 20_000) : "";
     if (decision === "editado" && !editedText) return failure("validation", "Escreva a redação editada.");
     const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 300) || null : null;
