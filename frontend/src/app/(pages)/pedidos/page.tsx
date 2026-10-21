@@ -393,7 +393,12 @@ function QueueRow({
                     ) : null}
                 </span>
             </TableCell>
-            <TableCell className="w-44 pr-3">{item.requester_name ?? item.requester_email}</TableCell>
+            <TableCell className="w-44 pr-3">
+                <span className="block truncate text-gray-700">{item.requester_name ?? item.requester_email}</span>
+                {item.requester_area ? (
+                    <span className="block truncate text-[11px] text-gray-500">{item.requester_area}</span>
+                ) : null}
+            </TableCell>
             <TableCell className="w-24">{CHANNEL_LABEL[item.channel] ?? item.channel}</TableCell>
             <TableCell className={cn("w-36", SLA_TONE_CLASS[tone], tone !== "default" && "font-medium")}>
                 {slaText(item.sla, item.due_at)}

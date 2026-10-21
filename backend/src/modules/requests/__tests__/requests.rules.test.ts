@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     addBusinessDays,
+    normalizeArea,
     computeDueAt,
     effectiveDueAt,
     parseRequestCode,
@@ -43,6 +44,18 @@ describe("SLA", () => {
         expect(slaState({ ...clock, status: "entregue" }, tue)).toBe("encerrado");
         const paused = { ...clock, status: "aguardando_solicitante" as const, paused_at: "2026-10-20T10:00:00Z", paused_seconds: 3600 };
         expect(effectiveDueAt(paused, tue).toISOString()).toBe("2026-10-21T15:00:00.000Z");
+    });
+});
+
+describe("requesting area", () => {
+    it("maps free text onto the fixed list", () => {
+        expect(normalizeArea("Comercial")).toBe("Comercial");
+        expect(normalizeArea(" vendas ")).toBe("Comercial");
+        expect(normalizeArea("RH")).toBe("Pessoas");
+        expect(normalizeArea("TI")).toBe("Tecnologia");
+        expect(normalizeArea("Astronomia")).toBe("Outra");
+        expect(normalizeArea("")).toBeNull();
+        expect(normalizeArea(3)).toBeNull();
     });
 });
 

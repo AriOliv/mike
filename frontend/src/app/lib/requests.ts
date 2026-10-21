@@ -140,7 +140,7 @@ export function filterQueue(
                 break;
         }
         if (!q) return true;
-        return [item.code, item.title, item.counterparty, item.requester_name, item.requester_email]
+        return [item.code, item.title, item.counterparty, item.requester_name, item.requester_email, item.requester_area]
             .filter(Boolean)
             .some((v) => String(v).toLowerCase().includes(q));
     });

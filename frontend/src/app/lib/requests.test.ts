@@ -26,6 +26,7 @@ function item(over: Partial<RequestListItem>): RequestListItem {
         due_at: "2026-10-22T12:00:00Z",
         requester_name: "Ana",
         requester_email: "ana@avenia.io",
+        requester_area: null,
         assignee_id: null,
         assignee_name: null,
         suggested_assignee_name: null,
@@ -59,6 +60,7 @@ function request(over: Partial<LegalRequest>): LegalRequest {
         assignee_name: null,
         requester_name: "Ana",
         requester_email: "ana@avenia.io",
+        requester_area: null,
         delivery: null,
         messages: [],
         created_at: "",
@@ -128,6 +130,7 @@ describe("queue", () => {
     it("searches code, title, counterparty and requester", () => {
         expect(ids(filterQueue(rows, { ...base, tab: "todos", filter: null, query: "trópico" }))).toEqual(["f"]);
         expect(ids(filterQueue(rows, { ...base, tab: "todos", filter: null, query: "leg-0003" }))).toEqual(["c"]);
+        expect(ids(filterQueue([item({ id: "z", requester_area: "Compras" })], { ...base, tab: "todos", filter: null, query: "compras" }))).toEqual(["z"]);
         expect(ids(filterQueue([item({ counterparty: null, requester_name: null })], { ...base, tab: "todos", filter: null, query: "ana@" }))).toEqual(["r"]);
     });
 

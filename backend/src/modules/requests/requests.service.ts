@@ -33,5 +33,7 @@ export {
     computeDueAt,
     slaState,
     requesterStep,
+    normalizeArea,
+    REQUESTER_AREAS,
 } from "./requests.shared";
 export type { Caller } from "./requests.access";

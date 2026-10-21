@@ -21,6 +21,56 @@ export const KIND_LABELS: Record<RequestKind, string> = {
     outro: "Outro",
 };
 
+/**
+ * The areas a request comes from. A short fixed list, so the dashboard
+ * groups cleanly; anything else is "Outra".
+ */
+export const REQUESTER_AREAS = [
+    "Comercial",
+    "Produto",
+    "Tecnologia",
+    "Operações",
+    "Financeiro",
+    "Compras",
+    "Pessoas",
+    "Marketing",
+    "Compliance",
+    "Diretoria",
+    "Outra",
+] as const;
+export type RequesterArea = (typeof REQUESTER_AREAS)[number];
+
+const AREA_ALIASES: Record<string, RequesterArea> = {
+    vendas: "Comercial",
+    sales: "Comercial",
+    "business development": "Comercial",
+    bd: "Comercial",
+    tech: "Tecnologia",
+    engenharia: "Tecnologia",
+    ti: "Tecnologia",
+    ops: "Operações",
+    operacoes: "Operações",
+    finance: "Financeiro",
+    finanças: "Financeiro",
+    financas: "Financeiro",
+    rh: "Pessoas",
+    "recursos humanos": "Pessoas",
+    people: "Pessoas",
+    founders: "Diretoria",
+    "c-level": "Diretoria",
+    diretoria: "Diretoria",
+    procurement: "Compras",
+};
+
+/** Maps free text ("vendas", "RH", "Comercial") onto the fixed list; null when empty. */
+export function normalizeArea(value: unknown): RequesterArea | null {
+    if (typeof value !== "string" || !value.trim()) return null;
+    const text = value.trim().toLowerCase();
+    const exact = REQUESTER_AREAS.find((a) => a.toLowerCase() === text);
+    if (exact) return exact;
+    return AREA_ALIASES[text] ?? "Outra";
+}
+
 export const URGENCIES = ["normal", "alta", "urgente"] as const;
 export type Urgency = (typeof URGENCIES)[number];
 

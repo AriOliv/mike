@@ -54,6 +54,8 @@ export type RequestRow = {
     requester_id: string | null;
     requester_email: string;
     requester_name: string | null;
+    requester_area: string | null;
+    requester_area_source: string | null;
     kind: string;
     title: string;
     counterparty: string | null;
@@ -76,7 +78,8 @@ export type RequestRow = {
 };
 
 export const REQUEST_COLUMNS =
-    "id, number, org_id, project_id, requester_id, requester_email, requester_name, kind, title, " +
+    "id, number, org_id, project_id, requester_id, requester_email, requester_name, requester_area, " +
+    "requester_area_source, kind, title, " +
     "counterparty, context, urgency, needed_by, due_at, status, paused_at, paused_seconds, " +
     "assignee_id, assigned_at, summary, triage, delivery, delivered_at, source, created_at, updated_at";
 

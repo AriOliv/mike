@@ -4632,6 +4632,7 @@ export interface LegalRequest {
     assignee_name: string | null;
     requester_name: string | null;
     requester_email: string;
+    requester_area: string | null;
     delivery: {
         message: string | null;
         delivered_at: string | null;
@@ -4664,6 +4665,7 @@ export interface RequestListItem {
     due_at: string;
     requester_name: string | null;
     requester_email: string;
+    requester_area: string | null;
     assignee_id: string | null;
     assignee_name: string | null;
     suggested_assignee_name: string | null;
@@ -4698,6 +4700,7 @@ export interface NewRequest {
     urgency?: RequestUrgency;
     needed_by?: string | null;
     document_ids?: string[];
+    requester_area?: string;
 }
 
 const jsonPost = (body: unknown): RequestInit => ({
@@ -4706,7 +4709,13 @@ const jsonPost = (body: unknown): RequestInit => ({
     body: JSON.stringify(body),
 });
 
-export async function getRequestRole(): Promise<{ configured: boolean; role: "head" | "team" | "requester" }> {
+export async function getRequestRole(): Promise<{
+    configured: boolean;
+    role: "head" | "team" | "requester";
+    /** The caller's remembered requesting area; null until they first say it. */
+    area: string | null;
+    areas: string[];
+}> {
     return apiRequest("/requests/me");
 }
 

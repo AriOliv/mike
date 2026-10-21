@@ -1022,6 +1022,8 @@ create table if not exists public.projects (
   lane text,
   risk_level text,
   requester_name text,
+  -- the requesting area ("Comercial"), mirrored from the request
+  requester_area text,
   lane_updated_at timestamptz,
   -- where the card lives on the mirrored Notion board (null until synced)
   notion_page_id text,
@@ -11099,6 +11101,13 @@ create table if not exists public.legal_requests (
   requester_id uuid references auth.users(id) on delete set null,
   requester_email text not null,
   requester_name text,
+  -- the requesting area, and where it came from (form, chat bot, remembered,
+  -- or read by the triage agent: the weakest)
+  requester_area text,
+  requester_area_source text
+    constraint legal_requests_requester_area_source_check
+      check (requester_area_source is null
+             or requester_area_source in ('form', 'slack', 'perfil', 'triagem')),
   kind text not null
     constraint legal_requests_kind_check
       check (kind in ('contrato_novo', 'revisao', 'aditivo', 'nda', 'parecer', 'outro')),
@@ -11141,6 +11150,9 @@ create index if not exists idx_legal_requests_org_status
 create index if not exists idx_legal_requests_assignee
   on public.legal_requests(assignee_id, status)
   where assignee_id is not null;
+create index if not exists idx_legal_requests_org_area
+  on public.legal_requests(org_id, requester_area)
+  where requester_area is not null;
 
 alter table public.legal_requests enable row level security;
 revoke all on public.legal_requests from anon, authenticated;
@@ -11223,6 +11235,18 @@ create index if not exists idx_legal_request_notifications_pending
 alter table public.legal_request_notifications enable row level security;
 revoke all on public.legal_request_notifications from anon, authenticated;
 grant select, insert, update, delete on public.legal_request_notifications to service_role;
+
+-- A person's requesting area, remembered so the request form asks once
+-- (20261020_99_requester_area).
+create table if not exists public.legal_requester_areas (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  area text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.legal_requester_areas enable row level security;
+revoke all on public.legal_requester_areas from anon, authenticated;
+grant select, insert, update, delete on public.legal_requester_areas to service_role;
 
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
@@ -11390,6 +11414,7 @@ insert into public.schema_migrations (filename) values
   ('20261020_91_contract_tables_grants.sql'),
   ('20261020_92_card_events.sql'),
   ('20261020_93_legal_requests.sql'),
+  ('20261020_99_requester_area.sql'),
   ('20261021_01_chat_subagent_runs.sql'),
   ('20261021_02_user_subagent_defaults.sql')
 on conflict (filename) do nothing;

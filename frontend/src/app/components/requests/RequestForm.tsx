@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Paperclip, X } from "lucide-react";
 import { ModalUI } from "@/shared/ui/ModalUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
     createRequest,
+    getRequestRole,
     uploadStandaloneDocument,
     type LegalRequest,
     type RequestKind,
@@ -38,9 +39,32 @@ export function RequestForm({
     const [urgency, setUrgency] = useState<RequestUrgency>("normal");
     const [neededBy, setNeededBy] = useState("");
     const [files, setFiles] = useState<File[]>([]);
+    // The requesting area: asked once, remembered by the server afterwards.
+    const [areas, setAreas] = useState<string[]>([]);
+    const [knownArea, setKnownArea] = useState<string | null | undefined>(undefined);
+    const [area, setArea] = useState<string | null>(null);
+    const [changingArea, setChangingArea] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const fileInput = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (!open || knownArea !== undefined) return;
+        let cancelled = false;
+        getRequestRole()
+            .then((me) => {
+                if (cancelled) return;
+                setAreas(me.areas ?? []);
+                setKnownArea(me.area ?? null);
+            })
+            // Without the answer the form still works; the area is just not asked.
+            .catch(() => !cancelled && setKnownArea(null));
+        return () => {
+            cancelled = true;
+        };
+    }, [open, knownArea]);
+
+    const askArea = (knownArea === null || changingArea) && areas.length > 0;
 
     function reset() {
         setKind(null);
@@ -50,11 +74,13 @@ export function RequestForm({
         setNeededBy("");
         setFiles([]);
         setError(null);
+        setChangingArea(false);
     }
 
     async function submit(event?: FormEvent) {
         event?.preventDefault();
         if (!kind) return setError("Escolha o que você precisa.");
+        if (askArea && !area) return setError("Diga de qual área você é.");
         if (!context.trim() && !counterparty.trim()) return setError("Conte em uma frase o que você precisa.");
         setBusy(true);
         setError(null);
@@ -67,7 +93,9 @@ export function RequestForm({
                 urgency,
                 needed_by: neededBy || null,
                 document_ids: uploaded.map((d) => d.id),
+                ...(area ? { requester_area: area } : {}),
             });
+            if (area) setKnownArea(area);
             reset();
             onCreated(request);
         } catch (err) {
@@ -127,6 +155,34 @@ export function RequestForm({
                         ))}
                     </div>
                 </fieldset>
+
+                {askArea ? (
+                    <fieldset>
+                        <legend className="mb-1 text-xs font-medium text-gray-700">De qual área você é?</legend>
+                        <p className="mb-2 text-[11px] text-gray-500">Só nesta primeira vez: depois o Mike lembra.</p>
+                        <div className="flex flex-wrap gap-1.5">
+                            {areas.map((option) => (
+                                <TabPillButtonUI key={option} active={area === option} onClick={() => setArea(option)}>
+                                    {option}
+                                </TabPillButtonUI>
+                            ))}
+                        </div>
+                    </fieldset>
+                ) : knownArea ? (
+                    <p className="text-xs text-gray-500">
+                        Área: <span className="text-gray-900">{knownArea}</span> ·{" "}
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setArea(knownArea);
+                                setChangingArea(true);
+                            }}
+                            className="rounded underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        >
+                            trocar
+                        </button>
+                    </p>
+                ) : null}
 
                 <label className="block">
                     <span className="mb-1 block text-xs font-medium text-gray-700">Com quem?</span>

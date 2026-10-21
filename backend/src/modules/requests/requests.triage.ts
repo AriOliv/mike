@@ -21,6 +21,7 @@ import {
 import { REQUEST_COLUMNS, type RequestRow } from "./requests.access";
 import {
     KIND_LABELS,
+    normalizeArea,
     OPEN_STATUSES,
     REQUEST_KINDS,
     type RequestKind,
@@ -315,9 +316,12 @@ export async function handleRequestTriage(
         .maybeSingle();
     const autoAssign = !!(team as { auto_assign?: boolean } | null)?.auto_assign && !!assignee && !row.assignee_id;
 
+    const readArea = normalizeArea(output.area);
+    const fillArea = !row.requester_area && readArea && readArea !== "Outra";
     const patch: Record<string, unknown> = {
         triage,
         summary: output.summary ?? row.summary,
+        ...(fillArea ? { requester_area: readArea, requester_area_source: "triagem" } : {}),
         status: row.status === "novo" ? "em_triagem" : row.status,
         updated_at: new Date().toISOString(),
     };
@@ -362,6 +366,7 @@ export async function handleRequestTriage(
             source: "agent",
         });
     }
+    if (fillArea) await db.from("projects").update({ requester_area: readArea }).eq("id", row.project_id);
     if (autoAssign) {
         await db
             .from("projects")

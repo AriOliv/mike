@@ -34,11 +34,14 @@ import { queueNotifications } from "./requests.notifications";
 import {
     cleanText,
     computeDueAt,
+    normalizeArea,
+    type RequesterArea,
     effectiveDueAt,
     isEmail,
     KIND_LABELS,
     OPEN_STATUSES,
     REQUEST_KINDS,
+    REQUESTER_AREAS,
     requestCode,
     requesterStep,
     slaState,
@@ -63,6 +66,8 @@ export type CreateRequestInput = {
     /** Standalone documents the requester uploaded first. */
     document_ids?: unknown;
     requester_name?: unknown;
+    /** The requesting area; remembered for next time. The chat bot sends it from the person's profile. */
+    requester_area?: unknown;
     /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp", ...} */
     source?: unknown;
     idempotency_key?: unknown;
@@ -87,6 +92,7 @@ export type RequestPublicView = {
     assignee_name: string | null;
     requester_name: string | null;
     requester_email: string;
+    requester_area: string | null;
     delivery: { message: string | null; delivered_at: string | null; documents: { id: string; filename: string }[] } | null;
     messages: RequestMessage[];
     created_at: string;
@@ -223,6 +229,35 @@ async function attachRequesterDocuments(
 }
 
 /**
+ * The requesting area of a new request: what the person chose (or the chat
+ * bot sent) wins and is remembered; without it, the area remembered from
+ * their last request; without that, nothing (the triage agent may read one
+ * from the text later, as the weakest source).
+ */
+async function resolveArea(
+    db: Db,
+    caller: Caller,
+    given: unknown,
+    channel: string,
+): Promise<{ area: RequesterArea | null; source: "form" | "slack" | "perfil" | null }> {
+    const area = normalizeArea(given);
+    if (area) {
+        const { error } = await db
+            .from("legal_requester_areas")
+            .upsert({ user_id: caller.userId, area, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+        if (error) console.error("[requests] remember area failed", { error: safeError(error) });
+        return { area, source: channel === "form" ? "form" : "slack" };
+    }
+    const { data } = await db
+        .from("legal_requester_areas")
+        .select("area")
+        .eq("user_id", caller.userId)
+        .maybeSingle();
+    const remembered = normalizeArea((data as { area?: string } | null)?.area);
+    return remembered ? { area: remembered, source: "perfil" } : { area: null, source: null };
+}
+
+/**
  * Anyone signed in asks the legal team. Creates the request, its card on the
  * pipeline's first lane (in the team's organization, visible to the team),
  * logs it, mails the requester and queues the triage agent.
@@ -266,6 +301,8 @@ export async function createRequest(
     const now = new Date();
     const dueAt = computeDueAt(now, valid.kind, valid.urgency, valid.neededBy, team.sla_days);
     const requesterName = cleanText(input.requester_name, 120);
+    const channelOf = String(sourceOf(input.source).channel);
+    const area = await resolveArea(db, caller, input.requester_area, channelOf);
 
     // The card: a project in the team's organization, open to the whole team,
     // on the first lane. Created through the same RPC as any project (it
@@ -296,6 +333,7 @@ export async function createRequest(
             priority: valid.urgency === "normal" ? "media" : "alta",
             deadline: dueAt.toISOString().slice(0, 10),
             requester_name: requesterName ?? requesterEmail,
+            requester_area: area.area,
         })
         .eq("id", projectId);
     if (cardError) {
@@ -311,6 +349,8 @@ export async function createRequest(
             requester_id: caller.userId,
             requester_email: requesterEmail,
             requester_name: requesterName,
+            requester_area: area.area,
+            requester_area_source: area.source,
             kind: valid.kind,
             title: valid.title,
             counterparty: valid.counterparty,
@@ -465,6 +505,7 @@ async function buildView(
         assignee_name: assigneeName,
         requester_name: row.requester_name,
         requester_email: row.requester_email,
+        requester_area: row.requester_area,
         delivery: row.delivered_at
             ? {
                   message: (row.delivery?.message as string | null | undefined) ?? null,
@@ -525,6 +566,7 @@ export type RequestListItem = {
     due_at: string;
     requester_name: string | null;
     requester_email: string;
+    requester_area: string | null;
     assignee_id: string | null;
     assignee_name: string | null;
     suggested_assignee_name: string | null;
@@ -667,6 +709,7 @@ export async function listRequests(
             due_at: effectiveDueAt(clock, now).toISOString(),
             requester_name: r.requester_name,
             requester_email: r.requester_email,
+            requester_area: r.requester_area,
             assignee_id: role ? r.assignee_id : null,
             assignee_name: r.assignee_id ? (nameOf.get(r.assignee_id) ?? null) : null,
             suggested_assignee_name: role && triage && !triage.decision ? (triage.assignee_name ?? null) : null,
@@ -1170,17 +1213,27 @@ export async function revokeParticipant(
 export async function whoAmI(
     db: Db,
     caller: Caller,
-): Promise<ServiceResult<{ configured: boolean; role: "head" | "team" | "requester" }>> {
+): Promise<
+    ServiceResult<{ configured: boolean; role: "head" | "team" | "requester"; area: string | null; areas: readonly string[] }>
+> {
     let team;
     try {
         team = await loadLegalTeam(db);
     } catch (error) {
         return internalFailure(error);
     }
-    if (!team) return ok({ configured: false, role: "requester" });
+    const { data } = await db
+        .from("legal_requester_areas")
+        .select("area")
+        .eq("user_id", caller.userId)
+        .maybeSingle();
+    const area = (data as { area?: string } | null)?.area ?? null;
+    if (!team) return ok({ configured: false, role: "requester", area, areas: REQUESTER_AREAS });
     const role = await teamRole(db, caller, team.org_id);
     return ok({
         configured: true,
         role: role === "owner" || role === "admin" ? "head" : role ? "team" : "requester",
+        area,
+        areas: REQUESTER_AREAS,
     });
 }

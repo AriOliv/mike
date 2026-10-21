@@ -223,6 +223,7 @@ export function RequestPanel({
                         </>
                     ),
                 },
+                { label: "Área", value: r.requester_area ?? <span className="text-gray-500">não informada</span> },
                 { label: "Canal", value: CHANNEL_LABEL[r.source?.channel ?? "form"] ?? r.source?.channel },
                 { label: "Urgência", value: r.urgency === "normal" ? "Normal" : r.urgency === "alta" ? "Alta" : "Urgente" },
                 ...(r.needed_by ? [{ label: "Precisa até", value: formatDate(`${r.needed_by}T12:00:00Z`) }] : []),

@@ -244,6 +244,58 @@ describe("createRequest", () => {
     });
 });
 
+describe("requesting area", () => {
+    it("records the area chosen on the form, remembers it, and mirrors it on the card", async () => {
+        const w = world();
+        const first = await newRequest(w, { requester_area: "vendas" });
+        expect(first.requester_area).toBe("Comercial");
+        expect(w.table("legal_requests")[0]).toMatchObject({ requester_area: "Comercial", requester_area_source: "form" });
+        expect(w.table("projects")[0].requester_area).toBe("Comercial");
+        expect(w.table("legal_requester_areas")).toEqual([
+            expect.objectContaining({ user_id: REQUESTER.userId, area: "Comercial" }),
+        ]);
+        expect(await whoAmI(w.db, REQUESTER)).toMatchObject({ ok: true, data: { area: "Comercial" } });
+
+        // Next time the form does not ask: the remembered area is used.
+        await newRequest(w);
+        expect(w.table("legal_requests")[1]).toMatchObject({ requester_area: "Comercial", requester_area_source: "perfil" });
+    });
+
+    it("takes the chat bot's area as 'slack', and leaves it empty when nothing is known", async () => {
+        const w = world();
+        await createRequest(w.db, STRANGER, { kind: "parecer", context: "x" });
+        expect(w.table("legal_requests")[0]).toMatchObject({ requester_area: null, requester_area_source: null });
+        expect(await whoAmI(w.db, STRANGER)).toMatchObject({ ok: true, data: { area: null } });
+        await createRequest(w.db, REQUESTER, {
+            kind: "parecer",
+            context: "y",
+            requester_area: "Produto",
+            source: { channel: "slack" },
+        });
+        expect(w.table("legal_requests")[1]).toMatchObject({ requester_area: "Produto", requester_area_source: "slack" });
+    });
+
+    it("fills an empty area from what the triage read, never over one the person gave", async () => {
+        const w = world();
+        const blank = await createRequest(w.db, STRANGER, { kind: "nda", context: "x" });
+        llm.completeText.mockResolvedValue('{"kind":"nda","area":"RH","summary":"x","missing":[]}');
+        await handleRequestTriage(w.db, { payload: { request_id: blank.ok ? blank.data.request.id : "" } });
+        expect(w.table("legal_requests")[0]).toMatchObject({ requester_area: "Pessoas", requester_area_source: "triagem" });
+        expect(w.table("projects")[0].requester_area).toBe("Pessoas");
+
+        const given = await newRequest(w, { requester_area: "Compras" });
+        llm.completeText.mockResolvedValue('{"kind":"nda","area":"Comercial","summary":"x","missing":[]}');
+        await handleRequestTriage(w.db, { payload: { request_id: given.id } });
+        expect(w.table("legal_requests")[1]).toMatchObject({ requester_area: "Compras", requester_area_source: "form" });
+
+        // An area the list does not know is not guessed into one.
+        const other = await createRequest(w.db, { userId: uuid(), userEmail: "z@avenia.io" }, { kind: "nda", context: "x" });
+        llm.completeText.mockResolvedValue('{"kind":"nda","area":"Astronomia","summary":"x","missing":[]}');
+        await handleRequestTriage(w.db, { payload: { request_id: other.ok ? other.data.request.id : "" } });
+        expect(w.table("legal_requests")[2]).toMatchObject({ requester_area: null });
+    });
+});
+
 describe("who sees what", () => {
     it("shows the team view to members and the narrow view to the requester, hides it from others", async () => {
         const w = world();
@@ -569,7 +621,7 @@ describe("e-mail outbox", () => {
 describe("whoAmI", () => {
     it("tells the frontend which screen to show", async () => {
         const w = world();
-        expect(await whoAmI(w.db, HEAD)).toMatchObject({ ok: true, data: { role: "head" } });
+        expect(await whoAmI(w.db, HEAD)).toMatchObject({ ok: true, data: { role: "head", area: null, areas: expect.arrayContaining(["Comercial", "Outra"]) } });
         expect(await whoAmI(w.db, ANALYST)).toMatchObject({ ok: true, data: { role: "team" } });
         expect(await whoAmI(w.db, REQUESTER)).toMatchObject({ ok: true, data: { role: "requester", configured: true } });
     });
