@@ -61,12 +61,13 @@ import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 import {
-    NAV_MAIN,
-    NAV_MORE,
     isNavItemActive,
+    navForRole,
     type NavIconKey,
     type NavItem,
+    type NavRole,
 } from "@/app/lib/navItems";
+import { loadNavRole } from "@/app/lib/navRole";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -339,7 +340,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 // An empty Projects section reads as "you have no projects",
                 // which is the one thing this failure does not mean.
                 notifyError(error, {
-                    action: "load your recent projects",
+                    lang: "pt",
+                    action: "carregar seus projetos recentes",
                     dedupeKey: "sidebar-recent-projects",
                     onRetry: () =>
                         setRecentProjectsAttempt((attempt) => attempt + 1),
@@ -402,7 +404,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             // The current page survives; the user is told the next one did
             // not arrive instead of scrolling at a list that stopped growing.
             notifyError(error, {
-                action: "load more projects",
+                lang: "pt",
+                action: "carregar mais projetos",
                 dedupeKey: "sidebar-recent-projects-more",
                 onRetry: () => retryLoadMoreRecentProjectsRef.current?.(),
             });
@@ -449,7 +452,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             .then(() => router.push("/"))
             .catch((error) => {
                 notifyError(error, {
-                    action: "sign out",
+                    lang: "pt",
+                    action: "sair",
                     dedupeKey: "sign-out",
                     onRetry: handleSignOut,
                 });
@@ -459,6 +463,20 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     useEffect(() => {
         setCurrentChatId(routeChatId);
     }, [routeChatId, setCurrentChatId]);
+
+    // Whoever only asks the Legal team for things gets a shorter menu. The
+    // role is per account, so it is asked again only when the account changes.
+    const [navRole, setNavRole] = useState<NavRole | null>(null);
+    useEffect(() => {
+        setNavRole(null);
+        if (!userId) return;
+        const controller = new AbortController();
+        void loadNavRole(controller.signal).then((role) => {
+            if (!controller.signal.aborted) setNavRole(role);
+        });
+        return () => controller.abort();
+    }, [userId]);
+    const nav = navForRole(navRole);
 
 
     const getDisplayName = () => {
@@ -573,7 +591,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
                     {/* Nav items */}
                     <div className="pt-1.5">
-                        {NAV_MAIN.map((item) => (
+                        {nav.main.map((item) => (
                             <NavButton
                                 key={item.href}
                                 item={item}
@@ -583,7 +601,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 onNavigate={() => router.push(item.href)}
                             />
                         ))}
-                        {isOpen ? (
+                        {nav.more.length === 0 ? null : isOpen ? (
                             <p
                                 className={`mt-3 mb-1 px-3.5 text-xs font-semibold text-gray-500 ${
                                     shouldAnimate ? "sidebar-fade-in" : ""
@@ -594,7 +612,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         ) : (
                             <div aria-hidden="true" className="mx-3 my-2 hidden border-t border-gray-200 md:block" />
                         )}
-                        {NAV_MORE.map((item) => (
+                        {nav.more.map((item) => (
                             <NavButton
                                 key={item.href}
                                 item={item}
@@ -606,7 +624,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         ))}
                     </div>
 
-                    {isOpen && (
+                    {isOpen && nav.workLists && (
                         <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
                             {/* Recent Projects */}
                             <div>
@@ -616,7 +634,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         shouldAnimate ? "sidebar-fade-in" : ""
                                     }`}
                                 >
-                                    <span>Recent Projects</span>
+                                    <span>Projetos recentes</span>
                                     <ChevronDown
                                         className={`h-3.5 w-3.5 transition-transform ${
                                             projectsCollapsed ? "-rotate-90" : ""
@@ -660,7 +678,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                         : ""
                                                 }`}
                                             >
-                                                No projects yet
+                                                Nenhum projeto ainda
                                             </div>
                                         ) : (
                                             <div
@@ -725,7 +743,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         shouldAnimate ? "sidebar-fade-in" : ""
                                     }`}
                                 >
-                                    <span>History</span>
+                                    <span>Histórico</span>
                                     <ChevronDown
                                         className={`h-3.5 w-3.5 transition-transform ${
                                             historyCollapsed ? "-rotate-90" : ""
@@ -735,7 +753,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 <div
                                     id="sidebar-history"
                                     role="region"
-                                    aria-label="History"
+                                    aria-label="Histórico"
                                     className={cn(
                                         "min-h-0 flex-1 overflow-y-auto",
                                         historyCollapsed && "hidden",
@@ -767,7 +785,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                     : ""
                                             }`}
                                         >
-                                            {!history.error && "No history yet"}
+                                            {!history.error && "Nada no histórico ainda"}
                                         </div>
                                     ) : (
                                         <>
@@ -893,7 +911,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                             onClick={() => void history.retry()}
                                             className="mx-3.5 my-2 rounded text-left text-xs text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                                         >
-                                            Some history could not be loaded. Try again
+                                            Não consegui carregar parte do histórico. Tentar de novo
                                         </button>
                                     )}
                                 </div>
