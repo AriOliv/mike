@@ -975,7 +975,7 @@ function act(a,t){
   if(a==='drive'){ toast('No produto, abre o PDF assinado no Drive do Legal.'); return; }
   if(a==='addprazo'){ toast('No produto: título, data, recorrência e dono. A IA sugere a partir do contrato.'); return; }
   if(a==='gcal'){ toast('Prazos sincronizados com o Google Calendar do responsável.'); return; }
-  if(a==='weekly'){ toast('A Head recebe toda segunda às 9h o resumo dos próximos 90 dias.'); return; }
+  if(a==='weekly'){ toast('A liderança do Legal recebe toda segunda às 9h o resumo dos próximos 90 dias.'); return; }
   if(a==='alerta'){ toast('Alerta criado: você é avisado quando um contrato novo entrar nesse filtro.'); return; }
 }
 
@@ -1193,7 +1193,7 @@ function dpFolders(){
 
 // ---------- Pedidos com orquestração ----------
 R.find(r=>r.id==='LEG-0128').sugg='Duda'; R.find(r=>r.id==='LEG-0128').why='2 pedidos abertos, contra 4 do Téo, e já fez 3 NDAs de exchanges este mês.';
-R.find(r=>r.id==='LEG-0127').sugg='Fernanda'; R.find(r=>r.id==='LEG-0127').why='MSA de cliente com volume alto: o playbook pede a Head na primeira revisão.';
+R.find(r=>r.id==='LEG-0127').sugg='Fernanda'; R.find(r=>r.id==='LEG-0127').why='MSA de cliente com volume alto: o playbook pede a liderança do Legal na primeira revisão.';
 const EXT_SHARED=new Set(['LEG-0125']);
 function planOf(r){
   if(r.plan) return r.plan;
@@ -1370,7 +1370,7 @@ function dpSpace(s){
 function renderPainel(){
   const ver=Math.round(C.reduce((a,c)=>a+validCount(c),0)/(C.length*SCHEMA.length)*100);
   const areas=[['Comercial',9],['Tecnologia',4],['Financeiro',4],['Compliance',3],['Produto',2],['Marketing',1]];
-  return `<h1>Painel do Legal</h1><p class="sub">Outubro de 2026 · 4 números que a Head usa, com a conta à vista.</p>
+  return `<h1>Painel do Legal</h1><p class="sub">Outubro de 2026 · 4 números para a liderança do Legal, com a conta à vista.</p>
   ${statTiles([{k:'t',n:'1,6 d',l:'Tempo médio Entrada → Revisão',static:true},{k:'v',n:ver+'%',l:'Campos da Ficha verificados',static:true},{k:'p',n:'23',l:'Pedidos no mês',static:true},{k:'h',n:'≈ 32 h',l:'Horas poupadas no mês',static:true}])}
   <p class="muted" style="font-size:12.5px;margin:-6px 0 16px">Horas poupadas = 23 primeiras revisões × 1,8 h (1ª leitura manual medida em setembro) − 23 × 0,4 h de conferência humana. Ajuste os fatores em Configurações.</p>
   <div class="grid g-home"><section class="card"><div class="card-h"><h2>Pedidos por área</h2></div>${areas.map(([a,n])=>`<div class="row"><div style="width:110px">${a}</div><div class="hbar"><i style="width:${n/9*100}%"></i></div><span class="mono">${n}</span></div>`).join('')}</section>
@@ -1398,7 +1398,7 @@ function render(){
   renderNav(route);
   const app=$('#app');
   const V={inicio:renderInicio,pedidos:()=>S.persona==='solicitante'?renderEsteira():renderPedidos(),esteira:renderEsteira,contratos:renderContratos,card:()=>renderCard(arg),prazos:renderPrazos,revisao:()=>renderRevisao(arg),'radar-regulatorio':renderRadarReg,spaces:renderSpaces,painel:renderPainel};
-  app.innerHTML=(V[route]||renderInicio)();
+  app.innerHTML=(Object.hasOwn(V,route)?V[route]:renderInicio)();
   const inp=app.querySelector('[data-editcell],[data-editfield]'); if(inp){ inp.focus(); inp.select(); }
   if(route==='card' && S.selField) highlight(S.selField);
   renderDP(route);
@@ -1442,7 +1442,7 @@ document.addEventListener('click',e=>{
   if(x==='export'){ const r=curRev(); const n=r.findings.filter(f=>f.state==='aceito'||f.state==='editado').length; toast(`No produto: baixa o .docx com ${n} alteraç${n===1?'ão controlada':'ões controladas'} e um comentário por cláusula.`); return; }
   if(x==='scan'){ S.scan=d.id; render(); return; }
   if(x==='regped'){ const ch=SCANS.flatMap(s=>s.changes).find(c=>c.id===d.id); const id='LEG-0'+(129+R.length-7); const c=C.find(y=>y.id===ch.af[0]); R.unshift({id,titulo:'Regulatório · '+ch.t.split(':')[0],tipo:'Parecer',contraparte:c?c.contraparte:'—',sol:me().name,areaSol:'Legal',canal:'Radar regulatório',criado:'20/10 agora',slaH:72,usadoH:0,resp:null,sugg:c?c.resp:'Duda',why:'responsável pelo contrato afetado.',etapa:'entrada',prog:'A fazer',prio:ch.k==='d'?'Alta':'Média',prazo:'',ctx:ch.res+' '+ch.why,contractId:c&&c.id,triagem:{tipo:'Adequação regulatória',risco:ch.k==='d'?'alto':'médio',playbook:'—',nota:ch.fonte},thread:[],activity:[{t:'ev',who:'ag:regulatorio',txt:'abriu a partir do Radar regulatório: '+ch.fonte,at:'20/10 agora'}]}); ch.ped=id; render(); undoToast(`Pedido ${id} criado em Pedidos, ligado a ${ch.af.length} contrato(s).`,()=>{ R.shift(); ch.ped=null; }); return; }
-  if(x==='regpb'){ toast('Regra sugerida no playbook. A Fernanda aprova antes de valer para as próximas revisões.'); return; }
+  if(x==='regpb'){ toast('Regra sugerida no playbook. A liderança do Legal aprova antes de valer.'); return; }
   if(x==='regarq'){ const ch=SCANS.flatMap(s=>s.changes).find(c=>c.id===d.id); ch.arq=true; render(); undoToast('Mudança arquivada.',()=>{ ch.arq=false; }); return; }
   if(x==='invite'){ const s=SPACES.find(y=>y.id===d.id); confirmAct('Convidar para '+s.nome,[`Enviar convite por e-mail para a pessoa que você indicar${s.ext?' (fora da Avenia)':''}`,`Ela vê: ${s.ve.toLowerCase()}`,'Registrar o convite na atividade do espaço'],()=>toast('Convite enviado.')); return; }
   if(x==='soon'){ toast(`${d.l}: fica em Mais ▾ no produto, sem mudança nesta rodada.`); return; }
