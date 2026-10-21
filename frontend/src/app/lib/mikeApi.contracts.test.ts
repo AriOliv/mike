@@ -20,6 +20,16 @@ import {
     getDocumentPreview,
     createWatchedFolder,
     getCardActivity,
+    assignRequest,
+    createRequest,
+    decideRequestTriage,
+    deliverRequest,
+    getRequest,
+    getRequestRole,
+    inviteRequestParticipant,
+    listRequests,
+    postRequestMessage,
+    revokeRequestParticipant,
     getHomeSummary,
     listWatchedFolders,
     requestContractReview,
@@ -87,6 +97,19 @@ describe("acervo and contract analysis", () => {
         expect(lastFetchCall().url).toMatch(/\/acervo$/);
         expect(lastFetchCall().init.method).toBe("POST");
         expect(jsonBody()).toEqual({ question: "foro?" });
+    });
+
+    it("sends the scope and the legislation flag only when given", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ answer: "", found: false, sources: [], searched: 0 }));
+        await askAcervo("foro?", { scope: { counterparty: "Acme" }, includeLaw: true });
+        expect(jsonBody()).toEqual({
+            question: "foro?",
+            scope: { counterparty: "Acme" },
+            include_law: true,
+        });
+
+        await askAcervo("foro?", { scope: "todos", includeLaw: false });
+        expect(jsonBody()).toEqual({ question: "foro?", scope: "todos" });
     });
 
     it("reads and extracts a contract's terms", async () => {
@@ -211,6 +234,53 @@ describe("radar", () => {
         fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
         await deleteObligation("o1");
         expect(lastFetchCall().url).toMatch(/\/obligations\/o1$/);
+        expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+});
+
+describe("requests to the legal team", () => {
+    it("reads the caller's role, the queue, their own list and one request", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await getRequestRole();
+        expect(lastFetchCall().url).toMatch(/\/requests\/me$/);
+        await listRequests();
+        expect(lastFetchCall().url).toMatch(/\/requests$/);
+        await listRequests({ mine: true });
+        expect(lastFetchCall().url).toMatch(/\/requests\?mine=1$/);
+        await getRequest("r1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1$/);
+    });
+
+    it("POSTs a new request and each of the team's moves", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await createRequest({ kind: "nda", counterparty: "Polaris" });
+        expect(lastFetchCall().url).toMatch(/\/requests$/);
+        expect(lastFetchCall().init.method).toBe("POST");
+        expect(jsonBody()).toEqual({ kind: "nda", counterparty: "Polaris" });
+
+        await assignRequest("r1", "u2");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/assign$/);
+        expect(jsonBody()).toEqual({ assignee_id: "u2" });
+
+        await decideRequestTriage("r1", { decision: "edited", kind: "parecer" });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/triage$/);
+        expect(jsonBody()).toEqual({ decision: "edited", kind: "parecer" });
+
+        await postRequestMessage("r1", "Tem a minuta?", "question");
+        expect(jsonBody()).toEqual({ body: "Tem a minuta?", kind: "question" });
+        await postRequestMessage("r1", "Segue");
+        expect(jsonBody()).toEqual({ body: "Segue", kind: "note" });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/messages$/);
+
+        await deliverRequest("r1", { message: "ok", document_ids: ["d1"] });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/deliver$/);
+
+        await inviteRequestParticipant("r1", { email: "x@y.z", label: "Escritório X" });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/participants$/);
+        expect(jsonBody()).toEqual({ email: "x@y.z", label: "Escritório X" });
+
+        await revokeRequestParticipant("r1", "p1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/participants\/p1$/);
         expect(lastFetchCall().init.method).toBe("DELETE");
     });
 });

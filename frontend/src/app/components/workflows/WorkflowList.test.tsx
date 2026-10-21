@@ -156,7 +156,7 @@ describe("WorkflowList pack toolbar", () => {
     const back = screen.getByText("Back").closest("button");
     expect(back).not.toBeNull();
     if (!back) throw new Error("Pack toolbar Back button was not rendered");
-    const toolbar = back.closest(".h-10");
+    const toolbar = back.closest(".min-h-10");
 
     expect(toolbar).not.toBeNull();
     expect(back.parentElement).toHaveClass("flex-1");

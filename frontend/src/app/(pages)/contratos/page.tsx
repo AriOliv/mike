@@ -2,11 +2,11 @@
 
 import { ContractsPortfolioView } from "@/app/components/contracts/ContractsPortfolioView";
 import type { PortfolioLoad } from "@/app/lib/contractsPortfolio";
+import { loadAllContractFichas } from "@/app/lib/contractPortfolioLoad";
 
-// The list endpoint (GET /contracts/fichas) lands with the Ficha. Until then
-// the page answers "unavailable" and teaches the next step; the PR that adds
-// the endpoint swaps this loader for mikeApi.listContractFichas().
-const loadPortfolio = async (): Promise<PortfolioLoad> => ({ status: "unavailable" });
+// Every contract the person can open (GET /contracts/fichas, all pages),
+// nearest notice deadline first.
+const loadPortfolio = async (): Promise<PortfolioLoad> => ({ status: "ok", rows: await loadAllContractFichas() });
 
 export default function ContratosPage() {
     return <ContractsPortfolioView load={loadPortfolio} />;

@@ -5,9 +5,11 @@ describe("navItems", () => {
     it("lists the Legal workstation first, in Portuguese", () => {
         expect(NAV_MAIN.map((item) => item.label)).toEqual([
             "Início",
+            "Pedidos",
             "Esteira",
             "Contratos",
             "Prazos",
+            "Radar regulatório",
             "Perguntar",
         ]);
     });
@@ -19,6 +21,7 @@ describe("navItems", () => {
             "Workflows",
             "Projetos",
             "Assistente",
+            "Painel do Legal",
         ]);
     });
 
@@ -38,6 +41,11 @@ describe("navItems", () => {
         expect(isNavItemActive(esteira, "/pipeline")).toBe(true);
         expect(isNavItemActive(esteira, "/pipeline/abc")).toBe(true);
         expect(isNavItemActive(esteira, "/pipeline-old")).toBe(false);
+    });
+
+    it("does not mark Prazos active on the regulatory radar", () => {
+        const prazos = NAV_MAIN.find((item) => item.href === "/radar")!;
+        expect(isNavItemActive(prazos, "/radar-regulatorio")).toBe(false);
     });
 
     it("marks an exact item active only on its own path", () => {

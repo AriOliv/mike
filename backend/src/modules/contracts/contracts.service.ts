@@ -36,6 +36,7 @@ export {
     type TermsSyncSummary,
 } from "./contracts.terms";
 export { askAcervo, type AcervoAnswer } from "./contracts.acervo";
+export { contractCorpus, type ContractCorpusEntry } from "./contracts.corpus";
 export {
     integrationStatus,
     syncPipelineToNotion,

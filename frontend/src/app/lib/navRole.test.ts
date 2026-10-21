@@ -22,6 +22,11 @@ describe("loadNavRole", () => {
         );
     });
 
+    it("answers null when no Legal team is configured, so the menu stays whole", async () => {
+        answer(200, { configured: false, role: "requester", area: null, areas: [] });
+        await expect(loadNavRole()).resolves.toBeNull();
+    });
+
     it("answers null when the server has no such route", async () => {
         answer(404, { detail: "Not found" });
         await expect(loadNavRole()).resolves.toBeNull();

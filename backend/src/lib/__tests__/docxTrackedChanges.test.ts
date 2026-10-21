@@ -132,6 +132,22 @@ describe("applyTrackedEdits", () => {
         expect(result.changes[0].insertedText).toBe("45");
     });
 
+    it("never splits a word when trimming the common prefix/suffix", async () => {
+        const bytes = await makeDocx(para("Aviso mínimo de 30 (trinta) dias. Foro de Nova York."));
+        const result = await applyTrackedEdits(bytes, [
+            { find: "30 (trinta) dias", replace: "60 (sessenta) dias", context_before: "", context_after: "" },
+            { find: "Foro de Nova York", replace: "Foro de Novo Hamburgo", context_before: "", context_after: "" },
+        ]);
+        expect(result.errors).toEqual([]);
+        expect(result.changes.map((c) => [c.deletedText, c.insertedText])).toEqual([
+            ["30 (trinta)", "60 (sessenta)"],
+            ["Nova York", "Novo Hamburgo"],
+        ]);
+        await expect(extractDocxBodyText(result.bytes)).resolves.toBe(
+            "Aviso mínimo de 60 (sessenta) dias. Foro de Novo Hamburgo.",
+        );
+    });
+
     it("honours a custom author", async () => {
         const bytes = await makeDocx(para("Hello world."));
         const result = await applyTrackedEdits(

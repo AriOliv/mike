@@ -31,6 +31,7 @@ import {
   userMemoryRouter,
 } from "./modules/memory/memory.routes";
 import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
+import { contractPortfolioRouter, contractReviewRouter } from "./modules/contract-review/contractReview.routes";
 import {
   acervoRouter,
   contractReviewsRouter,
@@ -41,6 +42,9 @@ import {
   projectContractRouter,
   watchedFoldersRouter,
 } from "./modules/contracts/contracts.routes";
+import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
+import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
+import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
@@ -293,6 +297,10 @@ app.post("/tabular-review/:reviewId/generate", chatLimiter);
 // A playbook review is one large model call (or a tool loop when the playbook
 // has supplementary documents), so it shares the chat lane's budget.
 app.post("/playbooks/:playbookId/review", chatLimiter);
+app.post(
+  ["/projects/:projectId/contract-review/reviews", "/projects/:projectId/contract-review/ficha/extract"],
+  chatLimiter,
+);
 app.post("/chat/create", chatCreateLimiter);
 app.post("/workflow-addons/:addonId/import", workflowImportLimiter);
 app.post(
@@ -346,6 +354,7 @@ app.use("/chat", chatRouter);
 app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);
 app.use("/projects/:projectId/memory", projectMemoryRouter);
+app.use("/projects/:projectId/contract-review", contractReviewRouter);
 app.use("/projects/:projectId", projectContractRouter);
 app.use("/projects", projectsRouter);
 app.use("/orgs", orgsRouter);
@@ -367,6 +376,10 @@ app.use("/pipeline", pipelineRouter);
 app.use("/obligations", obligationsRouter);
 app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
+app.use("/contracts", contractPortfolioRouter);
+app.use("/regulatory", regulatoryRouter);
+app.use("/dashboard", dashboardRouter);
+app.use("/requests", requestsRouter);
 app.use("/home", homeRouter);
 app.use("/watched-folders", watchedFoldersRouter);
 app.use("/contract-reviews", contractReviewsRouter);
