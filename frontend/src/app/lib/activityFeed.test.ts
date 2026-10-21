@@ -3,6 +3,7 @@ import {
     activitySentence,
     actorLabel,
     describeEvent,
+    fieldLabel,
     relativeTime,
     toActivityItems,
     type CardEventRow,
@@ -22,6 +23,17 @@ function event(overrides: Partial<CardEventRow>): CardEventRow {
         ...overrides,
     };
 }
+
+describe("fieldLabel", () => {
+    it("names known fields, keeps words, and hides internal names", () => {
+        expect(fieldLabel("assignee_email")).toBe("responsável");
+        expect(fieldLabel("Cessão do contrato")).toBe("Cessão do contrato");
+        expect(fieldLabel("identificacao.tipo")).toBeUndefined();
+        expect(fieldLabel("riskLevel")).toBeUndefined();
+        expect(fieldLabel("  ")).toBeUndefined();
+        expect(fieldLabel(null)).toBeUndefined();
+    });
+});
 
 describe("actorLabel", () => {
     it("prefers the stored name", () => {
@@ -101,9 +113,17 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "comment.added" })).verb).toBe("comentou");
         expect(describeEvent(event({ action: "review.accepted" })).verb).toBe("aceitou a revisão");
         expect(describeEvent(event({ action: "field.updated", field: "prazo" })).object).toBe("prazo");
-        expect(describeEvent(event({ action: "field.updated" })).object).toBeUndefined();
+        expect(describeEvent(event({ action: "field.updated", field: "status" })).object).toBe("progresso");
+        expect(describeEvent(event({ action: "field.updated", field: "risk_level" })).object).toBe("risco");
+        expect(describeEvent(event({ action: "field.updated", field: "some_column" }))).toEqual({
+            verb: "atualizou o contrato",
+        });
+        expect(describeEvent(event({ action: "field.updated" })).verb).toBe("atualizou o contrato");
         expect(describeEvent(event({ action: "x.y" })).verb).toBe("registrou uma atualização");
         expect(describeEvent(event({ action: "agent.started" })).verb).toBe("começou a trabalhar neste contrato");
+        expect(describeEvent(event({ action: "agent.suggested", field: "risk_level" })).object).toBe("risco");
+        expect(describeEvent(event({ action: "agent.suggested", field: "triage" })).object).toBe("triagem");
+        expect(describeEvent(event({ action: "agent.suggested", field: "x.y", after: { value: "z" } })).object).toBe("z");
         expect(describeEvent(event({ action: "agent.suggested", field: "risco", after: { sources: 2 } }))).toEqual({
             verb: "sugeriu",
             object: "risco",
