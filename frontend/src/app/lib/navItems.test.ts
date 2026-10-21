@@ -5,6 +5,7 @@ describe("navItems", () => {
     it("lists the Legal workstation first, in Portuguese", () => {
         expect(NAV_MAIN.map((item) => item.label)).toEqual([
             "Esteira",
+            "Contratos",
             "Prazos",
             "Perguntar",
         ]);
@@ -13,13 +14,17 @@ describe("navItems", () => {
     it("keeps the platform's other tools under Mais", () => {
         expect(NAV_MORE.map((item) => item.label)).toEqual([
             "Playbooks",
-            "Revisão em grade",
             "Biblioteca",
             "Workflows",
             "Projetos",
             "Assistente",
-            "IDE",
         ]);
+    });
+
+    it("keeps the generic grid and the IDE out of the Legal's menu", () => {
+        const hrefs = [...NAV_MAIN, ...NAV_MORE].map((item) => item.href);
+        expect(hrefs).not.toContain("/tabular-reviews");
+        expect(hrefs).not.toContain("/ide");
     });
 
     it("never lists a route twice", () => {
