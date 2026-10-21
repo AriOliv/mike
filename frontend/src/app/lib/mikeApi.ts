@@ -4591,6 +4591,7 @@ export interface HomeReview {
     requester_name: string | null;
     deadline: string | null;
     notice_deadline: string | null;
+    notice_days: number | null;
     term_end: string | null;
     updated_at: string;
 }
@@ -4600,6 +4601,7 @@ export interface HomeDeadline {
     project_name: string;
     counterparty: string | null;
     notice_deadline: string;
+    notice_days: number | null;
     term_end: string | null;
     auto_renewal: boolean | null;
     days_left: number;

@@ -1,6 +1,7 @@
 // What the home screen ("Início") says, kept out of the components so every
-// sentence and filter is tested: the greeting, the agent's step, the queue's
-// tabs and counter filters, and the notice-deadline badge.
+// sentence and filter is tested: the greeting, the agent's step, and the
+// queue's tabs and counter filters. The D-xx badge lives in
+// components/home/NoticeDeadlineBadge until the shared DeadlineBadge lands.
 
 import type { ChipStatus } from "@/app/components/ui/status-chip";
 import type { HomeReview, HomeSummary } from "./mikeApi";
@@ -73,7 +74,7 @@ export type HomeFilter = "prontos" | "meus" | "avisos" | "pastas" | null;
 export function filterReviews(
     reviews: HomeReview[],
     opts: { tab: HomeTab; filter: HomeFilter; me: string | null; query?: string },
-    today: string = new Date().toISOString().slice(0, 10),
+    now: Date = new Date(),
 ): HomeReview[] {
     const me = opts.me?.toLowerCase() ?? null;
     const query = opts.query?.trim().toLowerCase() ?? "";
@@ -87,7 +88,7 @@ export function filterReviews(
                 case "meus":
                     return !!me && r.assignee_email === me && r.status !== "done";
                 case "avisos": {
-                    const days = r.notice_deadline ? daysUntil(r.notice_deadline, today) : null;
+                    const days = r.notice_deadline ? wholeDaysUntil(r.notice_deadline, now) : null;
                     return days !== null && days >= 0 && days <= 30;
                 }
                 case "pastas":
@@ -106,22 +107,11 @@ export function filterReviews(
         .sort((a, b) => rank[a.status] - rank[b.status] || b.updated_at.localeCompare(a.updated_at));
 }
 
-/** Whole days from `today` to a YYYY-MM-DD date; negative once past. */
-export function daysUntil(date: string, today: string = new Date().toISOString().slice(0, 10)): number {
-    return Math.round(
-        (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000,
-    );
-}
-
-/** The D-xx badge: text, tone, and the sentence its tooltip explains it with. */
-export function deadlineBadge(
-    noticeDeadline: string,
-    today: string = new Date().toISOString().slice(0, 10),
-): { text: string; tone: "neutro" | "atencao" | "critico"; title: string } {
-    const days = daysUntil(noticeDeadline, today);
-    const title = `Aviso de não renovação até ${brDate(noticeDeadline)}`;
-    if (days < 0) return { text: "vencido", tone: "critico", title };
-    return { text: `D-${days}`, tone: days <= 7 ? "critico" : days <= 60 ? "atencao" : "neutro", title };
+/** Whole days from today (local) to a YYYY-MM-DD date; negative once past. */
+function wholeDaysUntil(isoDate: string, now: Date): number {
+    const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const [y, m, d] = isoDate.slice(0, 10).split("-").map(Number);
+    return Math.round((Date.UTC(y, m - 1, d) - today) / 86_400_000);
 }
 
 /** "2026-10-20" → "20/10/2026". */

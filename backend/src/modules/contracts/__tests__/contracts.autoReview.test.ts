@@ -11,11 +11,17 @@ vi.mock("../../../lib/dbq/enqueue", () => enqueue);
 const playbooks = vi.hoisted(() => ({ startPlaybookReview: vi.fn() }));
 vi.mock("../../playbooks/playbooks.service", () => playbooks);
 const settings = vi.hoisted(() => ({
-    getUserModelSettings: vi.fn(async () => ({
-        tabular_model: "mock-model",
-        last_selected_chat_model: null,
-        api_keys: {},
-    })),
+    getUserModelSettings: vi.fn(
+        async (): Promise<{
+            tabular_model: string | null;
+            last_selected_chat_model: string | null;
+            api_keys: Record<string, string>;
+        }> => ({
+            tabular_model: "mock-model",
+            last_selected_chat_model: null,
+            api_keys: {},
+        }),
+    ),
 }));
 vi.mock("../../user/user.service", () => settings);
 const terms = vi.hoisted(() => ({ extractTermsForAgent: vi.fn() }));

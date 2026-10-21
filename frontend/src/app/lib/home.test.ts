@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
     brDate,
     contracts,
-    daysUntil,
-    deadlineBadge,
     filterReviews,
     greeting,
     personName,
@@ -11,7 +9,7 @@ import {
 } from "./home";
 import type { HomeReview } from "./mikeApi";
 
-const TODAY = "2026-10-20";
+const TODAY = new Date(2026, 9, 20);
 
 function review(overrides: Partial<HomeReview>): HomeReview {
     return {
@@ -36,6 +34,7 @@ function review(overrides: Partial<HomeReview>): HomeReview {
         requester_name: null,
         deadline: null,
         notice_deadline: null,
+        notice_days: null,
         term_end: null,
         updated_at: "2026-10-20T10:00:00Z",
         ...overrides,
@@ -151,21 +150,7 @@ describe("filterReviews", () => {
     });
 });
 
-describe("deadlines and formatting", () => {
-    it("counts days and badges the notice deadline by urgency", () => {
-        expect(daysUntil("2026-10-25", TODAY)).toBe(5);
-        expect(typeof daysUntil("2026-10-25")).toBe("number");
-        expect(deadlineBadge("2026-10-19", TODAY)).toMatchObject({ text: "vencido", tone: "critico" });
-        expect(deadlineBadge("2026-10-25", TODAY)).toMatchObject({ text: "D-5", tone: "critico" });
-        expect(deadlineBadge("2026-11-19", TODAY)).toMatchObject({ text: "D-30", tone: "atencao" });
-        expect(deadlineBadge("2027-03-01", TODAY)).toEqual({
-            text: "D-132",
-            tone: "neutro",
-            title: "Aviso de não renovação até 01/03/2027",
-        });
-        expect(deadlineBadge("2099-01-01").tone).toBe("neutro");
-    });
-
+describe("formatting", () => {
     it("formats dates and people", () => {
         expect(brDate("2026-10-20T10:00:00Z")).toBe("20/10/2026");
         expect(personName("duda@avenia.io")).toBe("duda");

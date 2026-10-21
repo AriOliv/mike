@@ -59,7 +59,7 @@ describe("getHomeSummary", () => {
             {
                 table: "contract_terms",
                 data: [
-                    { project_id: "p1", notice_deadline: "2026-11-01", term_end: "2027-01-01", auto_renewal: true },
+                    { project_id: "p1", notice_deadline: "2026-11-01", notice_days: 61, term_end: "2027-01-01", auto_renewal: true },
                     { project_id: "p2", notice_deadline: "2026-09-01", term_end: null, auto_renewal: null },
                 ],
             },
@@ -84,6 +84,7 @@ describe("getHomeSummary", () => {
             filename: "NDA.docx",
             project_name: "NDA Polaris",
             notice_deadline: "2026-11-01",
+            notice_days: 61,
             watched_folder_id: "f1",
         });
         expect(home.reviews[0]).toMatchObject({ filename: null, notice_deadline: "2026-09-01" });

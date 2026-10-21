@@ -14,7 +14,8 @@ import {
 } from "@/app/components/shared/TablePrimitive";
 import { VerdictCountsUI } from "@/shared/ui/VerdictUI";
 import { relativeTime } from "@/app/lib/activityFeed";
-import { deadlineBadge, personName, reviewChip } from "@/app/lib/home";
+import { personName, reviewChip } from "@/app/lib/home";
+import { NoticeDeadlineBadge } from "./NoticeDeadlineBadge";
 import type { HomeReview } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
 
@@ -27,20 +28,19 @@ const COLUMNS = {
     owner: "w-36",
 };
 
-const BADGE_TONE = {
-    neutro: "text-gray-500",
-    atencao: "text-amber-700",
-    critico: "text-red-700 font-medium",
-} as const;
-
-/** The D-xx of a contract's notice deadline, or a dash. */
-export function DeadlineCell({ date, today }: { date: string | null; today?: string }) {
-    if (!date) return <span className="text-gray-300">—</span>;
-    const badge = deadlineBadge(date, today);
+/** The notice deadline of a row, or a dash when the contract has none. */
+export function NoticeBadge({
+    review,
+}: {
+    review: Pick<HomeReview, "notice_deadline" | "term_end" | "notice_days">;
+}) {
+    if (!review.notice_deadline) return <span className="text-gray-300">—</span>;
     return (
-        <span title={badge.title} className={cn("font-mono text-[11px]", BADGE_TONE[badge.tone])}>
-            {badge.text}
-        </span>
+        <NoticeDeadlineBadge
+            date={review.notice_deadline}
+            endDate={review.term_end}
+            noticeDays={review.notice_days}
+        />
     );
 }
 
@@ -132,7 +132,7 @@ export function HomeReviewTable({
                                         )}
                                     </TableCell>
                                     <TableCell className={COLUMNS.notice}>
-                                        <DeadlineCell date={review.notice_deadline} />
+                                        <NoticeBadge review={review} />
                                     </TableCell>
                                     <TableCell className={COLUMNS.updated}>
                                         {relativeTime(review.updated_at, now)}

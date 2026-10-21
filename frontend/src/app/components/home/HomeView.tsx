@@ -22,7 +22,7 @@ import {
     type HomeSummary,
 } from "@/app/lib/mikeApi";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
-import { HomeReviewTable, DeadlineCell } from "./HomeReviewTable";
+import { HomeReviewTable, NoticeBadge } from "./HomeReviewTable";
 import { ReviewPanel } from "./ReviewPanel";
 import { SendContractsModal } from "./SendContractsModal";
 
@@ -352,7 +352,7 @@ export function HomeView() {
                                                     className="flex w-full items-center gap-3 py-2 text-left text-xs hover:bg-app-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                                                 >
                                                     <span className="w-16 shrink-0">
-                                                        <DeadlineCell date={d.notice_deadline} />
+                                                        <NoticeBadge review={d} />
                                                     </span>
                                                     <span className="min-w-0 flex-1">
                                                         <span className="block truncate text-gray-900">{d.project_name}</span>

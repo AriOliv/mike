@@ -13,7 +13,7 @@ import { toActivityItems } from "@/app/lib/activityFeed";
 import { brDate, personName, reviewChip } from "@/app/lib/home";
 import { getCardActivity, type CardEvent, type HomeReview } from "@/app/lib/mikeApi";
 import { playbookRunPath } from "@/app/lib/playbookRunActivity";
-import { DeadlineCell } from "./HomeReviewTable";
+import { NoticeBadge } from "./HomeReviewTable";
 
 const LANE_LABEL: Record<string, string> = {
     entrada: "Entrada",
@@ -142,7 +142,7 @@ export function ReviewPanel({
                     emphasis: !!review.notice_deadline,
                     value: review.notice_deadline ? (
                         <span className="inline-flex items-center gap-1.5">
-                            <DeadlineCell date={review.notice_deadline} />
+                            <NoticeBadge review={review} />
                             <span>até {brDate(review.notice_deadline)}</span>
                         </span>
                     ) : review.term_end ? (

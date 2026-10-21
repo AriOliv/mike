@@ -36,6 +36,7 @@ export type HomeReview = {
     requester_name: string | null;
     deadline: string | null;
     notice_deadline: string | null;
+    notice_days: number | null;
     term_end: string | null;
     updated_at: string;
 };
@@ -45,6 +46,7 @@ export type HomeDeadline = {
     project_name: string;
     counterparty: string | null;
     notice_deadline: string;
+    notice_days: number | null;
     term_end: string | null;
     auto_renewal: boolean | null;
     days_left: number;
@@ -154,12 +156,13 @@ export async function getHomeSummary(
         const terms = await inChunks<{
             project_id: string;
             notice_deadline: string | null;
+            notice_days: number | null;
             term_end: string | null;
             auto_renewal: boolean | null;
         }>(visible, (slice) =>
             db
                 .from("contract_terms")
-                .select("project_id, notice_deadline, term_end, auto_renewal")
+                .select("project_id, notice_deadline, notice_days, term_end, auto_renewal")
                 .in("project_id", slice),
         );
         const termsOf = new Map(terms.map((t) => [t.project_id, t]));
@@ -189,6 +192,7 @@ export async function getHomeSummary(
                 requester_name: card.requester_name,
                 deadline: card.deadline,
                 notice_deadline: t?.notice_deadline ?? null,
+                notice_days: t?.notice_days ?? null,
                 term_end: t?.term_end ?? null,
                 updated_at: r.updated_at,
             };
@@ -204,6 +208,7 @@ export async function getHomeSummary(
                     project_name: card.name,
                     counterparty: card.counterparty,
                     notice_deadline: t.notice_deadline!,
+                    notice_days: t.notice_days,
                     term_end: t.term_end,
                     auto_renewal: t.auto_renewal,
                     days_left: daysBetween(today, t.notice_deadline!),
