@@ -19,7 +19,7 @@ select ('00000000-0000-4000-f200-0000000000' || right(p.id::text, 2))::uuid,
        '00000000-0000-4000-c000-000000000001', p.id, 'revisor', '1', 'succeeded',
        'seed:revisor:' || right(p.id::text, 2), 'mike-reason', 'seed-model',
        9000, 1100, 0.03800, 14000, '{"aligned":8,"needs_review":2,"deviates":1}'::jsonb,
-       now() - make_interval(days => p.n) - interval '15 minutes', now() - make_interval(days => p.n)
+       now() - make_interval(days => p.n::int) - interval '15 minutes', now() - make_interval(days => p.n::int)
 from (
   select pid as id, row_number() over (order by pid) as n
   from (

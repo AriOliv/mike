@@ -157,11 +157,16 @@ if [ "${RESET_DB:-0}" = 1 ]; then
   kubectl -n "$NS" delete pvc backend-files --ignore-not-found --wait=true
 fi
 # render with the tag of this commit (no kustomize CLI / file edits needed)
+RENDERED=$(mktemp)
 kubectl kustomize "$OVERLAY" \
-  | sed -E "s#($REG/(backend|frontend)):latest#\1:$TAG#g" \
-  | kubectl apply -f -
+  | sed -E "s#($REG/(backend|frontend)):latest#\1:$TAG#g" > "$RENDERED"
+kubectl apply -f "$RENDERED"
 [ "${RESET_DB:-0}" != 1 ] || kubectl -n "$NS" scale statefulset/db --replicas=1
 kubectl -n "$NS" wait --for=condition=complete job/db-init --timeout=15m
+# the seed checks which tables/columns exist (requires-table), so it must run
+# after this rollout's migrations: on an existing database it would not wait
+kubectl -n "$NS" delete job seed --ignore-not-found --wait=true
+kubectl apply -f "$RENDERED" >/dev/null
 kubectl -n "$NS" rollout restart deploy/auth deploy/rest >/dev/null  # pick up roles on first boot
 kubectl -n "$NS" rollout status deploy/backend --timeout=10m
 kubectl -n "$NS" rollout status deploy/frontend --timeout=10m
@@ -169,8 +174,10 @@ kubectl -n "$NS" rollout status deploy/frontend --timeout=10m
 # Revisão .docx: copied into the backend volume, never overwritten if present
 FILES=deploy/gke/seed/integration/files
 if [ -d "$FILES" ]; then
-  pod=$(kubectl -n "$NS" get pod -l app=backend -o jsonpath='{.items[0].metadata.name}')
-  tar -C "$FILES" -cf - . | kubectl -n "$NS" exec -i "$pod" -- tar -C /data/files -xkf - 2>/dev/null || true
+  pod=$(kubectl -n "$NS" get pod -l app=backend --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+  # /data/files only exists once the backend has stored a file
+  COPYFILE_DISABLE=1 tar --no-xattrs -C "$FILES" -cf - . | kubectl -n "$NS" exec -i "$pod" -- \
+    sh -c 'mkdir -p /data/files && tar -C /data/files --skip-old-files -xf -'
 fi
 kubectl -n "$NS" wait --for=condition=complete job/seed --timeout=10m
 deploy/gke/scripts/grant-iap.sh "$NS" >/dev/null
