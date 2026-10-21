@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command to refresh the integration preview (namespace preview,
 # https://preview.34-120-191-197.nip.io) after any of its PRs moves:
-#   1. rebuilds integration/harvey from origin: sync/upstream-2026-10 + BRANCHES
+#   1. rebuilds integration/preview from origin: sync/upstream-2026-10 + BRANCHES
 #   2. pushes it (force-with-lease: the branch is generated, never hand-edited)
 #   3. Cloud Build for that commit, then apply + wait + seed on namespace preview
 #
@@ -12,7 +12,7 @@
 #
 # A branch with a real merge conflict, or whose migrations create a table an
 # earlier branch already creates, is left out (the others still ship) and
-# named at the end: its owner rebases it on integration/harvey.
+# named at the end: its owner rebases it on integration/preview.
 # Never touches namespace staging (except the shared Gateway, which only the
 # staging overlay applies).
 set -euo pipefail
@@ -22,9 +22,9 @@ if [ -z "${_PREVIEW_COPY:-}" ]; then
 fi
 ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
 P="${PROJECT:-ari-teste-492120}"; REGION=southamerica-east1; NS=preview
-BASE="${BASE:-sync/upstream-2026-10}"; TARGET="${TARGET:-integration/harvey}"
+BASE="${BASE:-sync/upstream-2026-10}"; TARGET="${TARGET:-integration/preview}"
 # infra/gke-staging carries deploy/gke itself; the rest in merge order.
-BRANCHES="${BRANCHES:-infra/gke-staging feat/card-events feat/ui-verdict feat/ui-agent-suggestion feat/intake-orquestracao feat/radar-regulatorio feat/inicio-contract-intelligence feat/revisao-playbook}"
+BRANCHES="${BRANCHES:-infra/gke-staging feat/card-events feat/ui-verdict feat/ui-agent-suggestion feat/intake-orquestracao feat/ux-nav-pt feat/radar-regulatorio feat/inicio-contract-intelligence feat/revisao-playbook}"
 # Branches allowed to come from a LOCAL ref while their owner has not pushed
 # yet (committed work only; uncommitted changes in their worktrees never enter).
 LOCAL_OK="${LOCAL_OK:-feat/radar-regulatorio}"
@@ -158,6 +158,13 @@ kubectl -n "$NS" wait --for=condition=complete job/db-init --timeout=15m
 kubectl -n "$NS" rollout restart deploy/auth deploy/rest >/dev/null  # pick up roles on first boot
 kubectl -n "$NS" rollout status deploy/backend --timeout=10m
 kubectl -n "$NS" rollout status deploy/frontend --timeout=10m
+# files the seed points at (storage keys under STORAGE_FS_ROOT), e.g. the
+# Revisão .docx: copied into the backend volume, never overwritten if present
+FILES=deploy/gke/seed/integration/files
+if [ -d "$FILES" ]; then
+  pod=$(kubectl -n "$NS" get pod -l app=backend -o jsonpath='{.items[0].metadata.name}')
+  tar -C "$FILES" -cf - . | kubectl -n "$NS" exec -i "$pod" -- tar -C /data/files -xkf - 2>/dev/null || true
+fi
 kubectl -n "$NS" wait --for=condition=complete job/seed --timeout=10m
 deploy/gke/scripts/grant-iap.sh "$NS" >/dev/null
 echo "preview rolled to $TAG: https://preview.34-120-191-197.nip.io"

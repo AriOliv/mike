@@ -1,5 +1,5 @@
 # preview.34-120-191-197.nip.io — integration preview of the open PRs
-# (branch integration/harvey, scripts/update-preview.sh). Synthetic data only.
+# (branch integration/preview, scripts/update-preview.sh). Synthetic data only.
 # It has no Gateway of its own: its HTTPRoute attaches to staging's mike-edge
 # (same IP, same IAP), which lists the preview certificate and admits routes
 # from this namespace (see ../staging/kustomization.yaml).

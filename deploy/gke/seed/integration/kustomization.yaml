@@ -10,3 +10,5 @@ configMapGenerator:
     files:
       - extra-integration.sql
       - extra-inicio.sql
+      - extra-revisao.sql
+      - extra-zz-painel.sql

@@ -6,7 +6,7 @@ DNS endpoint). Dados **só sintéticos**; produção continua na VM `mike-clm`.
 | Ambiente | Namespace | URL | O que roda | Atualiza com |
 |---|---|---|---|---|
 | staging | `staging` | https://staging.clm.avenia.tech (provisório: https://34-120-191-197.nip.io) | `infra/gke-staging` | `scripts/deploy.sh staging` |
-| prévia de integração | `preview` | https://preview.34-120-191-197.nip.io | `integration/harvey` = sync + PRs abertos | `scripts/update-preview.sh` |
+| prévia de integração | `preview` | https://preview.34-120-191-197.nip.io | `integration/preview` = sync + PRs abertos | `scripts/update-preview.sh` |
 
 Os dois passam pelo mesmo HTTPS LB (Gateway `staging/mike-edge`, IP
 `mike-staging-ip`) e pelo mesmo IAP: só contas `@avenia.io` entram. O preview
@@ -70,12 +70,13 @@ Depois faça o login no Mike normalmente, pela tela `/login`, com uma conta demo
 deploy/gke/scripts/update-preview.sh
 ```
 
-1. Recria `integration/harvey` a partir de `origin/sync/upstream-2026-10` com merge, em ordem:
+1. Recria `integration/preview` a partir de `origin/sync/upstream-2026-10` com merge, em ordem:
    - `infra/gke-staging`
    - `feat/card-events`
    - `feat/ui-verdict`
    - `feat/ui-agent-suggestion`
    - `feat/intake-orquestracao`
+   - `feat/ux-nav-pt`
    - `feat/radar-regulatorio`
    - `feat/inicio-contract-intelligence`
    - `feat/revisao-playbook`
@@ -91,13 +92,13 @@ deploy/gke/scripts/update-preview.sh
 
    Uma branch com outro conflito, ou cujas migrações criam uma tabela que outra
    branch já cria, **fica de fora** e é nomeada no fim. As demais entram, e o
-   dono rebaseia na `integration/harvey`.
-3. Faz push de `integration/harvey`, que é gerada e nunca editada à mão.
+   dono rebaseia na `integration/preview`.
+3. Faz push de `integration/preview`, que é gerada e nunca editada à mão.
 4. Faz o Cloud Build do commit, o apply no namespace `preview` e roda as migrações
    (db-init), o rollout e o seed.
 
 Conflito real que fica fora dessas regras não é resolvido aqui: a branch fica de
-fora e o dono rebaseia na `integration/harvey`.
+fora e o dono rebaseia na `integration/preview`.
 
 Variáveis: `RESET_DB=1` recria o banco do preview (sintético, re-seed), para quando uma branch reescreveu uma migração já aplicada; `BRANCHES="..."` troca a lista, `SKIP_MERGE=1` redeploya a branch como
 está, `SKIP_BUILD=1` reaproveita a imagem do commit.
@@ -114,7 +115,11 @@ está, `SKIP_BUILD=1` reaproveita a imagem do commit.
   - 6 pedidos LEG-0001..0006 em todos os status;
   - 2 varreduras do radar e 4 achados (alto/médio/baixo, cruzados com os cards);
   - `agent_runs` e o log `card_events`;
-  - Início (`extra-inicio.sql`, do Beacon): 1 pasta monitorada, 6 documentos e 6 revisões em todos os estados.
+  - Início (`extra-inicio.sql`, do Beacon): 1 pasta monitorada, 6 documentos e 6 revisões em todos os estados;
+  - Revisão (`extra-revisao.sql`, do Quill, gerado por `backend/scripts/seed-revisao/generate.ts`): versão revisada com tracked changes de Nuvem Contábil e DataVale, Playbook Avenia v1, execuções, Fichas e uma decisão. Os .docx ficam em `seed/integration/files/`, e o script os copia para o volume do backend;
+  - Painel (`extra-zz-painel.sql`, roda por último): revisão por agente nos contratos com termos ou afetados pelo radar, área de quem pediu (com um card sem área) e mudanças em aberto nas duas varreduras.
+
+A linha 1 de cada arquivo (`-- requires-table:`) aceita `schema.tabela` ou `schema.tabela.coluna`.
 
 Tudo fictício, com ids fixos e idempotente. Os atos regulatórios são inventados
 e as URLs apontam para `example.invalid`.

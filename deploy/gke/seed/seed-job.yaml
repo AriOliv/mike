@@ -64,7 +64,12 @@ spec:
                 # (a PR left out of this build) did not create those tables
                 miss=""
                 for t in $(sed -n '1s/^-- requires-table://p' "$f"); do
-                  [ "$(psql "$DB" -tAc "select to_regclass('$t') is not null")" = t ] || miss="$miss $t"
+                  # schema.table, or schema.table.column for a column a migration adds
+                  case "$t" in
+                    *.*.*) q="select count(*) > 0 from information_schema.columns where table_schema || '.' || table_name || '.' || column_name = '$t'" ;;
+                    *) q="select to_regclass('$t') is not null" ;;
+                  esac
+                  [ "$(psql "$DB" -tAc "$q")" = t ] || miss="$miss $t"
                 done
                 if [ -n "$miss" ]; then echo "skipping $f (missing:$miss)"; continue; fi
                 echo "applying $f"; psql "$DB" -v ON_ERROR_STOP=1 -f "$f"
