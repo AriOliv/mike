@@ -349,7 +349,7 @@ export function SidebarProjectItem({
                                         <Link
                                             href={item.href}
                                             title={item.title}
-                                            aria-label={`${item.kind === "chat" ? "Chat" : "Tabular review"}: ${item.title}`}
+                                            aria-label={`${item.kind === "chat" ? "Conversa" : "Tabela"}: ${item.title}`}
                                             aria-current={
                                                 itemActive ? "page" : undefined
                                             }

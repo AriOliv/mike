@@ -123,8 +123,8 @@ describe("SidebarProjectItem", () => {
 
     const links = await screen.findAllByRole("link");
     expect(links.map((link) => link.getAttribute("aria-label"))).toEqual([
-      "Tabular review: Lease review",
-      "Chat: Due diligence",
+      "Tabela: Lease review",
+      "Conversa: Due diligence",
     ]);
     expect(links[0]).toHaveAttribute(
       "href",
@@ -148,7 +148,7 @@ describe("SidebarProjectItem", () => {
     });
 
     expect(
-      await screen.findByRole("link", { name: "Chat: Due diligence" }),
+      await screen.findByRole("link", { name: "Conversa: Due diligence" }),
     ).toHaveAttribute("aria-current", "page");
   });
 
@@ -163,7 +163,7 @@ describe("SidebarProjectItem", () => {
     renderItem(project());
 
     const itemLinks = () =>
-      screen.queryAllByRole("link", { name: /^(Chat|Tabular review):/ });
+      screen.queryAllByRole("link", { name: /^(Conversa|Tabela):/ });
     await waitFor(() =>
       expect(itemLinks()).toHaveLength(PROJECT_RECENT_ITEM_PAGE_SIZE),
     );
@@ -192,12 +192,12 @@ describe("SidebarProjectItem", () => {
       ]);
     renderItem(current);
 
-    await screen.findByRole("link", { name: "Tabular review: Review 9" });
+    await screen.findByRole("link", { name: "Tabela: Review 9" });
     fireEvent.click(screen.getByRole("button", { name: "See more" }));
     fireEvent.click(await screen.findByRole("button", { name: "See more" }));
 
     expect(
-      await screen.findByRole("link", { name: "Tabular review: Oldest review" }),
+      await screen.findByRole("link", { name: "Tabela: Oldest review" }),
     ).toBeInTheDocument();
     expect(listTabularReviews).toHaveBeenLastCalledWith(
       current.id,
@@ -225,7 +225,7 @@ describe("SidebarProjectItem", () => {
     const { rerender } = renderItem(current, {
       pathname: `/projects/${current.id}`,
     });
-    await screen.findByRole("link", { name: "Tabular review: Review 9" });
+    await screen.findByRole("link", { name: "Tabela: Review 9" });
 
     fireEvent.click(screen.getByRole("button", { name: "See more" }));
     await waitFor(() =>
@@ -247,17 +247,17 @@ describe("SidebarProjectItem", () => {
         onOpenProject={vi.fn()}
       />,
     );
-    await screen.findByRole("link", { name: "Chat: New matter chat" });
+    await screen.findByRole("link", { name: "Conversa: New matter chat" });
 
     // Recent enough that it would show if it were merged. It started before
     // the refresh, so it is dropped instead.
     finishPage([review("r-late", "Late page review", "2026-10-04T00:00:00Z")]);
     await screen.findByRole("button", { name: "See more" });
     expect(
-      screen.getByRole("link", { name: "Chat: New matter chat" }),
+      screen.getByRole("link", { name: "Conversa: New matter chat" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("link", { name: "Tabular review: Late page review" }),
+      screen.queryByRole("link", { name: "Tabela: Late page review" }),
     ).not.toBeInTheDocument();
   });
 
@@ -290,7 +290,7 @@ describe("SidebarProjectItem", () => {
     const { rerender } = renderItem(current, {
       pathname: `/projects/${current.id}`,
     });
-    await screen.findByRole("link", { name: "Tabular review: Review 9" });
+    await screen.findByRole("link", { name: "Tabela: Review 9" });
 
     fireEvent.click(screen.getByRole("button", { name: "See more" }));
     await waitFor(() => expect(laterPageCalls).toBe(1));
@@ -304,7 +304,7 @@ describe("SidebarProjectItem", () => {
         onOpenProject={vi.fn()}
       />,
     );
-    await screen.findByRole("link", { name: "Tabular review: New review" });
+    await screen.findByRole("link", { name: "Tabela: New review" });
 
     // The stale page holds only the old 11th review and says there is
     // nothing after it.
@@ -337,7 +337,7 @@ describe("SidebarProjectItem", () => {
     renderItem(project());
 
     expect(
-      await screen.findByRole("link", { name: "Chat: Due diligence" }),
+      await screen.findByRole("link", { name: "Conversa: Due diligence" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Some items could not be loaded.",
@@ -345,7 +345,7 @@ describe("SidebarProjectItem", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
     expect(
-      await screen.findByRole("link", { name: "Tabular review: Lease review" }),
+      await screen.findByRole("link", { name: "Tabela: Lease review" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -364,7 +364,7 @@ describe("SidebarProjectItem", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
     expect(
-      await screen.findByRole("link", { name: "Chat: Due diligence" }),
+      await screen.findByRole("link", { name: "Conversa: Due diligence" }),
     ).toBeInTheDocument();
   });
 
@@ -373,7 +373,7 @@ describe("SidebarProjectItem", () => {
     const { rerender } = renderItem(current, {
       pathname: `/projects/${current.id}`,
     });
-    await screen.findByRole("link", { name: "Chat: Due diligence" });
+    await screen.findByRole("link", { name: "Conversa: Due diligence" });
 
     vi.mocked(listProjectChats).mockRejectedValueOnce(new Error("boom"));
     vi.mocked(listTabularReviews).mockRejectedValueOnce(new Error("boom"));
@@ -391,7 +391,7 @@ describe("SidebarProjectItem", () => {
       "Não foi possível atualizar a lista.",
     );
     expect(
-      screen.getByRole("link", { name: "Chat: Due diligence" }),
+      screen.getByRole("link", { name: "Conversa: Due diligence" }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
@@ -399,7 +399,7 @@ describe("SidebarProjectItem", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
     expect(
-      screen.getByRole("link", { name: "Tabular review: Lease review" }),
+      screen.getByRole("link", { name: "Tabela: Lease review" }),
     ).toBeInTheDocument();
   });
 
@@ -412,7 +412,7 @@ describe("SidebarProjectItem", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("link", { name: "Chat: Due diligence" }),
+        screen.getByRole("link", { name: "Conversa: Due diligence" }),
       ).toBeInTheDocument(),
     );
   });

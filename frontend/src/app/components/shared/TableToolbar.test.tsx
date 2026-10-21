@@ -46,4 +46,23 @@ describe("TableToolbar", () => {
             screen.getByRole("button", { name: "All" }).parentElement,
         ).not.toHaveClass("overflow-x-auto");
     });
+
+    it("moves tabs that do not fit to a new line instead of breaking a label", () => {
+        render(
+            <TableToolbar
+                items={[
+                    { id: "documents", label: "Documentos" },
+                    { id: "reviews", label: "Tabela" },
+                ]}
+                active="documents"
+            />,
+        );
+
+        const tab = screen.getByRole("button", { name: "Tabela" });
+        expect(tab).toHaveClass("shrink-0", "whitespace-nowrap");
+        expect(tab.parentElement).toHaveClass("flex-wrap");
+        expect(tab.parentElement?.parentElement).toHaveClass("min-h-10");
+        expect(tab.parentElement?.parentElement).not.toHaveClass("h-10");
+    });
 });
+

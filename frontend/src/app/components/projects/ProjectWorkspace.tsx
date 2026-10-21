@@ -763,7 +763,7 @@ export function ProjectSectionToolbar({
                     : [
                           { id: "documents", label: "Documentos" },
                           { id: "assistant", label: "Conversas" },
-                          { id: "reviews", label: "Revisão em tabela" },
+                          { id: "reviews", label: "Tabela" },
                           { id: "review", label: "Revisão" },
                           { id: "dossier", label: "Análise" },
                       ]

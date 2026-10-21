@@ -461,8 +461,8 @@ export function ProjectPageHeader({
                     onClick: onNewChat,
                     disabled: !roleKnown,
                     icon: <Plus className="h-4 w-4" />,
-                    label: <span className="hidden sm:inline">Chat</span>,
-                    title: "Create chat",
+                    label: <span className="hidden sm:inline">Conversa</span>,
+                    title: "Nova conversa",
                 }
               : activeSection === "reviews"
                 ? {
@@ -473,8 +473,8 @@ export function ProjectPageHeader({
                     ) : (
                         <Plus className="h-4 w-4" />
                     ),
-                    label: <span className="hidden sm:inline">Review</span>,
-                    title: "Create review",
+                    label: <span className="hidden sm:inline">Tabela</span>,
+                    title: "Nova revisão em tabela",
                   }
                 : null;
 
@@ -501,7 +501,7 @@ export function ProjectPageHeader({
                 ...(activeSection === "assistant"
                     ? [{ label: "Conversas" }]
                     : activeSection === "reviews"
-                      ? [{ label: "Revisão em tabela" }]
+                      ? [{ label: "Tabela" }]
                       : (documentFolderBreadcrumbs ?? [])),
             ]}
             actionGroups={[
