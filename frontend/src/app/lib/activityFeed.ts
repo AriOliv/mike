@@ -124,9 +124,33 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "aceitou a revisão" };
         case "field.updated":
             return { verb: "atualizou", object: event.field ?? undefined };
+        case "review.clause_aceito":
+        case "review.clause_editado":
+        case "review.clause_rejeitado":
+            return clauseDecision(event, after);
         default:
             return { verb: event.action };
     }
+}
+
+const CLAUSE_VERB = {
+    "review.clause_aceito": "aceitou a edição",
+    "review.clause_editado": "editou a edição",
+    "review.clause_rejeitado": "rejeitou a sugestão",
+} as const;
+
+/**
+ * A person's decision on one clause of a playbook review. `after.clause` is a
+ * clause number ("9", "12.1") or the rule's name ("Cessão do contrato"); a
+ * reason, when given, follows after a colon.
+ */
+function clauseDecision(event: CardEventRow, after: Record<string, unknown>): { verb: string; object?: string } {
+    const verb = CLAUSE_VERB[event.action as keyof typeof CLAUSE_VERB];
+    const clause = text(after.clause) ?? event.field?.trim() ?? undefined;
+    const reason = text(after.reason);
+    const suffix = reason ? `: ${reason}` : "";
+    if (!clause) return { verb: `${verb}${suffix}` };
+    return { verb, object: `${/^\d/.test(clause) ? `da cl. ${clause}` : `em ${clause}`}${suffix}` };
 }
 
 // Events from the same actor with the same action on different contracts
