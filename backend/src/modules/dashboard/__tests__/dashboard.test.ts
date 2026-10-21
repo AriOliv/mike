@@ -8,9 +8,11 @@ const contracts = vi.hoisted(() => ({
 vi.mock("../../contracts/contracts.service", () => contracts);
 const regulatory = vi.hoisted(() => ({ visibleScanIds: vi.fn() }));
 vi.mock("../../regulatory/regulatory.service", () => regulatory);
+const reviewsMod = vi.hoisted(() => ({ countAgentReviews: vi.fn(), REVIEW_AGENTS: ["revisor"] as const }));
+vi.mock("../dashboard.reviews", () => reviewsMod);
 
 import { computeDashboard, DEFAULT_ASSUMPTIONS, getDashboard, parseDashboardQuery } from "../dashboard.service";
-import { countAgentReviewsFromRows, weekOf } from "../dashboard.metrics";
+import { periodStart, weekOf } from "../dashboard.metrics";
 
 const NOW = new Date("2026-10-20T12:00:00Z");
 const caller = { userId: "u1", userEmail: "ana@avenia.io" };
@@ -88,16 +90,8 @@ const inputs = {
         },
         { project_id: "b", ficha: null },
     ],
-    reviews: [
-        // b: reviewed automatically inside the period — counts, like the home screen's greeting
-        { project_id: "b", status: "ready", finished_at: "2026-10-12T00:00:00Z" },
-        // d: a failed review does not count (d still counts through its reviewer run)
-        { project_id: "d", status: "failed", finished_at: "2026-10-12T00:00:00Z" },
-        // a review that finished before the period does not count
-        { project_id: "c", status: "done", finished_at: "2026-08-01T00:00:00Z" },
-        // still running: no finished_at
-        { project_id: "c", status: "running", finished_at: null },
-    ],
+    // countAgentReviews' answer for the period: the home screen's number.
+    agentReviews: 4,
     requestArea: new Map([
         ["a", "Comercial"],
         ["c", "Comercial"],
@@ -143,7 +137,8 @@ describe("computeDashboard", () => {
     it("separates contracts reviewed by agents from those reviewed by people", () => {
         expect(d.agents).toEqual({
             contracts_reviewed_by_agents: 4,
-            contracts_reviewed_by_people: 0,
+            // b and c have an imported analysis and no generated one.
+            contracts_reviewed_by_people: 2,
             playbook_runs: 1,
             terms_extracted: 2,
             regulatory_changes_triaged: 2,
@@ -178,7 +173,7 @@ describe("computeDashboard", () => {
 
     it("handles an empty base", () => {
         const empty = computeDashboard(
-            { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], fichas: null, reviews: null, requestArea: new Map(), documentProject: new Map() },
+            { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], fichas: null, agentReviews: 0, requestArea: new Map(), documentProject: new Map() },
             { now: NOW, periodDays: 90, assumptions: DEFAULT_ASSUMPTIONS },
         );
         expect(empty.cycle.median_days_to_close).toBeNull();
@@ -196,26 +191,9 @@ describe("computeDashboard", () => {
     });
 });
 
-describe("countAgentReviewsFromRows", () => {
-    it("is the home screen's rule: distinct contracts a reviewer run or an automatic review finished in the window", () => {
-        const runs = [
-            { project_id: "a", agent: "revisor", status: "succeeded", finished_at: "2026-10-10T00:00:00Z" },
-            { project_id: "a", agent: "revisor", status: "succeeded", finished_at: "2026-10-11T00:00:00Z" },
-            { project_id: "b", agent: "extrator", status: "succeeded", finished_at: "2026-10-10T00:00:00Z" },
-            { project_id: "c", agent: "revisor", status: "failed", finished_at: "2026-10-10T00:00:00Z" },
-            { project_id: "d", agent: "revisor", status: "running", finished_at: null },
-            { project_id: "e", agent: "revisor", status: "succeeded", finished_at: "2026-09-01T00:00:00Z" },
-            { project_id: "f", agent: "revisor", status: "succeeded", finished_at: "2026-10-20T00:00:00Z" },
-        ];
-        const reviews = [
-            { project_id: "a", status: "done", finished_at: "2026-10-12T00:00:00Z" },
-            { project_id: "g", status: "ready", finished_at: "2026-10-12T00:00:00Z" },
-            { project_id: "h", status: "failed", finished_at: "2026-10-12T00:00:00Z" },
-        ];
-        const window = countAgentReviewsFromRows(runs, reviews, "2026-10-01T00:00:00Z", "2026-10-20T00:00:00Z");
-        expect([...window].sort()).toEqual(["a", "g"]);
-        // since = null counts everything up to `until`; no until counts to now.
-        expect([...countAgentReviewsFromRows(runs, null, null)].sort()).toEqual(["a", "e", "f"]);
+describe("periodStart", () => {
+    it("is the same window the dashboard counts in", () => {
+        expect(periodStart(NOW, 30)).toBe("2026-09-20T12:00:00.000Z");
     });
 });
 
@@ -233,6 +211,7 @@ describe("getDashboard", () => {
     beforeEach(() => {
         contracts.listPipeline.mockReset();
         regulatory.visibleScanIds.mockReset();
+        reviewsMod.countAgentReviews.mockReset().mockResolvedValue(0);
     });
 
     const MISSING = { code: "PGRST205", message: "missing" };
@@ -249,7 +228,6 @@ describe("getDashboard", () => {
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
             { table: "contract_fichas", error: MISSING },
-            { table: "contract_reviews", error: MISSING },
             { table: "projects", error: NO_COLUMN },
             { table: "legal_requests", error: MISSING },
             { table: "legal_requests", error: MISSING },
@@ -264,7 +242,10 @@ describe("getDashboard", () => {
         expect(fake.calls[0].filters).toContainEqual(["in", "project_id", ["p1"]]);
         expect(fake.calls[3].filters).toContainEqual(["in", "document_id", ["doc1"]]);
         expect(fake.calls[4].filters).toContainEqual(["eq", "action", "lane.changed"]);
-        expect(fake.calls[11].filters).toContainEqual(["in", "scan_id", ["s1"]]);
+        expect(fake.calls[10].filters).toContainEqual(["in", "scan_id", ["s1"]]);
+        // The reviewed count comes from the one shared function, over the
+        // visible contracts and exactly the period's window.
+        expect(reviewsMod.countAgentReviews).toHaveBeenCalledWith(fake.db, ["p1"], periodStart(NOW, 30), NOW.toISOString());
         fake.done();
     });
 
@@ -288,13 +269,6 @@ describe("getDashboard", () => {
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
             { table: "contract_fichas", data: [] },
-            {
-                table: "contract_reviews",
-                data: [
-                    { project_id: "p1", status: "done", finished_at: "2026-10-15T00:00:00Z" },
-                    { project_id: "p2", status: "ready", finished_at: "2026-10-16T00:00:00Z" },
-                ],
-            },
             // The card's mirrored area wins.
             { table: "projects", data: [{ id: "p1", requester_area: "Comercial" }, { id: "p2", requester_area: null }] },
             // Then the request's area, then what triage read; "Outra" stays "Outra".
@@ -307,6 +281,7 @@ describe("getDashboard", () => {
                 ],
             },
         ]);
+        reviewsMod.countAgentReviews.mockResolvedValue(2);
         const result = await getDashboard(fake.db, caller, { period: "30" }, NOW);
         if (!result.ok) throw new Error("expected ok");
         expect(result.data.agents.contracts_reviewed_by_agents).toBe(2);
@@ -320,7 +295,7 @@ describe("getDashboard", () => {
         );
         expect(JSON.stringify(result.data.volume.by_requester)).not.toMatch(/Ana|Bruno|Carla|Davi/);
         // Only the cards without a mirrored area are looked up in requests.
-        expect(fake.calls[8].filters).toContainEqual(["in", "project_id", ["p2", "p3", "p4"]]);
+        expect(fake.calls[7].filters).toContainEqual(["in", "project_id", ["p2", "p3", "p4"]]);
         fake.done();
     });
 
@@ -334,7 +309,6 @@ describe("getDashboard", () => {
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
             { table: "contract_fichas", data: [] },
-            { table: "contract_reviews", data: [] },
             { table: "projects", data: [{ id: "p1", requester_area: "Produto" }] },
         ]);
         const first = await getDashboard(mirrored.db, caller, {}, NOW);
@@ -348,7 +322,6 @@ describe("getDashboard", () => {
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
             { table: "contract_fichas", data: [] },
-            { table: "contract_reviews", data: [] },
             { table: "projects", error: NO_COLUMN },
             { table: "legal_requests", error: { code: "PGRST204", message: "no column" } },
             { table: "legal_requests", data: [{ project_id: "p1", triage: { area: "Compras" } }] },
@@ -368,7 +341,6 @@ describe("getDashboard", () => {
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
             { table: "contract_fichas", data: [{ project_id: "p1", ficha: { x: { status: "preenchido", review: { state: "confirmado" } } } }] },
-            { table: "contract_reviews", data: [] },
             { table: "projects", data: [{ id: "p1", requester_area: "Produto" }] },
         ]);
         expect(await getDashboard(fake.db, caller, {}, NOW)).toMatchObject({
@@ -392,7 +364,6 @@ describe("getDashboard", () => {
             "card_events",
             "agent_runs",
             "contract_fichas",
-            "contract_reviews",
             "projects",
             "legal_requests",
             "regulatory_changes",

@@ -15,6 +15,7 @@ import type { Db } from "../../lib/supabase";
 import { internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { LANES, listPipeline, type PipelineCard } from "../contracts/contracts.service";
 import { visibleScanIds } from "../regulatory/regulatory.service";
+import { countAgentReviews } from "./dashboard.reviews";
 
 export type Caller = { userId: string; userEmail?: string | null };
 
@@ -34,7 +35,6 @@ const PERIODS = [30, 90, 365] as const;
 type DossierRow = { project_id: string; source: string | null; created_at: string; user_id: string | null };
 type TermsRow = { project_id: string; notice_deadline: string | null; extracted_at: string };
 type RunRow = { document_id: string | null; user_id: string; status: string; started_at: string; completed_at: string | null };
-type ReviewRow = { project_id: string; status: string; finished_at: string | null };
 type RequestAreaRow = { project_id: string | null; requester_area?: string | null; triage: { area?: unknown } | null };
 type ProjectAreaRow = { id: string; requester_area: string | null };
 type FichaRow = { project_id: string; ficha: Record<string, unknown> | null };
@@ -58,8 +58,11 @@ export type DashboardInputs = {
     laneEvents: LaneEventRow[];
     /** null when the Ficha is not installed on this database yet. */
     fichas: FichaRow[] | null;
-    /** Automatic reviews (contract_reviews); null when not installed yet. */
-    reviews: ReviewRow[] | null;
+    /**
+     * Contracts reviewed by agents in the period: countAgentReviews, the same
+     * count as the home screen's "Revisei N contratos".
+     */
+    agentReviews: number;
     /** project id → the requesting area from intake triage; empty when not installed. */
     requestArea: Map<string, string>;
     agentRuns: AgentRunRow[];
@@ -71,37 +74,11 @@ const DAY = 86_400_000;
 
 export const NO_AREA = "Área não informada";
 
-/** The agents whose finished run counts as a contract reviewed. */
-export const REVIEW_AGENTS = ["revisor"];
-
-/**
- * "Contratos revisados por agentes" — the SAME rule as the home screen's
- * "Revisei N contratos" (Beacon's countAgentReviews): distinct contracts with
- * a reviewer run that succeeded, or an automatic review that is ready or
- * done, finished inside [since, until). Kept row-based here until PR #11
- * lands; then this is replaced by the contracts facade's
- * countAgentReviews(db, projectIds, since, until) (5c29079f). That function
- * returns a count; the dashboard also adds generated analyses and playbook
- * runs to the same set, so the swap must keep those or the tile stops
- * matching the home screen.
- */
-export function countAgentReviewsFromRows(
-    runs: Pick<AgentRunRow, "project_id" | "agent" | "status" | "finished_at">[],
-    reviews: ReviewRow[] | null,
-    since: string | null,
-    until: string | null = null,
-): Set<string> {
-    const inWindow = (iso: string | null | undefined) =>
-        !!iso && (since === null || iso >= since) && (until === null || iso < until);
-    const out = new Set<string>();
-    for (const r of runs) {
-        if (REVIEW_AGENTS.includes(r.agent) && r.status === "succeeded" && inWindow(r.finished_at)) out.add(r.project_id);
-    }
-    for (const r of reviews ?? []) {
-        if ((r.status === "ready" || r.status === "done") && inWindow(r.finished_at)) out.add(r.project_id);
-    }
-    return out;
+/** The start of the period ending now: the same window everywhere. */
+export function periodStart(now: Date, periodDays: number): string {
+    return new Date(now.getTime() - periodDays * DAY).toISOString();
 }
+
 
 function daysBetween(fromIso: string, toIso: string): number {
     return (new Date(toIso).getTime() - new Date(fromIso).getTime()) / DAY;
@@ -133,7 +110,7 @@ export function computeDashboard(
     const now = opts.now;
     const nowIso = now.toISOString();
     const today = nowIso.slice(0, 10);
-    const since = new Date(now.getTime() - opts.periodDays * DAY).toISOString();
+    const since = periodStart(now, opts.periodDays);
     const inPeriod = (iso: string | null | undefined) => !!iso && iso >= since && iso <= nowIso;
 
     // ── volume ──────────────────────────────────────────────────────────────
@@ -227,18 +204,13 @@ export function computeDashboard(
     const runsDone = input.runs.filter(
         (r) => r.status === "completed" && inPeriod(r.completed_at ?? r.started_at),
     );
-    // Same rule as the home screen's "Revisei N contratos" (one function, see
-    // countAgentReviewsFromRows). Generated analyses and playbook runs on the
-    // contract's documents are agent reviews too, counted once per contract.
+    // Reviewed by agents: exactly countAgentReviews, the home screen's number.
+    const agentReviewed = input.agentReviews;
     const agentRunsInPeriod = input.agentRuns.filter((r) => inPeriod(r.started_at));
-    const agentReviewed = countAgentReviewsFromRows(input.agentRuns, input.reviews, since, nowIso);
-    for (const d of generated) agentReviewed.add(d.project_id);
-    for (const r of runsDone) {
-        const p = r.document_id ? input.documentProject.get(r.document_id) : undefined;
-        if (p) agentReviewed.add(p);
-    }
-    const humanReviewed = new Set<string>(imported.map((d) => d.project_id));
-    for (const p of agentReviewed) humanReviewed.delete(p);
+    // Reviewed by people: an analysis a person brought in, with no agent
+    // analysis of the same contract in the period.
+    const generatedIds = new Set(generated.map((d) => d.project_id));
+    const humanReviewed = new Set(imported.map((d) => d.project_id).filter((id) => !generatedIds.has(id)));
     const termsExtracted = input.terms.filter((t) => inPeriod(t.extracted_at));
     const triaged = input.changes.filter((c) => inPeriod(c.created_at));
 
@@ -258,7 +230,7 @@ export function computeDashboard(
     // ── hours saved, formula visible ────────────────────────────────────────
     const a = opts.assumptions;
     const savedMinutes =
-        agentReviewed.size * a.minutes_per_review +
+        agentReviewed * a.minutes_per_review +
         termsExtracted.length * a.minutes_per_terms +
         triaged.length * a.minutes_per_regulatory_triage;
 
@@ -314,7 +286,7 @@ export function computeDashboard(
             missed_in_period: noticeMissed.length,
         },
         agents: {
-            contracts_reviewed_by_agents: agentReviewed.size,
+            contracts_reviewed_by_agents: agentReviewed,
             contracts_reviewed_by_people: humanReviewed.size,
             playbook_runs: runsDone.length,
             terms_extracted: termsExtracted.length,
@@ -325,7 +297,7 @@ export function computeDashboard(
             hours: round1(savedMinutes / 60),
             assumptions: a,
             formula:
-                `${agentReviewed.size} revisões × ${a.minutes_per_review} min + ` +
+                `${agentReviewed} revisões × ${a.minutes_per_review} min + ` +
                 `${termsExtracted.length} extrações de prazos × ${a.minutes_per_terms} min + ` +
                 `${triaged.length} mudanças regulatórias × ${a.minutes_per_regulatory_triage} min`,
         },
@@ -515,9 +487,9 @@ export async function getDashboard(
         const fichas = await optionalInChunks<FichaRow>(ids, (slice) =>
             db.from("contract_fichas").select("project_id, ficha").in("project_id", slice),
         );
-        const reviews = await optionalInChunks<ReviewRow>(ids, (slice) =>
-            db.from("contract_reviews").select("project_id, status, finished_at").in("project_id", slice),
-        );
+        // The one count shared with the home screen, over the visible
+        // contracts and the period's window.
+        const agentReviews = await countAgentReviews(db, ids, periodStart(now, opts.periodDays), now.toISOString());
         const requestArea = await requestAreas(db, ids);
         const scanIds = await visibleScanIds(db, caller);
         const changes = await inChunks(scanIds, async (slice) => {
@@ -531,7 +503,7 @@ export async function getDashboard(
 
         return ok(
             computeDashboard(
-                { cards, dossiers, terms, runs, changes, laneEvents, agentRuns, fichas, reviews, requestArea, documentProject },
+                { cards, dossiers, terms, runs, changes, laneEvents, agentRuns, fichas, agentReviews, requestArea, documentProject },
                 { now, periodDays: opts.periodDays, assumptions: opts.assumptions },
             ),
         );
