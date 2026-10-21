@@ -112,6 +112,7 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "triage.accepted" })).verb).toBe("aceitou a triagem");
         expect(describeEvent(event({ action: "triage.edited" })).verb).toBe("ajustou a triagem");
         expect(describeEvent(event({ action: "triage.rejected" })).verb).toBe("recusou a triagem");
+        expect(describeEvent(event({ action: "triage.reopened" })).verb).toBe("reabriu a triagem");
         expect(describeEvent(event({ action: "request.question" })).verb).toBe("perguntou ao solicitante");
         expect(describeEvent(event({ action: "request.answered" })).verb).toBe("respondeu");
         expect(describeEvent(event({ action: "request.delivered" })).verb).toBe("entregou o pedido");

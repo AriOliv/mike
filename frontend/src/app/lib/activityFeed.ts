@@ -172,6 +172,8 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "ajustou a triagem" };
         case "triage.rejected":
             return { verb: "recusou a triagem" };
+        case "triage.reopened":
+            return { verb: "reabriu a triagem" };
         case "request.question":
             return { verb: "perguntou ao solicitante" };
         case "request.answered":
