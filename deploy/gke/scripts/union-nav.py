@@ -47,6 +47,16 @@ def union(a, b, order=None, base=()):
 
 
 ours, theirs, common = stage(2, SRC), stage(3, SRC), stage(1, SRC)
+if not common:
+    # add/add: both sides got the file from the same cherry-picked commit
+    # ("the Legal workstation's navigation"); its first version in either
+    # side's history is the logical base, so removals are still seen
+    for ref in ("MERGE_HEAD", "HEAD"):
+        r = subprocess.run(["git", "-C", ROOT, "log", "--diff-filter=A", "--format=%H", ref, "--", SRC],
+                           capture_output=True, text=True).stdout.split()
+        if r:
+            common = subprocess.run(["git", "-C", ROOT, "show", f"{r[-1]}:{SRC}"], capture_output=True, text=True).stdout
+            break
 base = ours or theirs
 main = union(items(ours, "NAV_MAIN"), items(theirs, "NAV_MAIN"), ORDER, items(common, "NAV_MAIN"))
 # NAV_MORE keeps first-seen order (features prepend their own extra tools)
