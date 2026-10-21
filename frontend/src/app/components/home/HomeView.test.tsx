@@ -195,10 +195,10 @@ describe("HomeView", () => {
         expect(within(panel).getByRole("link", { name: "7 de 10 campos preenchidos" })).toHaveAttribute("href", "/projects/p1");
         expect(within(panel).getByText("Revisão")).toBeInTheDocument();
         fireEvent.click(within(panel).getByRole("button", { name: "3 divergem: filtrar" }));
-        expect(nav.push).toHaveBeenLastCalledWith("/playbooks/pb1?tab=runs&run=run1&veredito=diverge");
+        expect(nav.push).toHaveBeenLastCalledWith("/projects/p1/review?run=run1&veredito=diverge");
         expect(within(panel).getByRole("link", { name: /Abrir revisão/ })).toHaveAttribute(
             "href",
-            "/playbooks/pb1?tab=runs&run=run1",
+            "/projects/p1/review?run=run1",
         );
 
         fireEvent.click(within(panel).getByRole("button", { name: /Aceitar revisão/ }));
@@ -312,6 +312,14 @@ describe("HomeView", () => {
         fireEvent.keyDown(window, { key: "r" });
         await waitFor(() => expect(api.requestContractReview).toHaveBeenCalledWith("p1"));
         editable.remove();
+    });
+
+    it("opens the latest review of a contract with no playbook run", async () => {
+        nav.params = new URLSearchParams("doc=r1");
+        api.getHomeSummary.mockResolvedValue(summary([review({ playbook_id: null, playbook_run_id: null })]));
+        render(<HomeView />);
+        const panel = await screen.findByRole("complementary", { name: "Detalhes" });
+        expect(within(panel).getByRole("link", { name: /Abrir revisão/ })).toHaveAttribute("href", "/projects/p1/review");
     });
 
     it("retries a failed review from its row", async () => {

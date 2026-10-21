@@ -19,7 +19,6 @@ import {
     type CardEvent,
     type HomeReview,
 } from "@/app/lib/mikeApi";
-import { playbookRunPath } from "@/app/lib/playbookRunActivity";
 import { NoticeBadge } from "./HomeReviewTable";
 
 const LANE_LABEL: Record<string, string> = {
@@ -32,13 +31,16 @@ const LANE_LABEL: Record<string, string> = {
 };
 
 /**
- * Where "Abrir" goes: the playbook's findings when there are some, else the
- * card. With a verdict the review opens filtered to it (`&veredito=`).
+ * The contract's review page: this run's findings when there is one (`run=`),
+ * filtered to a verdict when given (`veredito=`). Without a run it opens the
+ * contract's latest review, Ficha included.
  */
 export function reviewHref(review: HomeReview, verdict?: Verdict | null): string {
-    if (!review.playbook_id || !review.playbook_run_id) return `/projects/${review.project_id}`;
-    const path = playbookRunPath({ id: review.playbook_run_id, playbookId: review.playbook_id });
-    return verdict ? `${path}&veredito=${verdict}` : path;
+    const params = new URLSearchParams();
+    if (review.playbook_run_id) params.set("run", review.playbook_run_id);
+    if (verdict) params.set("veredito", verdict);
+    const query = params.toString();
+    return `/projects/${review.project_id}/review${query ? `?${query}` : ""}`;
 }
 
 type Person = { email: string; name: string };
