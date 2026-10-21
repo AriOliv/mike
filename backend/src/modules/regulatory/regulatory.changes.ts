@@ -80,8 +80,8 @@ async function loadScan(db: Db, caller: Caller, scanId: string): Promise<ScanAcc
     return scan;
 }
 
-const SCAN_NOT_FOUND = failure("not_found", "Scan not found");
-const CHANGE_NOT_FOUND = failure("not_found", "Change not found");
+const SCAN_NOT_FOUND = failure("not_found", "Não encontrei esta varredura. Ela pode ter sido apagada.");
+const CHANGE_NOT_FOUND = failure("not_found", "Não encontrei esta mudança. Ela pode ter saído da varredura.");
 
 export function listPresets() {
     return {
@@ -139,24 +139,24 @@ export async function createScan(
     body: Record<string, unknown>,
 ): Promise<ServiceResult<RegulatoryScan>> {
     const preset = typeof body.preset === "string" ? PRESETS.find((p) => p.key === body.preset) : undefined;
-    if (body.preset !== undefined && !preset) return failure("validation", "Unknown preset");
+    if (body.preset !== undefined && !preset) return failure("validation", "Essa varredura pronta não existe. Escolha uma das sugeridas.");
 
     const name = (typeof body.name === "string" ? body.name.trim() : "") || preset?.name || "";
-    if (!name || name.length > 120) return failure("validation", "name is required (up to 120 characters)");
+    if (!name || name.length > 120) return failure("validation", "Dê um nome à varredura, com até 120 caracteres.");
 
     const sources = stringList(body.sources) ?? preset?.sources ?? [];
     if (sources.length === 0 || sources.some((s) => !(SOURCE_IDS as readonly string[]).includes(s))) {
-        return failure("validation", `sources must be some of: ${SOURCE_IDS.join(", ")}`);
+        return failure("validation", "Escolha ao menos uma fonte entre BCB, Diário Oficial, CVM e Receita.");
     }
     const topics = stringList(body.topics) ?? preset?.topics ?? [];
     if (topics.some((t) => !(TOPICS as readonly string[]).includes(t))) {
-        return failure("validation", `topics must be some of: ${TOPICS.join(", ")}`);
+        return failure("validation", "Escolha temas entre pagamentos, cripto, câmbio, dados pessoais e PLD.");
     }
 
     let orgId: string | null = null;
     if (typeof body.org_id === "string" && body.org_id) {
         if (!(await getOrgRole(caller.userId, body.org_id, db))) {
-            return failure("forbidden", "You are not a member of that organization.");
+            return failure("forbidden", "Você não faz parte desta organização.");
         }
         orgId = body.org_id;
     }
@@ -197,13 +197,13 @@ export async function updateScan(
     const patch: Record<string, unknown> = {};
     if (typeof body.name === "string") {
         const name = body.name.trim();
-        if (!name || name.length > 120) return failure("validation", "name is required (up to 120 characters)");
+        if (!name || name.length > 120) return failure("validation", "Dê um nome à varredura, com até 120 caracteres.");
         patch.name = name;
     }
     if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
     const keywords = stringList(body.keywords, 120);
     if (keywords) patch.keywords = keywords;
-    if (Object.keys(patch).length === 0) return failure("validation", "Nothing to update");
+    if (Object.keys(patch).length === 0) return failure("validation", "Não há nada para alterar.");
     patch.updated_at = new Date().toISOString();
     const { data, error } = await db.from("regulatory_scans").update(patch).eq("id", scanId).select(SCAN_COLUMNS).single();
     if (error) return internalFailure(error);
@@ -358,7 +358,7 @@ export async function updateChange(
     const patch: Record<string, unknown> = {};
     if ("status" in body) {
         if (!["nova", "lida", "arquivada"].includes(String(body.status))) {
-            return failure("validation", "status must be one of: nova, lida, arquivada");
+            return failure("validation", "Escolha uma situação válida: nova, lida ou arquivada.");
         }
         patch.status = body.status;
         if (body.status === "arquivada") {
@@ -367,7 +367,7 @@ export async function updateChange(
         }
     }
     if (typeof body.starred === "boolean") patch.starred = body.starred;
-    if (Object.keys(patch).length === 0) return failure("validation", "Nothing to update");
+    if (Object.keys(patch).length === 0) return failure("validation", "Não há nada para alterar.");
     patch.updated_at = new Date().toISOString();
     const { data, error } = await db
         .from("regulatory_changes")
@@ -438,7 +438,7 @@ export async function createRequestFromChange(
     }
     if (!found) return CHANGE_NOT_FOUND;
     const { change, scan } = found;
-    if (change.request_project_id) return failure("conflict", "A request already exists for this change");
+    if (change.request_project_id) return failure("conflict", "Já existe um pedido para esta mudança.");
 
     const title = String(change.title);
     const created = await createProject(db, {
@@ -449,7 +449,9 @@ export async function createRequestFromChange(
         visibility: scan.org_id ? "organization" : undefined,
     });
     if (!created.ok) {
-        return created.kind === "validation" ? failure("validation", created.detail) : internalFailure(created.error);
+        return created.kind === "validation"
+            ? failure("validation", "Não consegui criar o pedido nesta organização. Confira se você faz parte dela.")
+            : internalFailure(created.error);
     }
     const projectId = String(created.project.id);
     const today = new Date().toISOString().slice(0, 10);
@@ -521,12 +523,12 @@ export async function createObligationFromChange(
     }
     if (!found) return CHANGE_NOT_FOUND;
     const { change } = found;
-    if (change.obligation_id) return failure("conflict", "A deadline already exists for this change");
+    if (change.obligation_id) return failure("conflict", "A vigência desta mudança já está nos Prazos.");
     const due =
         typeof body.due_date === "string" && body.due_date
             ? body.due_date
             : ((change.effective_date as string | null) ?? null);
-    if (!due) return failure("validation", "due_date is required when the act does not state when it takes effect");
+    if (!due) return failure("validation", "O ato não diz quando entra em vigor. Informe a data do prazo.");
 
     const created = await createObligation(db, caller, {
         title: `Vigência: ${String(change.title)}`.slice(0, 200),

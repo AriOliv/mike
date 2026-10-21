@@ -169,11 +169,17 @@ describe("decideRuleSuggestion", () => {
 
     it("refuses an analyst, a decided suggestion and an unknown status", async () => {
         const member = scriptedDb([{ table: "regulatory_rule_suggestions", data: pending }, ...load]);
-        expect(await decideRuleSuggestion(member.db, caller, "r1", { status: "rejeitada" })).toMatchObject({ kind: "forbidden" });
+        expect(await decideRuleSuggestion(member.db, caller, "r1", { status: "rejeitada" })).toMatchObject({
+            kind: "forbidden",
+            detail: "Só a Head (dona ou administradora da organização) aprova regras do playbook.",
+        });
 
         access.getOrgRole.mockResolvedValue("admin");
         const decided = scriptedDb([{ table: "regulatory_rule_suggestions", data: { ...pending, status: "aprovada" } }, ...load]);
-        expect(await decideRuleSuggestion(decided.db, caller, "r1", { status: "rejeitada" })).toMatchObject({ kind: "conflict" });
+        expect(await decideRuleSuggestion(decided.db, caller, "r1", { status: "rejeitada" })).toMatchObject({
+            kind: "conflict",
+            detail: "Esta regra sugerida já foi decidida.",
+        });
 
         expect(await decideRuleSuggestion(scriptedDb([]).db, caller, "r1", { status: "talvez" })).toMatchObject({ kind: "validation" });
     });

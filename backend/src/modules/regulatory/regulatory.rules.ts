@@ -42,14 +42,14 @@ export async function suggestPlaybookRule(
     } catch (error) {
         return internalFailure(error);
     }
-    if (!found) return failure("not_found", "Change not found");
+    if (!found) return failure("not_found", "Não encontrei esta mudança. Ela pode ter saído da varredura.");
     const { change, scan } = found;
 
     const guidance =
         typeof body.guidance === "string" && body.guidance.trim()
             ? body.guidance.trim()
             : draftGuidance(change as never);
-    if (guidance.length > 4000) return failure("validation", "guidance is too long (up to 4000 characters)");
+    if (guidance.length > 4000) return failure("validation", "A regra está longa demais. Use até 4.000 caracteres.");
     const playbookId = typeof body.playbook_id === "string" && body.playbook_id ? body.playbook_id : null;
 
     const row = {
@@ -117,7 +117,7 @@ export async function decideRuleSuggestion(
 ): Promise<ServiceResult<RuleSuggestion>> {
     const decision = body.status;
     if (decision !== "aprovada" && decision !== "rejeitada") {
-        return failure("validation", "status must be one of: aprovada, rejeitada");
+        return failure("validation", "Escolha aprovar ou rejeitar a regra.");
     }
     const { data: current, error: readError } = await db
         .from("regulatory_rule_suggestions")
@@ -126,7 +126,7 @@ export async function decideRuleSuggestion(
         .maybeSingle();
     if (readError) return internalFailure(readError);
     const suggestion = current as RuleSuggestion | null;
-    if (!suggestion) return failure("not_found", "Suggestion not found");
+    if (!suggestion) return failure("not_found", "Não encontrei esta regra sugerida.");
 
     let found: Awaited<ReturnType<typeof loadVisibleChange>>;
     try {
@@ -134,11 +134,11 @@ export async function decideRuleSuggestion(
     } catch (error) {
         return internalFailure(error);
     }
-    if (!found) return failure("not_found", "Suggestion not found");
+    if (!found) return failure("not_found", "Não encontrei esta regra sugerida.");
     if (!(await canApprove(db, caller, found.scan))) {
-        return failure("forbidden", "Only the organization's owners and admins approve playbook rules.");
+        return failure("forbidden", "Só a Head (dona ou administradora da organização) aprova regras do playbook.");
     }
-    if (suggestion.status !== "pendente") return failure("conflict", "This suggestion was already decided");
+    if (suggestion.status !== "pendente") return failure("conflict", "Esta regra sugerida já foi decidida.");
 
     const { data, error } = await db
         .from("regulatory_rule_suggestions")

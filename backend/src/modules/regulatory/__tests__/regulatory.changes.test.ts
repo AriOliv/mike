@@ -141,7 +141,10 @@ describe("scans", () => {
 
     it("validates what it is asked to watch", async () => {
         const fake = scriptedDb([]);
-        expect(await createScan(fake.db, caller, { preset: "nope" })).toMatchObject({ kind: "validation" });
+        expect(await createScan(fake.db, caller, { preset: "nope" })).toMatchObject({
+            kind: "validation",
+            detail: "Essa varredura pronta não existe. Escolha uma das sugeridas.",
+        });
         expect(await createScan(fake.db, caller, { sources: ["dou"] })).toMatchObject({ kind: "validation" });
         expect(await createScan(fake.db, caller, { name: "x", sources: ["twitter"] })).toMatchObject({ kind: "validation" });
         expect(await createScan(fake.db, caller, { name: "x", sources: "dou" })).toMatchObject({ kind: "validation" });
@@ -149,7 +152,10 @@ describe("scans", () => {
             kind: "validation",
         });
         access.getOrgRole.mockResolvedValue(null);
-        expect(await createScan(fake.db, caller, { preset: "cvm", org_id: "o2" })).toMatchObject({ kind: "forbidden" });
+        expect(await createScan(fake.db, caller, { preset: "cvm", org_id: "o2" })).toMatchObject({
+            kind: "forbidden",
+            detail: "Você não faz parte desta organização.",
+        });
         fake.done();
     });
 
@@ -177,7 +183,10 @@ describe("scans", () => {
             { table: "regulatory_scans", data: null },
             { table: "regulatory_scans", data: otherScan },
         ]);
-        expect(await updateScan(fake.db, caller, "s9", { enabled: false })).toMatchObject({ kind: "not_found" });
+        expect(await updateScan(fake.db, caller, "s9", { enabled: false })).toMatchObject({
+            kind: "not_found",
+            detail: "Não encontrei esta varredura. Ela pode ter sido apagada.",
+        });
         expect(await runScanNow(fake.db, caller, "s0")).toMatchObject({ kind: "not_found" });
         expect(await deleteScan(fake.db, caller, "s9")).toMatchObject({ kind: "not_found" });
         fake.done();
@@ -393,11 +402,18 @@ describe("one-click actions", () => {
 
     it("refuses a second request and reports failures on the way", async () => {
         const dup = scriptedDb(loadSteps(change({ request_project_id: "p0" })));
-        expect(await createRequestFromChange(dup.db, caller, "c1", {})).toMatchObject({ kind: "conflict" });
+        expect(await createRequestFromChange(dup.db, caller, "c1", {})).toMatchObject({
+            kind: "conflict",
+            detail: "Já existe um pedido para esta mudança.",
+        });
 
-        projects.createProject.mockResolvedValueOnce({ ok: false, kind: "validation", detail: "no" });
+        projects.createProject.mockResolvedValueOnce({ ok: false, kind: "validation", detail: "You are not a member of that organization." });
         const invalid = scriptedDb(loadSteps(change({ status: "lida" })));
-        expect(await createRequestFromChange(invalid.db, caller, "c1", {})).toMatchObject({ kind: "validation" });
+        // The upstream's English detail never reaches the screen.
+        expect(await createRequestFromChange(invalid.db, caller, "c1", {})).toMatchObject({
+            kind: "validation",
+            detail: "Não consegui criar o pedido nesta organização. Confira se você faz parte dela.",
+        });
 
         projects.createProject.mockResolvedValueOnce({ ok: false, kind: "db_error", error: new Error("x") });
         const dbErr = scriptedDb(loadSteps(change()));
@@ -459,7 +475,10 @@ describe("one-click actions", () => {
 
     it("asks for a date when the act does not state one, and accepts the one given", async () => {
         const noDate = scriptedDb(loadSteps(change({ effective_date: null })));
-        expect(await createObligationFromChange(noDate.db, caller, "c1", {})).toMatchObject({ kind: "validation" });
+        expect(await createObligationFromChange(noDate.db, caller, "c1", {})).toMatchObject({
+            kind: "validation",
+            detail: "O ato não diz quando entra em vigor. Informe a data do prazo.",
+        });
 
         contracts.createObligation.mockResolvedValue({ ok: true, data: { id: "ob2" } });
         const given = scriptedDb([
@@ -473,7 +492,10 @@ describe("one-click actions", () => {
 
     it("refuses a second deadline and reports failures on the way", async () => {
         const dup = scriptedDb(loadSteps(change({ obligation_id: "ob0" })));
-        expect(await createObligationFromChange(dup.db, caller, "c1", {})).toMatchObject({ kind: "conflict" });
+        expect(await createObligationFromChange(dup.db, caller, "c1", {})).toMatchObject({
+            kind: "conflict",
+            detail: "A vigência desta mudança já está nos Prazos.",
+        });
         contracts.createObligation.mockResolvedValueOnce({ ok: false, kind: "validation", detail: "x" });
         const invalid = scriptedDb(loadSteps(change()));
         expect(await createObligationFromChange(invalid.db, caller, "c1", {})).toMatchObject({ kind: "validation" });
