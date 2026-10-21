@@ -262,7 +262,7 @@ export function RegulatoryRadarView() {
         try {
             await suggestRuleFromRegulatoryChange(change.id, guidance ? { guidance } : {});
             setRuleChangeIds((cur) => new Set(cur).add(change.id));
-            showToast({ tone: "success", message: "Regra sugerida no playbook. A Head aprova antes de valer." });
+            showToast({ tone: "success", message: "Regra sugerida no playbook. A liderança do Legal aprova antes de valer." });
         } catch (e) {
             notifyError(e, PT("sugerir a regra"));
         } finally {

@@ -150,7 +150,7 @@ describe("listRuleSuggestions", () => {
 describe("decideRuleSuggestion", () => {
     const pending = { id: "r1", change_id: "c1", status: "pendente" };
 
-    it("lets the Head approve, recording who and why", async () => {
+    it("lets an organization admin approve, recording who and why", async () => {
         access.getOrgRole.mockResolvedValue("owner");
         const fake = scriptedDb([
             { table: "regulatory_rule_suggestions", data: pending },
@@ -171,7 +171,7 @@ describe("decideRuleSuggestion", () => {
         const member = scriptedDb([{ table: "regulatory_rule_suggestions", data: pending }, ...load]);
         expect(await decideRuleSuggestion(member.db, caller, "r1", { status: "rejeitada" })).toMatchObject({
             kind: "forbidden",
-            detail: "Só a Head (dona ou administradora da organização) aprova regras do playbook.",
+            detail: "Só quem administra a organização aprova regras do playbook.",
         });
 
         access.getOrgRole.mockResolvedValue("admin");

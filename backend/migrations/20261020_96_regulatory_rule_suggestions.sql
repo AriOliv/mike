@@ -1,6 +1,6 @@
 -- Migration date: 2026-10-20
 --
--- "Adicionar ao playbook" from a regulatory change: a SUGGESTED rule the Head
+-- "Adicionar ao playbook" from a regulatory change: a SUGGESTED rule an admin
 -- approves before it counts. Nothing here writes to a playbook; an approved
 -- suggestion is what the playbook owner applies. Fork-only table (slot _96).
 -- Backend-owned like the radar's tables: browser roles get nothing.

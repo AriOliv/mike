@@ -123,7 +123,7 @@ regulatoryRouter.post(
     }),
 );
 
-// "Adicionar ao playbook": a suggested rule the Head approves before it counts.
+// "Adicionar ao playbook": a suggested rule an organization admin approves before it counts.
 regulatoryRouter.post(
     "/changes/:id/rule",
     requireAuth,

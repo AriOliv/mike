@@ -254,7 +254,7 @@ export function ChangePanel({
                     {ruleSuggested ? (
                         <span className="inline-flex items-center gap-1 text-xs text-gray-600">
                             <BookPlus aria-hidden="true" className="h-3.5 w-3.5" />
-                            Regra sugerida, aguardando a Head
+                            Regra sugerida, aguardando a liderança do Legal
                         </span>
                     ) : (
                         <PillButtonUI tone="white" disabled={busy} onClick={() => onSuggestRule()}>

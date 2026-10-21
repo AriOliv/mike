@@ -4930,7 +4930,7 @@ export interface RegulatoryRuleSuggestion {
     created_at: string;
 }
 
-/** "Adicionar ao playbook": a suggested rule the Head approves before it counts. */
+/** "Adicionar ao playbook": a suggested rule an organization admin approves before it counts. */
 export async function suggestRuleFromRegulatoryChange(
     id: string,
     body: { guidance?: string; playbook_id?: string | null } = {},

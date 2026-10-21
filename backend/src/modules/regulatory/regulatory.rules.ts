@@ -1,5 +1,5 @@
 // "Adicionar ao playbook": a regulatory change becomes a SUGGESTED rule that
-// the Head approves before it counts. Nothing here writes to a playbook —
+// an organization admin approves before it counts. Nothing here writes to a playbook —
 // an approved suggestion is what the playbook's owner applies — so an agent
 // (or a hurried click) can never change the team's standard on its own.
 
@@ -108,7 +108,7 @@ export async function listRuleSuggestions(
     return ok((data ?? []) as unknown as RuleSuggestion[]);
 }
 
-/** The Head approves or rejects; only an open suggestion can be decided. */
+/** An organization admin approves or rejects; only an open suggestion can be decided. */
 export async function decideRuleSuggestion(
     db: Db,
     caller: Caller,
@@ -136,7 +136,7 @@ export async function decideRuleSuggestion(
     }
     if (!found) return failure("not_found", "Não encontrei esta regra sugerida.");
     if (!(await canApprove(db, caller, found.scan))) {
-        return failure("forbidden", "Só a Head (dona ou administradora da organização) aprova regras do playbook.");
+        return failure("forbidden", "Só quem administra a organização aprova regras do playbook.");
     }
     if (suggestion.status !== "pendente") return failure("conflict", "Esta regra sugerida já foi decidida.");
 

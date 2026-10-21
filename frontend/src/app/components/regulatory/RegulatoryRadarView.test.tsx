@@ -182,7 +182,7 @@ describe("RegulatoryRadarView", () => {
         expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ message: "Vigência adicionada aos Prazos." }));
     });
 
-    it("suggests a playbook rule the Head approves, never writing the playbook", async () => {
+    it("suggests a playbook rule an admin approves, never writing the playbook", async () => {
         nav.params = new URLSearchParams("mudanca=c1");
         api.suggestRuleFromRegulatoryChange.mockResolvedValue({ id: "r1", change_id: "c1", status: "pendente" });
         render(<RegulatoryRadarView />);
@@ -191,9 +191,9 @@ describe("RegulatoryRadarView", () => {
         await waitFor(() => expect(api.suggestRuleFromRegulatoryChange).toHaveBeenCalledWith("c1", {}));
         expect(toasts.showToast).toHaveBeenCalledWith({
             tone: "success",
-            message: "Regra sugerida no playbook. A Head aprova antes de valer.",
+            message: "Regra sugerida no playbook. A liderança do Legal aprova antes de valer.",
         });
-        expect(await within(panel).findByText("Regra sugerida, aguardando a Head")).toBeInTheDocument();
+        expect(await within(panel).findByText("Regra sugerida, aguardando a liderança do Legal")).toBeInTheDocument();
     });
 
     it("lets a person decide the agent's suggestion: accept runs it, edit becomes a rule, reject archives", async () => {

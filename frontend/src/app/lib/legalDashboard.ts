@@ -40,7 +40,7 @@ export type Tile = {
     tone?: "default" | "atencao" | "critico";
 };
 
-/** The four numbers the Head reads first. */
+/** The four numbers the Legal lead reads first. */
 export function headlineTiles(d: LegalDashboard): Tile[] {
     const late = d.sla.open_overdue;
     const missed = d.notice.missed_in_period;
