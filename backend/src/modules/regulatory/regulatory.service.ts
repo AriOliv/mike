@@ -20,6 +20,13 @@ export {
     type RegulatoryChange,
 } from "./regulatory.changes";
 export {
+    suggestPlaybookRule,
+    listRuleSuggestions,
+    decideRuleSuggestion,
+    draftGuidance,
+    type RuleSuggestion,
+} from "./regulatory.rules";
+export {
     runRegulatoryScan,
     handleRegulatoryScan,
     enqueueDueRegulatoryScans,

@@ -34,6 +34,7 @@ const PERIODS = [30, 90, 365] as const;
 type DossierRow = { project_id: string; source: string | null; created_at: string; user_id: string | null };
 type TermsRow = { project_id: string; notice_deadline: string | null; extracted_at: string };
 type RunRow = { document_id: string | null; user_id: string; status: string; started_at: string; completed_at: string | null };
+type FichaRow = { project_id: string; ficha: Record<string, unknown> | null };
 type LaneEventRow = { project_id: string; at: string; before: unknown; after: unknown };
 type AgentRunRow = { project_id: string; agent: string; status: string; cost_usd: number | string | null; started_at: string };
 type ChangeRow = { status: string; impact: string; request_project_id: string | null; obligation_id: string | null; created_at: string };
@@ -45,6 +46,8 @@ export type DashboardInputs = {
     runs: RunRow[];
     changes: ChangeRow[];
     laneEvents: LaneEventRow[];
+    /** null when the Ficha is not installed on this database yet. */
+    fichas: FichaRow[] | null;
     agentRuns: AgentRunRow[];
     /** document id → project id, for runs over contract documents */
     documentProject: Map<string, string>;
@@ -190,6 +193,19 @@ export function computeDashboard(
     const termsExtracted = input.terms.filter((t) => inPeriod(t.extracted_at));
     const triaged = input.changes.filter((c) => inPeriod(c.created_at));
 
+    // ── Ficha fields verified by a person (same rule as the Ficha's own
+    // "14/24 verificados": not-applicable fields are left out) ────────────────
+    let fichaTotal = 0;
+    let fichaVerified = 0;
+    for (const row of input.fichas ?? []) {
+        for (const field of Object.values(row.ficha ?? {})) {
+            const f = field as { status?: string; review?: { state?: string } } | null;
+            if (!f || typeof f !== "object" || f.status === "nao_aplicavel") continue;
+            fichaTotal++;
+            if (f.review?.state && f.review.state !== "pendente") fichaVerified++;
+        }
+    }
+
     // ── hours saved, formula visible ────────────────────────────────────────
     const a = opts.assumptions;
     const savedMinutes =
@@ -235,6 +251,15 @@ export function computeDashboard(
             rate: withDeadline.length ? round1((onTime.length / withDeadline.length) * 100) : null,
             open_overdue: overdueOpen.length,
         },
+        ficha:
+            input.fichas === null
+                ? null
+                : {
+                      contracts: input.fichas.length,
+                      fields: fichaTotal,
+                      verified: fichaVerified,
+                      rate: fichaTotal ? round1((fichaVerified / fichaTotal) * 100) : null,
+                  },
         notice: {
             due_in_30_days: noticeWindow.length,
             missed_in_period: noticeMissed.length,
@@ -310,6 +335,11 @@ export function parseDashboardQuery(query: Record<string, unknown>): { periodDay
 
 const ID_CHUNK = 200;
 
+/** Postgres "undefined_table" or PostgREST "relation not in the schema cache". */
+function isMissingTable(error: { code?: string }): boolean {
+    return error.code === "42P01" || error.code === "PGRST205";
+}
+
 async function inChunks<T>(ids: string[], read: (slice: string[]) => Promise<T[]>): Promise<T[]> {
     const out: T[] = [];
     for (let i = 0; i < ids.length; i += ID_CHUNK) out.push(...(await read(ids.slice(i, i + ID_CHUNK))));
@@ -376,6 +406,18 @@ export async function getDashboard(
             if (error) throw error;
             return (data ?? []) as AgentRunRow[];
         });
+        // The Ficha ships in another module's migration; until a database has
+        // it, the tile says so instead of failing the whole dashboard.
+        let fichas: FichaRow[] | null = [];
+        for (let i = 0; i < ids.length && fichas !== null; i += ID_CHUNK) {
+            const { data, error } = await db
+                .from("contract_fichas")
+                .select("project_id, ficha")
+                .in("project_id", ids.slice(i, i + ID_CHUNK));
+            if (error && isMissingTable(error)) fichas = null;
+            else if (error) throw error;
+            else fichas.push(...((data ?? []) as FichaRow[]));
+        }
         const scanIds = await visibleScanIds(db, caller);
         const changes = await inChunks(scanIds, async (slice) => {
             const { data, error } = await db
@@ -388,7 +430,7 @@ export async function getDashboard(
 
         return ok(
             computeDashboard(
-                { cards, dossiers, terms, runs, changes, laneEvents, agentRuns, documentProject },
+                { cards, dossiers, terms, runs, changes, laneEvents, agentRuns, fichas, documentProject },
                 { now, periodDays: opts.periodDays, assumptions: opts.assumptions },
             ),
         );

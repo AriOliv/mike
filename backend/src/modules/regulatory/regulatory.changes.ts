@@ -327,7 +327,8 @@ export async function listChanges(
     }
 }
 
-async function loadChange(
+/** A change and its scan, or null when the caller cannot see the scan. */
+export async function loadVisibleChange(
     db: Db,
     caller: Caller,
     changeId: string,
@@ -347,9 +348,9 @@ export async function updateChange(
     changeId: string,
     body: Record<string, unknown>,
 ): Promise<ServiceResult<RegulatoryChange>> {
-    let found: Awaited<ReturnType<typeof loadChange>>;
+    let found: Awaited<ReturnType<typeof loadVisibleChange>>;
     try {
-        found = await loadChange(db, caller, changeId);
+        found = await loadVisibleChange(db, caller, changeId);
     } catch (error) {
         return internalFailure(error);
     }
@@ -383,6 +384,27 @@ export async function updateChange(
     }
 }
 
+/**
+ * Someone acted on the change: a new change becomes read and the decision is
+ * attributed. Best-effort — the action already succeeded.
+ */
+export async function recordChangeDecision(
+    db: Db,
+    changeId: string,
+    change: Record<string, unknown>,
+    caller: Caller,
+): Promise<void> {
+    await db
+        .from("regulatory_changes")
+        .update({
+            status: change.status === "nova" ? "lida" : change.status,
+            decided_by: caller.userEmail ?? caller.userId,
+            decided_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        })
+        .eq("id", changeId);
+}
+
 function addDays(iso: string, days: number): string {
     const d = new Date(`${iso}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + days);
@@ -408,9 +430,9 @@ export async function createRequestFromChange(
     changeId: string,
     body: Record<string, unknown>,
 ): Promise<ServiceResult<{ project_id: string; change: RegulatoryChange }>> {
-    let found: Awaited<ReturnType<typeof loadChange>>;
+    let found: Awaited<ReturnType<typeof loadVisibleChange>>;
     try {
-        found = await loadChange(db, caller, changeId);
+        found = await loadVisibleChange(db, caller, changeId);
     } catch (error) {
         return internalFailure(error);
     }
@@ -491,9 +513,9 @@ export async function createObligationFromChange(
     changeId: string,
     body: Record<string, unknown>,
 ): Promise<ServiceResult<{ obligation_id: string; change: RegulatoryChange }>> {
-    let found: Awaited<ReturnType<typeof loadChange>>;
+    let found: Awaited<ReturnType<typeof loadVisibleChange>>;
     try {
-        found = await loadChange(db, caller, changeId);
+        found = await loadVisibleChange(db, caller, changeId);
     } catch (error) {
         return internalFailure(error);
     }

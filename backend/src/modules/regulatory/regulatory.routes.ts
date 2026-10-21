@@ -10,7 +10,10 @@ import {
     createObligationFromChange,
     createRequestFromChange,
     createScan,
+    decideRuleSuggestion,
     deleteScan,
+    listRuleSuggestions,
+    suggestPlaybookRule,
     listChanges,
     listPresets,
     listScans,
@@ -117,6 +120,31 @@ regulatoryRouter.post(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await createObligationFromChange(createServerSupabase(), caller(res), req.params.id, body(req)), 201);
+    }),
+);
+
+// "Adicionar ao playbook": a suggested rule the Head approves before it counts.
+regulatoryRouter.post(
+    "/changes/:id/rule",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await suggestPlaybookRule(createServerSupabase(), caller(res), req.params.id, body(req)), 201);
+    }),
+);
+
+regulatoryRouter.get(
+    "/rules",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await listRuleSuggestions(createServerSupabase(), caller(res), req.query.status));
+    }),
+);
+
+regulatoryRouter.patch(
+    "/rules/:id",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await decideRuleSuggestion(createServerSupabase(), caller(res), req.params.id, body(req)));
     }),
 );
 

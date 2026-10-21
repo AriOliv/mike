@@ -75,6 +75,19 @@ const inputs = {
         { project_id: "a", agent: "notificador", status: "succeeded", cost_usd: null, started_at: "2026-10-09T00:00:00Z" },
         { project_id: "a", agent: "revisor", status: "failed", cost_usd: 0.05, started_at: "2025-01-01T00:00:00Z" },
     ],
+    fichas: [
+        {
+            project_id: "a",
+            ficha: {
+                "identificacao.contraparte": { status: "preenchido", review: { state: "confirmado" } },
+                "vigencia.data_vencimento": { status: "preenchido", review: { state: "pendente" } },
+                "cessao.permitida": { status: "nao_aplicavel", review: { state: "pendente" } },
+                "pagamento.valor": { status: "preenchido", review: { state: "corrigido" } },
+                broken: null,
+            },
+        },
+        { project_id: "b", ficha: null },
+    ],
     documentProject: new Map([["doc-c", "c"]]),
 };
 
@@ -126,6 +139,10 @@ describe("computeDashboard", () => {
         );
     });
 
+    it("counts the Ficha fields a person verified, leaving out what does not apply", () => {
+        expect(d.ficha).toEqual({ contracts: 2, fields: 3, verified: 2, rate: 66.7 });
+    });
+
     it("reports adoption per person and never invents an AI cost", () => {
         expect(d.adoption.people[0]).toEqual({ email: "duda@avenia.io", assigned_open: 1, closed: 1, reviews_run: 0 });
         expect(d.adoption.reviews_by_user_id).toEqual([{ user_id: "u1", count: 1 }]);
@@ -142,7 +159,7 @@ describe("computeDashboard", () => {
 
     it("handles an empty base", () => {
         const empty = computeDashboard(
-            { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], documentProject: new Map() },
+            { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], fichas: null, documentProject: new Map() },
             { now: NOW, periodDays: 90, assumptions: DEFAULT_ASSUMPTIONS },
         );
         expect(empty.cycle.median_days_to_close).toBeNull();
@@ -150,6 +167,7 @@ describe("computeDashboard", () => {
         expect(empty.hours_saved.hours).toBe(0);
         expect(empty.volume.weekly.length).toBeGreaterThan(12);
         expect(empty.ai_cost).toBeNull();
+        expect(empty.ficha).toBeNull();
         expect(empty.cycle.per_stage_moves).toBe(0);
     });
 
@@ -185,14 +203,33 @@ describe("getDashboard", () => {
             { table: "playbook_runs", data: [] },
             { table: "card_events", data: [] },
             { table: "agent_runs", data: [] },
+            { table: "contract_fichas", error: { code: "PGRST205", message: "missing" } },
             { table: "regulatory_changes", data: [] },
         ]);
         const result = await getDashboard(fake.db, caller, { period: "30" }, NOW);
-        expect(result).toMatchObject({ ok: true, data: { period_days: 30, volume: { opened: 1 } } });
+        expect(result).toMatchObject({ ok: true, data: { period_days: 30, volume: { opened: 1 }, ficha: null } });
         expect(fake.calls[0].filters).toContainEqual(["in", "project_id", ["p1"]]);
         expect(fake.calls[3].filters).toContainEqual(["in", "document_id", ["doc1"]]);
         expect(fake.calls[4].filters).toContainEqual(["eq", "action", "lane.changed"]);
-        expect(fake.calls[6].filters).toContainEqual(["in", "scan_id", ["s1"]]);
+        expect(fake.calls[7].filters).toContainEqual(["in", "scan_id", ["s1"]]);
+        fake.done();
+    });
+
+    it("reads the Ficha when the database has it", async () => {
+        contracts.listPipeline.mockResolvedValue({ ok: true, data: { cards: [card({ id: "p1" })] } });
+        regulatory.visibleScanIds.mockResolvedValue([]);
+        const fake = scriptedDb([
+            { table: "dossiers", data: [] },
+            { table: "contract_terms", data: [] },
+            { table: "documents", data: [] },
+            { table: "card_events", data: [] },
+            { table: "agent_runs", data: [] },
+            { table: "contract_fichas", data: [{ project_id: "p1", ficha: { x: { status: "preenchido", review: { state: "confirmado" } } } }] },
+        ]);
+        expect(await getDashboard(fake.db, caller, {}, NOW)).toMatchObject({
+            ok: true,
+            data: { ficha: { contracts: 1, fields: 1, verified: 1, rate: 100 } },
+        });
         fake.done();
     });
 
@@ -202,7 +239,7 @@ describe("getDashboard", () => {
 
         contracts.listPipeline.mockResolvedValue({ ok: true, data: { cards: [card({ id: "p1" })] } });
         regulatory.visibleScanIds.mockResolvedValue([]);
-        const order = ["dossiers", "contract_terms", "documents", "playbook_runs", "card_events", "agent_runs", "regulatory_changes"];
+        const order = ["dossiers", "contract_terms", "documents", "playbook_runs", "card_events", "agent_runs", "contract_fichas", "regulatory_changes"];
         for (const failAt of order) {
             const steps = order.slice(0, order.indexOf(failAt) + 1).map((table) =>
                 table === failAt
