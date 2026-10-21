@@ -11182,6 +11182,96 @@ group by org_id, project_id;
 
 revoke all on public.contract_agent_costs from anon, authenticated;
 grant select on public.contract_agent_costs to service_role;
+-- ── Fork: Ficha do Contrato and contract reviews (20261020_97, 20261020_98) ──
+-- The Ficha do Contrato (docs/product/contract-schema.v1.json): one versioned
+-- JSON per contract project, every field in the schema's envelope, and the
+-- risk-rule findings computed from it by code. Fork-only table (slot _97).
+-- The backend fronts all access, so browser roles get nothing.
+
+create table if not exists public.contract_fichas (
+  project_id uuid primary key references public.projects(id) on delete cascade,
+  schema_version text not null default '1.0',
+  ficha jsonb not null default '{}'::jsonb,
+  document_id uuid references public.documents(id) on delete set null,
+  document_version_id uuid references public.document_versions(id) on delete set null,
+  model text,
+  prompt_version text,
+  rules_version text,
+  findings jsonb not null default '[]'::jsonb,
+  risk_overall text,
+  extracted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.contract_fichas drop constraint if exists contract_fichas_risk_overall_check;
+alter table public.contract_fichas add constraint contract_fichas_risk_overall_check
+  check (risk_overall is null or risk_overall in ('critico', 'atencao', 'ok'));
+
+-- Who confirmed or corrected which field, with the model's reading kept:
+-- the audit trail and the quality metric (correction rate per field).
+create table if not exists public.contract_field_reviews (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  path text not null,
+  action text not null,
+  ai_value jsonb,
+  final_value jsonb,
+  reviewer text not null,
+  comment text,
+  created_at timestamptz not null default now()
+);
+alter table public.contract_field_reviews drop constraint if exists contract_field_reviews_action_check;
+alter table public.contract_field_reviews add constraint contract_field_reviews_action_check
+  check (action in ('confirmado', 'corrigido'));
+create index if not exists idx_contract_field_reviews_project
+  on public.contract_field_reviews(project_id, created_at desc);
+
+alter table public.contract_fichas enable row level security;
+alter table public.contract_field_reviews enable row level security;
+revoke all on public.contract_fichas, public.contract_field_reviews from anon, authenticated;
+grant select, insert, update, delete on public.contract_fichas, public.contract_field_reviews
+  to service_role;
+
+-- A contract review is a playbook run tied to a contract project: the run
+-- (upstream playbook_runs) keeps the findings and the tracked-change version;
+-- this row records which contract it reviewed and what each person decided
+-- on each suggestion. Fork-only tables (slot _98).
+
+create table if not exists public.contract_review_runs (
+  run_id uuid primary key references public.playbook_runs(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  document_id uuid references public.documents(id) on delete set null,
+  playbook_id uuid not null references public.playbooks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_contract_review_runs_project
+  on public.contract_review_runs(project_id, created_at desc);
+
+-- One decision per finding: accepted, edited (with the person's wording), or
+-- rejected (with an optional one-line reason that feeds playbook tuning).
+create table if not exists public.contract_review_decisions (
+  run_id uuid not null references public.contract_review_runs(run_id) on delete cascade,
+  finding_id text not null,
+  decision text not null,
+  edited_text text,
+  -- The tracked change an edit made in place of the suggestion's.
+  edit jsonb,
+  reason text,
+  decided_by text not null,
+  decided_at timestamptz not null default now(),
+  primary key (run_id, finding_id)
+);
+alter table public.contract_review_decisions drop constraint if exists contract_review_decisions_decision_check;
+alter table public.contract_review_decisions add constraint contract_review_decisions_decision_check
+  check (decision in ('aceito', 'editado', 'rejeitado'));
+
+alter table public.contract_review_runs enable row level security;
+alter table public.contract_review_decisions enable row level security;
+revoke all on public.contract_review_runs, public.contract_review_decisions from anon, authenticated;
+grant select, insert, update, delete on public.contract_review_runs, public.contract_review_decisions
+  to service_role;
 
 -- ── Requests to the legal team (20261020_93_legal_requests) ──────────────────
 -- Requests to the legal team ("pedidos"). Anyone in the company asks for a
@@ -11649,6 +11739,8 @@ insert into public.schema_migrations (filename) values
   ('20261020_94_watched_folders.sql'),
   ('20261020_95_regulatory_radar.sql'),
   ('20261020_96_regulatory_rule_suggestions.sql'),
+  ('20261020_97_contract_fichas.sql'),
+  ('20261020_98_contract_reviews.sql'),
   ('20261020_99_requester_area.sql'),
   ('20261021_01_chat_subagent_runs.sql'),
   ('20261021_02_user_subagent_defaults.sql')

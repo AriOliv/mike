@@ -461,8 +461,8 @@ export function ProjectPageHeader({
                     onClick: onNewChat,
                     disabled: !roleKnown,
                     icon: <Plus className="h-4 w-4" />,
-                    label: <span className="hidden sm:inline">Chat</span>,
-                    title: "Create chat",
+                    label: <span className="hidden sm:inline">Conversa</span>,
+                    title: "Nova conversa",
                 }
               : activeSection === "reviews"
                 ? {
@@ -473,8 +473,8 @@ export function ProjectPageHeader({
                     ) : (
                         <Plus className="h-4 w-4" />
                     ),
-                    label: <span className="hidden sm:inline">Review</span>,
-                    title: "Create review",
+                    label: <span className="hidden sm:inline">Tabela</span>,
+                    title: "Nova revisão em tabela",
                   }
                 : null;
 
@@ -482,16 +482,16 @@ export function ProjectPageHeader({
         <PageHeader
             breadcrumbs={[
                 {
-                    label: "Projects",
+                    label: "Projetos",
                     onClick: onBackToProjects,
-                    title: "Back to Projects",
+                    title: "Voltar para Projetos",
                 },
                 {
                     ...(project
                         ? {
                               label: project.name,
                               onClick: onProjectRoot,
-                              title: "Back to project documents",
+                              title: "Voltar para os documentos do projeto",
                           }
                         : {
                               loading: true,
@@ -499,9 +499,9 @@ export function ProjectPageHeader({
                           }),
                 },
                 ...(activeSection === "assistant"
-                    ? [{ label: "Chats" }]
+                    ? [{ label: "Conversas" }]
                     : activeSection === "reviews"
-                      ? [{ label: "Tabular Reviews" }]
+                      ? [{ label: "Tabela" }]
                       : (documentFolderBreadcrumbs ?? [])),
             ]}
             actionGroups={[

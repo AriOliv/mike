@@ -2188,6 +2188,28 @@ export async function listPlaybookRuns(
 }
 
 /**
+ * One run by id, whoever started it, with its tracked changes' current
+ * status. The caller authorizes access first: the contract-review module
+ * shares a contract's review with everyone who can open the contract.
+ */
+export async function getPlaybookRunById(
+  db: Db,
+  runId: string,
+): Promise<ReturnType<typeof publicRun> | null> {
+  const { data, error } = await db
+    .from("playbook_runs")
+    .select("*")
+    .eq("id", runId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const [run] = await withCurrentEditStatus(db, [
+    publicRun(data as Record<string, unknown>),
+  ]);
+  return run;
+}
+
+/**
  * A run stores each tracked change as it was made; accepting or rejecting it
  * later is recorded on the document, so read its current status back.
  */

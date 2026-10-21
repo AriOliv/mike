@@ -295,13 +295,18 @@ interface PlannedChange {
  * tuple anchored at a single start position. A character-level diff would
  * produce sequences like EQ-DEL-EQ-INS; for the tracked-change UI we want one
  * "replace this substring with that substring" card per edit, so only the
- * common prefix and suffix are trimmed and the rest is one span.
+ * common prefix and suffix are trimmed and the rest is one span. The trim
+ * stops at whitespace, so the change covers whole words: "30 (trinta) dias"
+ * → "60 (sessenta) dias" tracks "30 (trinta)" → "60 (sessenta)", never
+ * "30 (tri" → "60 (sesse".
  */
 function collapseDiff(find: string, replace: string): { deleted: string; inserted: string; leadingEq: number; trailingEq: number } {
+    const isSpace = (ch: string) => /\s/.test(ch);
     // Find leading/trailing common substrings so the tracked range is minimal
     let leading = 0;
     const minLen = Math.min(find.length, replace.length);
     while (leading < minLen && find[leading] === replace[leading]) leading++;
+    while (leading > 0 && !isSpace(find[leading - 1])) leading--;
     let trailing = 0;
     while (
         trailing < minLen - leading &&
@@ -309,6 +314,7 @@ function collapseDiff(find: string, replace: string): { deleted: string; inserte
     ) {
         trailing++;
     }
+    while (trailing > 0 && !isSpace(find[find.length - trailing])) trailing--;
     const deleted = find.slice(leading, find.length - trailing);
     const inserted = replace.slice(leading, replace.length - trailing);
     return { deleted, inserted, leadingEq: leading, trailingEq: trailing };

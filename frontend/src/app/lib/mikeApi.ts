@@ -4897,27 +4897,88 @@ export async function updateContractReview(
     });
 }
 
-// ── Acervo: questions across the whole corpus ───────────────────────────────
+// ── Acervo ("Perguntar"): questions across the whole corpus ────────────────
 export interface AcervoSource {
+    /** The inline marker number used in the answer: [n]. */
+    n: number;
     project_id: string | null;
+    document_id: string | null;
     contract: string;
     ref: string | null;
+    quote: string;
+    /** The quote was found in the contract text by the server, not just claimed. */
+    verified: boolean;
+    start_char: number | null;
+    end_char: number | null;
+}
+
+/** Why a contract's row reads hit/miss: read in depth, found by the search,
+ * still being indexed, or left out by the search budget. */
+export type AcervoMatchBasis = "lido" | "busca" | "pendente" | "nao_buscado";
+
+export interface AcervoMatch {
+    project_id: string;
+    contract: string;
+    counterparty: string | null;
+    contract_type: string | null;
+    hit: boolean;
     quote: string | null;
+    verified: boolean;
+    basis: AcervoMatchBasis;
+}
+
+export interface AcervoCoverage {
+    total_versions: number;
+    indexed_versions: number;
+    pending_versions: number;
+    failed_versions: number;
+    versions_needing_ocr: number;
+    contracts_pending: number;
+    contracts_not_searched: number;
+}
+
+export interface AcervoLawSource {
+    n: number;
+    title: string;
+    url: string;
+    quote: string;
+    verified: boolean;
 }
 
 export interface AcervoAnswer {
     answer: string;
+    /** True only when at least one source was verified in the text. */
     found: boolean;
     sources: AcervoSource[];
     /** how many contracts were actually read to produce the answer */
     searched: number;
+    total: number;
+    matches: AcervoMatch[];
+    /** The question asks for a list or a count. */
+    aggregate: boolean;
+    coverage: AcervoCoverage;
+    terms: string[];
+    /** A configured search service can look up official legislation. */
+    law_available: boolean;
+    law_sources: AcervoLawSource[];
 }
 
-export async function askAcervo(question: string): Promise<AcervoAnswer> {
+export type AcervoScope =
+    | "todos"
+    | { counterparty?: string; contract_type?: string; project_ids?: string[] };
+
+export async function askAcervo(
+    question: string,
+    options: { scope?: AcervoScope; includeLaw?: boolean } = {},
+): Promise<AcervoAnswer> {
     return apiRequest("/acervo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({
+            question,
+            ...(options.scope ? { scope: options.scope } : {}),
+            ...(options.includeLaw ? { include_law: true } : {}),
+        }),
     });
 }
 
@@ -5068,6 +5129,196 @@ export async function updateObligation(
 
 export async function deleteObligation(id: string): Promise<void> {
     await apiRequest(`/obligations/${id}`, { method: "DELETE" });
+}
+
+// ── Contract review by playbook + Ficha (/projects/:id/contract-review) ─────
+export type ReviewVerdict = "alinhado" | "precisa_revisao" | "diverge" | "nao_aplica";
+
+export interface ReviewDecision {
+    decision: "aceito" | "editado" | "rejeitado";
+    edited_text: string | null;
+    reason: string | null;
+    decided_by: string;
+    decided_at: string;
+    edit: EditAnnotation | null;
+}
+
+export type ReviewClauseSource =
+    | { kind: "playbook"; label: string; position: string; criteria: string }
+    | { kind: "regra"; rule_id: string; label: string; severity: string; pending_validation: boolean }
+    | { kind: "ficha"; path: string; label: string; state: string; quote: string | null };
+
+export interface RiskRuleFinding {
+    rule_id: string;
+    titulo: string;
+    severidade: "critica" | "alta" | "media" | "baixa" | "info";
+    justificativa: string;
+    acao_sugerida: string;
+    campos: string[];
+    depende_de_campo_nao_validado: boolean;
+}
+
+export interface ReviewClause extends PlaybookFinding {
+    verdict: ReviewVerdict;
+    playbook_status: PlaybookFindingStatus;
+    covered: boolean;
+    sources: ReviewClauseSource[];
+    rule_findings: RiskRuleFinding[];
+    precedent: { same: number; of: number; projects: { id: string; name: string }[] } | null;
+    decision: ReviewDecision | null;
+}
+
+export interface ContractReview {
+    id: string;
+    status: string;
+    error: string | null;
+    summary: string | null;
+    started_at: string;
+    completed_at: string | null;
+    model: string;
+    playbook: { id: string; name: string };
+    document: { id: string | null; name: string | null; edited_version_id: string | null };
+    clauses: ReviewClause[];
+    uncovered: RiskRuleFinding[];
+}
+
+export interface ContractReviewSummary {
+    id: string;
+    status: string;
+    started_at: string;
+    playbook_name: string;
+    counts: { alinhado: number; precisa_revisao: number; diverge: number };
+}
+
+export interface FichaCitation {
+    quote: string;
+    clause: string | null;
+    span: { start: number; end: number } | null;
+    verified: boolean;
+    match: "exato" | "normalizado" | "nao_encontrado";
+}
+
+export interface FichaField {
+    status: "encontrado" | "inferido" | "ambiguo" | "nao_encontrado" | "nao_aplicavel";
+    value: unknown;
+    citations: FichaCitation[];
+    confidence: "alta" | "media" | "baixa" | null;
+    origin: "ia" | "humano";
+    notes: string | null;
+    ai_value?: unknown;
+    review: { state: "pendente" | "confirmado" | "corrigido"; by: string | null; at: string | null; comment: string | null };
+}
+
+export type FichaChoices = { key: string; values: string[] }[] | "boolean" | null;
+
+export interface ContractFicha {
+    ficha: Record<string, FichaField> | null;
+    /** How each field can be corrected: its options, "boolean", or null for free text. */
+    choices: Record<string, FichaChoices>;
+    findings: RiskRuleFinding[];
+    risk_overall: "critico" | "atencao" | "ok" | null;
+    progress: { verified: number; total: number };
+    document_id: string | null;
+    extracted_at: string | null;
+    model: string | null;
+}
+
+function contractReviewPath(projectId: string, rest: string): string {
+    return `/projects/${encodeURIComponent(projectId)}/contract-review${rest}`;
+}
+
+export async function listContractReviews(projectId: string): Promise<ContractReviewSummary[]> {
+    return apiRequest(contractReviewPath(projectId, "/reviews"));
+}
+
+export async function startContractReview(
+    projectId: string,
+    options: { playbook_id?: string; model?: string } = {},
+): Promise<{ id: string; status: string }> {
+    return apiRequest(contractReviewPath(projectId, "/reviews"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+    });
+}
+
+export async function getContractReview(projectId: string, runId: string): Promise<ContractReview> {
+    return apiRequest(contractReviewPath(projectId, `/reviews/${encodeURIComponent(runId)}`));
+}
+
+export async function decideReviewClause(
+    projectId: string,
+    runId: string,
+    findingId: string,
+    input: { decision: "aceito" | "editado" | "rejeitado" | "desfeito"; edited_text?: string; reason?: string },
+): Promise<{ decision: ReviewDecision | null; edit: EditAnnotation | null }> {
+    return apiRequest(
+        contractReviewPath(
+            projectId,
+            `/reviews/${encodeURIComponent(runId)}/clauses/${encodeURIComponent(findingId)}/decision`,
+        ),
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+        },
+    );
+}
+
+export async function getContractFicha(projectId: string): Promise<ContractFicha> {
+    return apiRequest(contractReviewPath(projectId, "/ficha"));
+}
+
+export async function extractContractFicha(projectId: string): Promise<ContractFicha> {
+    return apiRequest(contractReviewPath(projectId, "/ficha/extract"), { method: "POST" });
+}
+
+export async function decideFichaField(
+    projectId: string,
+    input: { path: string; action: "confirmar" | "corrigir"; value?: unknown; comment?: string },
+): Promise<ContractFicha> {
+    return apiRequest(contractReviewPath(projectId, "/ficha/fields"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+// ── Contract portfolio (/contracts/fichas) ─────────────────────────────────
+export interface ContractPortfolioRow {
+    project_id: string;
+    name: string;
+    counterparty: string | null;
+    contract_type: string | null;
+    lane: string | null;
+    /** YYYY-MM-DD. */
+    term_end: string | null;
+    notice_days: number | null;
+    /** YYYY-MM-DD: the last day to give notice. */
+    notice_deadline: string | null;
+    /** Ficha fields with a reading of the contract, of `total`. */
+    filled: number;
+    verified: number;
+    total: number;
+    risk: "critico" | "atencao" | "ok" | null;
+}
+
+export interface ContractPortfolio {
+    rows: ContractPortfolioRow[];
+    total: number;
+    next_offset: number | null;
+}
+
+/** Every contract the caller can open, one row each; paged, sorted by name or nearest notice. */
+export async function listContractFichas(
+    options: { limit?: number; offset?: number; sort?: "nome" | "aviso" } = {},
+): Promise<ContractPortfolio> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    if (options.sort) params.set("sort", options.sort);
+    const qs = params.toString();
+    return apiRequest(`/contracts/fichas${qs ? `?${qs}` : ""}`);
 }
 
 // ── Regulatory radar ("Radar regulatório") ──────────────────────────────────
