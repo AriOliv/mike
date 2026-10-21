@@ -1,0 +1,58 @@
+{
+  "about": "Radar regulatório e Painel do Legal (PR #10): a frase das varreduras, uma mudança aberta com a citação oficial e a sugestão do Agente regulatório, uma varredura filtrada, e o painel com os números do time e dos agentes.",
+  "shots": [
+    {
+      "name": "radar-todas",
+      "as": "legal",
+      "path": "/radar-regulatorio",
+      "widths": [1440, 390],
+      "themes": ["light", "dark"],
+      "steps": [{ "waitFor": "[aria-label='Mudanças regulatórias'] [role=listitem]" }]
+    },
+    {
+      "name": "radar-mudanca",
+      "as": "legal",
+      "path": "/radar-regulatorio",
+      "widths": [1440, 390],
+      "themes": ["light"],
+      "steps": [
+        { "waitFor": "[aria-label='Mudanças regulatórias'] [role=listitem]" },
+        { "click": "[aria-label='Mudanças regulatórias'] [role=listitem]" },
+        { "waitFor": "aside[aria-label='Detalhes'] >> text=Agente regulatório", "wait": 600 }
+      ]
+    },
+    {
+      "name": "radar-uma-varredura",
+      "as": "legal",
+      "path": "/radar-regulatorio",
+      "widths": [1440],
+      "themes": ["light"],
+      "steps": [
+        { "waitFor": "[role=group][aria-label='Contadores'] button" },
+        { "click": "[role=group][aria-label='Contadores'] button" },
+        { "waitFor": "text=Sua varredura", "wait": 600 }
+      ]
+    },
+    {
+      "name": "painel",
+      "as": "legal",
+      "path": "/painel",
+      "widths": [1440, 390],
+      "themes": ["light", "dark"],
+      "fullPage": true,
+      "steps": [{ "waitFor": "text=Contratos revisados por agentes" }]
+    },
+    {
+      "name": "painel-tooltip",
+      "as": "legal",
+      "path": "/painel",
+      "widths": [1440],
+      "themes": ["light"],
+      "steps": [
+        { "waitFor": "figure >> text=Pedidos por semana" },
+        { "click": "figure:has-text('Pedidos por semana') rect[aria-label^='Semana de'] >> nth=-1" },
+        { "waitFor": "figure:has-text('Pedidos por semana') [role=status]", "wait": 300 }
+      ]
+    }
+  ]
+}
