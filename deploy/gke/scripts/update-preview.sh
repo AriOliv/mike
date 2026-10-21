@@ -52,10 +52,10 @@ if [ "${SKIP_MERGE:-0}" != 1 ]; then
       ref="$b"; echo "using LOCAL $b (not pushed)"
     else skipped+=("$b"); continue; fi
     before=$(tables_of HEAD)
-    # rerere replays conflict resolutions already recorded on this machine
-    # (resolve once by hand in a worktree, `git rerere`, commit: next run is clean)
+    # diff3 so the resolvers below see the common base; rerere off (a stale
+    # recorded resolution would silently win over the rules)
     navdone=""
-    if ! git -c rerere.enabled=true -c rerere.autoupdate=true -c merge.conflictStyle=diff3 merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
+    if ! git -c rerere.enabled=false -c merge.conflictStyle=diff3 merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
       files=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
       if [ -z "$files" ]; then git merge --abort 2>/dev/null; conflicted+=("$b: merge failed without conflicts"); continue
       else
