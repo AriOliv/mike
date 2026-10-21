@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NAV_MAIN, NAV_MORE, isNavItemActive } from "./navItems";
+import { NAV_MAIN, NAV_MORE, isNavItemActive, navForRole } from "./navItems";
 
 describe("navItems", () => {
     it("lists the Legal workstation first, in Portuguese", () => {
@@ -43,5 +43,19 @@ describe("navItems", () => {
         const projetos = NAV_MORE.find((item) => item.href === "/projects")!;
         expect(isNavItemActive(projetos, "/projects")).toBe(true);
         expect(isNavItemActive(projetos, "/projects/1/review")).toBe(false);
+    });
+
+    it("gives the Legal team, and an unknown role, the whole menu", () => {
+        for (const role of ["head", "team", null] as const) {
+            expect(navForRole(role)).toEqual({ main: NAV_MAIN, more: NAV_MORE, workLists: true });
+        }
+    });
+
+    it("shows someone who only asks the Legal team just Início and Pedidos", () => {
+        const nav = navForRole("requester");
+        expect(nav.main.every((item) => ["/inicio", "/pedidos"].includes(item.href))).toBe(true);
+        expect(nav.main.map((item) => item.href)).not.toContain("/pipeline");
+        expect(nav.more).toEqual([]);
+        expect(nav.workLists).toBe(false);
     });
 });
