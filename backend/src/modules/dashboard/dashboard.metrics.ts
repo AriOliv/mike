@@ -79,7 +79,11 @@ export const REVIEW_AGENTS = ["revisor"];
  * "Revisei N contratos" (Beacon's countAgentReviews): distinct contracts with
  * a reviewer run that succeeded, or an automatic review that is ready or
  * done, finished inside [since, until). Kept row-based here until PR #11
- * lands; then this is replaced by the contracts facade's countAgentReviews.
+ * lands; then this is replaced by the contracts facade's
+ * countAgentReviews(db, projectIds, since, until) (5c29079f). That function
+ * returns a count; the dashboard also adds generated analyses and playbook
+ * runs to the same set, so the swap must keep those or the tile stops
+ * matching the home screen.
  */
 export function countAgentReviewsFromRows(
     runs: Pick<AgentRunRow, "project_id" | "agent" | "status" | "finished_at">[],
