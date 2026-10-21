@@ -87,11 +87,15 @@ async function main() {
 
     const browser = await chromium.launch({ executablePath: chromiumPath() });
     const host = new URL(BASE).host;
-    // One logged-in context per account and theme, reused across its shots.
+    // One logged-in context per account, reused across its shots and themes:
+    // the backend allows few logins per account, so never log in twice.
     const sessions = new Map();
     async function session(as, theme) {
-        const key = `${as}:${theme}`;
-        if (sessions.has(key)) return sessions.get(key);
+        if (sessions.has(as)) {
+            const page = sessions.get(as);
+            await page.emulateMedia({ colorScheme: theme });
+            return page;
+        }
         const context = await browser.newContext({ colorScheme: theme, locale: "pt-BR", timezoneId: "America/Sao_Paulo" });
         // Chrome refuses Proxy-Authorization; IAP also takes (and strips) Authorization.
         await context.route("**/*", (route) => {
@@ -107,7 +111,7 @@ async function main() {
             page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 30000 }),
             page.keyboard.press("Enter"),
         ]);
-        sessions.set(key, page);
+        sessions.set(as, page);
         return page;
     }
 
