@@ -361,7 +361,7 @@ export function HomeView() {
                                     className="ml-auto h-7 w-full min-w-0 rounded-full border border-gray-200 bg-app-surface px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 sm:w-72"
                                 />
                             </div>
-                            <div className="flex h-[min(28rem,60vh)] min-h-64 flex-col">
+                            <div className="flex max-h-[min(30rem,65vh)] flex-col">
                                 <HomeReviewTable
                                     onRetry={retry}
                                     reviews={rows}
