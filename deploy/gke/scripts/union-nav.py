@@ -30,10 +30,15 @@ def items(text, name):
     return [(m.group(1), m.group(0).rstrip()) for m in ITEM.finditer(block(text, name))]
 
 
-def union(a, b, order=None):
+def union(a, b, order=None, base=()):
+    # three-way per item: what either side added stays, what either side
+    # removed from the base goes (e.g. #9 dropping IDE from "Mais")
+    base_labels = {l for l, _ in base}
+    a_labels, b_labels = {l for l, _ in a}, {l for l, _ in b}
+    removed = {l for l in base_labels if l not in a_labels or l not in b_labels}
     seen, out = set(), []
     for label, line in a + b:
-        if label not in seen:
+        if label not in seen and label not in removed:
             seen.add(label); out.append((label, line))
     if order:
         rank = {l: i for i, l in enumerate(order)}
@@ -41,11 +46,11 @@ def union(a, b, order=None):
     return out
 
 
-ours, theirs = stage(2, SRC), stage(3, SRC)
+ours, theirs, common = stage(2, SRC), stage(3, SRC), stage(1, SRC)
 base = ours or theirs
-main = union(items(ours, "NAV_MAIN"), items(theirs, "NAV_MAIN"), ORDER)
+main = union(items(ours, "NAV_MAIN"), items(theirs, "NAV_MAIN"), ORDER, items(common, "NAV_MAIN"))
 # NAV_MORE keeps first-seen order (features prepend their own extra tools)
-more = union(items(ours, "NAV_MORE"), items(theirs, "NAV_MORE"))
+more = union(items(ours, "NAV_MORE"), items(theirs, "NAV_MORE"), None, items(common, "NAV_MORE"))
 merged = base
 for name, its in (("NAV_MAIN", main), ("NAV_MORE", more)):
     merged = merged.replace(block(base, name), "\n".join(line for _, line in its), 1)

@@ -72,9 +72,12 @@ if [ "${SKIP_MERGE:-0}" != 1 ]; then
       # shared components owned by an earlier PR (#6 ActivityFeed/StatusChip,
       # #7 AgentSuggestion, #5 VerdictUI): later branches carry older copies,
       # so in the hunks that collide the integration's (owner's) side wins
+      # the sidebar's own test follows the menu (#9 ux-nav-pt owns it): in
+      # colliding hunks the side of the branch that is #9 wins
+      menu_test="frontend/src/app/components/shared/AppSidebar.memory.test.tsx"
       owned="frontend/src/app/components/shared/AgentSuggestion.tsx frontend/src/app/components/shared/AgentSuggestion.test.tsx frontend/src/app/lib/activityFeed.ts frontend/src/app/lib/activityFeed.test.ts frontend/src/shared/ui/VerdictUI.tsx frontend/src/shared/ui/VerdictUI.test.tsx"
       real=""
-      for f in $files; do case " $trivial $ours $words $nav $owned " in *" $f "*) ;; *) real="$real $f";; esac; done
+      for f in $files; do case " $trivial $ours $words $nav $owned $menu_test " in *" $f "*) ;; *) real="$real $f";; esac; done
       if [ -n "$real" ]; then
         git merge --abort; conflicted+=("$b:$real"); echo "LEFT OUT $b: conflict in$real"; continue
       fi
@@ -86,13 +89,17 @@ if [ "${SKIP_MERGE:-0}" != 1 ]; then
           *" $f "*) perl -0pi "$UNION" "$f" ;;
         esac
         # conflicting hunks only: the rest of the branch's additions stay merged
+        case " $menu_test " in *" $f "*)
+          if [ "$b" = feat/ux-nav-pt ]; then pick='$2'; else pick='$1'; fi
+          perl -0pi -e "s/^<<<<<<< [^\n]*\n(.*?)^\|\|\|\|\|\|\| [^\n]*\n.*?^=======\n(.*?)^>>>>>>> [^\n]*\n/$pick/gms" "$f" ;;
+        esac
         case " $owned " in *" $f "*)
           perl -0pi -e 's/^<<<<<<< [^\n]*\n(.*?)^\|\|\|\|\|\|\| [^\n]*\n.*?^=======\n(.*?)^>>>>>>> [^\n]*\n/$1/gms' "$f" ;;
         esac
         case " $nav " in
           *" $f "*) [ -n "${navdone:-}" ] || { python3 "$UNION_NAV" "$ROOT"; navdone=1; } ;;
         esac
-        case " $ours $words $nav $owned " in *" $f "*) ;;
+        case " $ours $words $nav $owned $menu_test " in *" $f "*) ;;
           # diff3 hunks: ours, then theirs, dropping the common base (keeps
           # a closing brace the base shares from being lost)
           *) perl -0pi -e 's/^<<<<<<< [^\n]*\n(.*?)^\|\|\|\|\|\|\| [^\n]*\n.*?^=======\n(.*?)^>>>>>>> [^\n]*\n/$1$2/gms' "$f" ;;
