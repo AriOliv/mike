@@ -38,7 +38,42 @@ export function greeting(home: Pick<HomeSummary, "since" | "greeting" | "reviews
             lead: `Revisei ${contracts(reviewed)} para você ${home.since ? "desde sua última visita" : "até agora"}.`,
             detail,
         };
+    const working = home.reviews.filter((r) => r.status === "queued" || r.status === "running").length;
+    if (working > 0) return { lead: `Estou revisando ${contracts(working)} agora.`, detail };
+    if (!home.since)
+        return { lead: "Conecte uma pasta ou envie contratos e eu reviso cada um.", detail };
     return { lead: "Nada novo desde sua última visita.", detail };
+}
+
+/** When the nearest notice deadline closes: "hoje", "amanhã" or "em N dias". */
+export function whenLabel(days: number): string {
+    if (days <= 0) return "hoje";
+    if (days === 1) return "amanhã";
+    return `em ${days} dias`;
+}
+
+/** The hint under the notice counter, only when something closes within 30 days. */
+export function noticeHint(home: Pick<HomeSummary, "counters" | "deadlines">): string | undefined {
+    if (home.counters.notices_30d === 0 || home.deadlines.length === 0) return undefined;
+    return `o mais próximo ${whenLabel(home.deadlines[0].days_left)}`;
+}
+
+/** Whether a review is the person's, comparing e-mails case-insensitively. */
+export function isMine(review: Pick<HomeReview, "assignee_email">, me: string | null): boolean {
+    return !!me && review.assignee_email?.toLowerCase() === me.toLowerCase();
+}
+
+/** The sentences of a summary, each with the clause it cites ("cl. 9"), if any. */
+export function summarySentences(summary: string): { text: string; clause: string | null }[] {
+    // Neither "cl." nor the dot in "12.1" ends a sentence.
+    const masked = summary.replace(/\bcl\./gi, "cl\u0000").replace(/(\d)\.(\d)/g, "$1\u0000$2");
+    return (masked.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [])
+        .map((sentence) => sentence.replace(/\u0000/g, ".").trim())
+        .filter(Boolean)
+        .map((text) => {
+            const match = text.match(/\b(?:cl\.|cláusula)\s*(\d+(?:\.\d+)*)/i);
+            return { text, clause: match ? match[1] : null };
+        });
 }
 
 function capitalize(text: string): string {
@@ -80,13 +115,13 @@ export function filterReviews(
     const query = opts.query?.trim().toLowerCase() ?? "";
     const rank: Record<HomeReview["status"], number> = { ready: 0, running: 1, queued: 2, failed: 3, done: 4 };
     return reviews
-        .filter((r) => (opts.tab === "minhas" ? !!me && r.assignee_email === me : true))
+        .filter((r) => (opts.tab === "minhas" ? isMine(r, me) : true))
         .filter((r) => {
             switch (opts.filter) {
                 case "prontos":
                     return r.status === "ready";
                 case "meus":
-                    return !!me && r.assignee_email === me && r.status !== "done";
+                    return isMine(r, me) && r.status !== "done";
                 case "avisos": {
                     const days = r.notice_deadline ? wholeDaysUntil(r.notice_deadline, now) : null;
                     return days !== null && days >= 0 && days <= 30;
@@ -112,6 +147,29 @@ function wholeDaysUntil(isoDate: string, now: Date): number {
     const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
     const [y, m, d] = isoDate.slice(0, 10).split("-").map(Number);
     return Math.round((Date.UTC(y, m - 1, d) - today) / 86_400_000);
+}
+
+/** What "Enviar contratos" takes: PDF or DOCX, up to 25 MB each, 20 at a time. */
+export const SEND_LIMITS = { maxFiles: 20, maxBytes: 25 * 1024 * 1024, accept: ".pdf,.docx" } as const;
+
+/**
+ * Splits picked or dropped files into the ones to send and the reasons the
+ * rest were left out, so the person sees exactly what will happen.
+ */
+export function pickContracts(files: { name: string; size: number }[]): {
+    accepted: number[];
+    rejected: string[];
+} {
+    const accepted: number[] = [];
+    const rejected: string[] = [];
+    files.forEach((file, index) => {
+        if (!/\.(pdf|docx)$/i.test(file.name)) rejected.push(`${file.name}: só PDF ou DOCX`);
+        else if (file.size > SEND_LIMITS.maxBytes) rejected.push(`${file.name}: maior que 25 MB`);
+        else if (accepted.length >= SEND_LIMITS.maxFiles)
+            rejected.push(`${file.name}: até ${SEND_LIMITS.maxFiles} arquivos por envio`);
+        else accepted.push(index);
+    });
+    return { accepted, rejected };
 }
 
 /** "2026-10-20" → "20/10/2026". */

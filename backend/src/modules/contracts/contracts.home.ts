@@ -6,6 +6,7 @@
 import type { Db } from "../../lib/supabase";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
+import { workspaceMatches, type WorkspaceFilter } from "../../lib/workspace";
 import type { Caller } from "./contracts.shared";
 import type { CardEvent } from "./contracts.events";
 
@@ -38,6 +39,10 @@ export type HomeReview = {
     notice_deadline: string | null;
     notice_days: number | null;
     term_end: string | null;
+    /** How many of the Ficha's tracked terms the agent found in the contract. */
+    ficha: { filled: number; total: number } | null;
+    /** The assignment agent's pick when nobody owns the review yet. */
+    suggested_assignee: string | null;
     updated_at: string;
 };
 
@@ -81,6 +86,7 @@ type ReviewRow = Pick<
 
 type ProjectRow = {
     id: string;
+    org_id: string | null;
     name: string;
     counterparty: string | null;
     lane: string | null;
@@ -88,6 +94,31 @@ type ProjectRow = {
     deadline: string | null;
     watched_folder_id: string | null;
 };
+
+// The terms the Ficha tracks today (contract_terms). The full Ficha v1 grows
+// this list; the count stays honest about what was found, not verified.
+const FICHA_FIELDS = [
+    "auto_renewal",
+    "term_end",
+    "notice_days",
+    "notice_deadline",
+    "penalty_value",
+    "penalty_recurrence",
+    "liability_cap",
+    "unilateral_amendment",
+    "amendment_notes",
+    "price_regulatory_impact",
+] as const;
+
+/** Today's date where the legal team works, so a deadline "today" is not "past" after 21h. */
+export function saoPauloDate(now: Date): string {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(now);
+}
 
 function daysBetween(fromIso: string, toDate: string): number {
     const from = Date.parse(fromIso.slice(0, 10) + "T00:00:00Z");
@@ -116,6 +147,7 @@ export async function getHomeSummary(
     db: Db,
     caller: Caller,
     now: Date = new Date(),
+    workspace: WorkspaceFilter = null,
 ): Promise<ServiceResult<HomeSummary>> {
     try {
         const since = await touchVisit(db, caller.userId, now);
@@ -123,10 +155,10 @@ export async function getHomeSummary(
         const projects = await inChunks<ProjectRow>(ids, (slice) =>
             db
                 .from("projects")
-                .select("id, name, counterparty, lane, requester_name, deadline, watched_folder_id")
+                .select("id, org_id, name, counterparty, lane, requester_name, deadline, watched_folder_id")
                 .in("id", slice)
                 .is("archived_at", null),
-        );
+        ).then((rows) => rows.filter((p) => workspaceMatches(workspace, p.org_id)));
         const byId = new Map(projects.map((p) => [p.id, p]));
         const visible = projects.map((p) => p.id);
 
@@ -159,13 +191,30 @@ export async function getHomeSummary(
             notice_days: number | null;
             term_end: string | null;
             auto_renewal: boolean | null;
-        }>(visible, (slice) =>
+        } & Record<(typeof FICHA_FIELDS)[number], unknown>>(visible, (slice) =>
             db
                 .from("contract_terms")
-                .select("project_id, notice_deadline, notice_days, term_end, auto_renewal")
+                .select(`project_id, ${FICHA_FIELDS.join(", ")}`)
                 .in("project_id", slice),
         );
         const termsOf = new Map(terms.map((t) => [t.project_id, t]));
+
+        // The assignment agent suggests, a person confirms: its latest pick per card.
+        const suggestionRows = await inChunks<{ project_id: string; after: unknown }>(visible, (slice) =>
+            db
+                .from("card_events")
+                .select("project_id, after, at")
+                .in("project_id", slice)
+                .eq("action", "assignee.suggested")
+                .order("at", { ascending: false })
+                .limit(ID_CHUNK),
+        );
+        const suggestions = new Map<string, string>();
+        for (const row of suggestionRows) {
+            const after = row.after as { email?: unknown; name?: unknown } | null;
+            const pick = typeof after?.name === "string" ? after.name : typeof after?.email === "string" ? after.email : null;
+            if (pick && !suggestions.has(row.project_id)) suggestions.set(row.project_id, pick);
+        }
 
         const reviews: HomeReview[] = [...latest.values()].map((r) => {
             const card = byId.get(r.project_id)!;
@@ -185,7 +234,7 @@ export async function getHomeSummary(
                 deviates: r.deviates,
                 summary: r.summary,
                 error: r.error,
-                assignee_email: r.assignee_email,
+                assignee_email: r.assignee_email?.toLowerCase() ?? null,
                 playbook_id: r.playbook_id,
                 playbook_run_id: r.playbook_run_id,
                 watched_folder_id: card.watched_folder_id,
@@ -194,11 +243,15 @@ export async function getHomeSummary(
                 notice_deadline: t?.notice_deadline ?? null,
                 notice_days: t?.notice_days ?? null,
                 term_end: t?.term_end ?? null,
+                ficha: t
+                    ? { filled: FICHA_FIELDS.filter((f) => t[f] !== null && t[f] !== undefined).length, total: FICHA_FIELDS.length }
+                    : null,
+                suggested_assignee: r.assignee_email ? null : (suggestions.get(r.project_id) ?? null),
                 updated_at: r.updated_at,
             };
         });
 
-        const today = now.toISOString().slice(0, 10);
+        const today = saoPauloDate(now);
         const deadlines: HomeDeadline[] = terms
             .filter((t) => t.notice_deadline)
             .map((t) => {

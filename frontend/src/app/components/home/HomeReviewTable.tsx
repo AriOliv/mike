@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText } from "lucide-react";
+import { Diamond, FileText, RotateCw } from "lucide-react";
 import { StatusChip } from "@/app/components/ui/status-chip";
 import { UserAvatar } from "@/app/components/ui/user-avatar";
 import {
@@ -49,6 +49,7 @@ export function HomeReviewTable({
     loading,
     selectedId,
     onOpen,
+    onRetry,
     empty,
     now,
 }: {
@@ -56,6 +57,7 @@ export function HomeReviewTable({
     loading: boolean;
     selectedId: string | null;
     onOpen: (review: HomeReview) => void;
+    onRetry: (review: HomeReview) => void;
     empty: React.ReactNode;
     now?: number;
 }) {
@@ -109,16 +111,36 @@ export function HomeReviewTable({
                                     <div className={cn("flex min-w-0 items-center gap-2", COLUMNS.doc)}>
                                         <FileText aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                                         <div className="min-w-0">
-                                            <p className="truncate text-xs text-gray-900">
+                                            <p
+                                                className="truncate text-xs text-gray-900"
+                                                title={review.filename ?? review.project_name}
+                                            >
                                                 {review.filename ?? review.project_name}
                                             </p>
-                                            <p className="truncate text-[11px] text-gray-500">
-                                                {review.counterparty ?? review.project_name}
+                                            <p
+                                                className="truncate text-[11px] text-gray-500"
+                                                title={review.counterparty ?? undefined}
+                                            >
+                                                {review.counterparty ?? "Contraparte não informada"}
                                             </p>
                                         </div>
                                     </div>
-                                    <TableCell className={COLUMNS.status}>
+                                    <TableCell className={cn("flex items-center gap-1.5", COLUMNS.status)}>
                                         <StatusChip status={chip.status} label={chip.label} />
+                                        {review.status === "failed" ? (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onRetry(review);
+                                                }}
+                                                aria-label={`Tentar de novo: ${review.filename ?? review.project_name}`}
+                                                title="Tentar de novo"
+                                                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-500 hover:bg-app-surface-hover hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                                            >
+                                                <RotateCw aria-hidden="true" className="h-3 w-3" />
+                                            </button>
+                                        ) : null}
                                     </TableCell>
                                     <TableCell className={COLUMNS.summary}>
                                         {review.status === "ready" || review.status === "done" ? (
@@ -127,6 +149,8 @@ export function HomeReviewTable({
                                                 precisa_revisao={review.needs_review}
                                                 diverge={review.deviates}
                                             />
+                                        ) : review.status === "running" || review.status === "queued" ? (
+                                            <span className="truncate text-[11px] text-gray-500">{chip.label}</span>
                                         ) : (
                                             <span className="text-gray-300">—</span>
                                         )}
@@ -143,6 +167,14 @@ export function HomeReviewTable({
                                                 <UserAvatar size="sm" email={review.assignee_email} />
                                                 <span className="truncate text-gray-700">{owner}</span>
                                             </>
+                                        ) : review.suggested_assignee ? (
+                                            <span
+                                                className="inline-flex min-w-0 items-center gap-1 text-violet-700"
+                                                title="Sugestão do agente de atribuição; confirme no painel"
+                                            >
+                                                <Diamond aria-hidden="true" className="h-2.5 w-2.5 shrink-0 fill-current" />
+                                                <span className="truncate">sugerido: {review.suggested_assignee}</span>
+                                            </span>
                                         ) : (
                                             <span className="text-gray-400">Sem responsável</span>
                                         )}

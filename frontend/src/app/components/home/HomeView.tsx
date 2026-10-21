@@ -12,8 +12,9 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { showToast } from "@/app/components/ui/toast";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { toActivityItems } from "@/app/lib/activityFeed";
-import { brDate, filterReviews, greeting, type HomeFilter, type HomeTab } from "@/app/lib/home";
+import { brDate, filterReviews, greeting, isMine, noticeHint, type HomeFilter, type HomeTab } from "@/app/lib/home";
 import {
     getHomeSummary,
     requestContractReview,
@@ -33,6 +34,7 @@ export function HomeView() {
     const router = useRouter();
     const params = useSearchParams();
     const { user } = useAuth();
+    const { workspaceId } = useWorkspace();
     const me = user?.email?.toLowerCase() ?? null;
 
     const [home, setHome] = useState<HomeSummary | null>(null);
@@ -45,20 +47,25 @@ export function HomeView() {
     const selectedId = params.get("doc");
     const tabChosen = useRef(false);
 
+    const hasData = useRef(false);
     const load = useCallback(async () => {
         try {
-            const next = await getHomeSummary();
+            const next = await getHomeSummary(workspaceId);
+            hasData.current = true;
             setHome(next);
             setError(null);
             // Open on "Minhas revisões" when the person has some.
-            if (!tabChosen.current && me && next.reviews.some((r) => r.assignee_email === me)) {
+            if (!tabChosen.current && next.reviews.some((r) => isMine(r, me))) {
                 tabChosen.current = true;
                 setTab("minhas");
             }
         } catch (e) {
-            setError(describeError(e).message);
+            // With the queue already on screen, a failed refresh keeps it and says so once.
+            if (hasData.current)
+                notifyError(e, { lang: "pt", action: "atualizar o Início", dedupeKey: "home-refresh" });
+            else setError(describeError(e, { lang: "pt", action: "carregar o Início" }).message);
         }
-    }, [me]);
+    }, [me, workspaceId]);
 
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- the first read of an external store; load() sets state when the request settles
@@ -88,12 +95,20 @@ export function HomeView() {
         [params, router],
     );
 
-    // j/k move through the queue, Enter opens; Escape is the panel's.
+    const shortcuts = useRef<{ accept: (r: HomeReview) => void; retry: (r: HomeReview) => void } | null>(null);
+
+    // j/k move through the queue, a accepts, r reviews again; Enter opens and
+    // Escape closes are the row's and the panel's. Never while typing or with
+    // the send dialog open.
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
             const target = event.target as HTMLElement | null;
-            if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-            if (event.metaKey || event.ctrlKey || event.altKey) return;
+            if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+            if (event.metaKey || event.ctrlKey || event.altKey || sending) return;
+            const current = rows.find((r) => r.id === selectedId) ?? null;
+            if (event.key === "a" && current?.status === "ready") return shortcuts.current?.accept(current);
+            if (event.key === "r" && current && (current.status === "ready" || current.status === "done" || current.status === "failed"))
+                return shortcuts.current?.retry(current);
             if (event.key !== "j" && event.key !== "k") return;
             if (rows.length === 0) return;
             const index = rows.findIndex((r) => r.id === selectedId);
@@ -103,7 +118,7 @@ export function HomeView() {
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [rows, selectedId, open]);
+    }, [rows, selectedId, open, sending]);
 
     const patchReview = useCallback((id: string, patch: Partial<HomeReview>) => {
         setHome((current) =>
@@ -130,7 +145,7 @@ export function HomeView() {
                                 try {
                                     await updateContractReview(review.id, { status: "ready" });
                                 } catch (e) {
-                                    notifyError(e);
+                                    notifyError(e, { lang: "pt", action: "desfazer o aceite" });
                                 }
                                 void load();
                             },
@@ -140,7 +155,24 @@ export function HomeView() {
                 void load();
             } catch (e) {
                 patchReview(review.id, { status: review.status });
-                notifyError(e);
+                notifyError(e, { lang: "pt", action: "aceitar a revisão" });
+            }
+        },
+        [load, patchReview],
+    );
+
+    /** Set the owner; true when the server took it. Rolls back on failure. */
+    const writeAssignee = useCallback(
+        async (id: string, email: string | null, previous: string | null) => {
+            patchReview(id, { assignee_email: email });
+            try {
+                await updateContractReview(id, { assignee_email: email });
+                void load();
+                return true;
+            } catch (e) {
+                patchReview(id, { assignee_email: previous });
+                notifyError(e, { lang: "pt", action: "atribuir a revisão" });
+                return false;
             }
         },
         [load, patchReview],
@@ -148,16 +180,16 @@ export function HomeView() {
 
     const assign = useCallback(
         async (review: HomeReview, email: string | null) => {
-            patchReview(review.id, { assignee_email: email });
-            try {
-                await updateContractReview(review.id, { assignee_email: email });
-                void load();
-            } catch (e) {
-                patchReview(review.id, { assignee_email: review.assignee_email });
-                notifyError(e);
-            }
+            const previous = review.assignee_email;
+            if (!(await writeAssignee(review.id, email, previous))) return;
+            showToast({
+                tone: "success",
+                message: email ? `Atribuído a ${email.split("@")[0]}.` : "Responsável removido.",
+                durationMs: 10_000,
+                actions: [{ label: "Desfazer", onClick: () => void writeAssignee(review.id, previous, email) }],
+            });
         },
-        [load, patchReview],
+        [writeAssignee],
     );
 
     const retry = useCallback(
@@ -167,12 +199,15 @@ export function HomeView() {
                 await requestContractReview(review.project_id);
                 void load();
             } catch (e) {
-                notifyError(e);
+                notifyError(e, { lang: "pt", action: "revisar de novo" });
                 void load();
             }
         },
         [load, patchReview],
     );
+    useEffect(() => {
+        shortcuts.current = { accept, retry };
+    }, [accept, retry]);
 
     const loading = home === null && error === null;
     const hello = home ? greeting(home) : null;
@@ -185,8 +220,8 @@ export function HomeView() {
             id: "avisos",
             value: home?.counters.notices_30d ?? 0,
             label: "Avisos em 30 dias",
-            tone: (home?.counters.notices_30d ?? 0) > 0 ? ("critico" as const) : ("default" as const),
-            hint: home?.deadlines[0] ? `o mais próximo em ${home.deadlines[0].days_left} dias` : undefined,
+            tone: (home?.counters.notices_30d ?? 0) > 0 ? ("atencao" as const) : ("default" as const),
+            hint: home ? noticeHint(home) : undefined,
         },
         { id: "pastas", value: home?.counters.folders ?? 0, label: "Pastas monitoradas" },
     ];
@@ -312,7 +347,7 @@ export function HomeView() {
                         <section aria-label="Revisões" className="mt-6">
                             <div className="mb-2 flex flex-wrap items-center gap-2">
                                 <TabPillButtonUI active={tab === "minhas"} onClick={() => setTab("minhas")}>
-                                    Minhas revisões ({home?.reviews.filter((r) => r.assignee_email === me).length ?? 0})
+                                    Minhas revisões ({home?.reviews.filter((r) => isMine(r, me)).length ?? 0})
                                 </TabPillButtonUI>
                                 <TabPillButtonUI active={tab === "todas"} onClick={() => setTab("todas")}>
                                     Todas ({home?.reviews.length ?? 0})
@@ -328,6 +363,7 @@ export function HomeView() {
                             </div>
                             <div className="flex h-[min(28rem,60vh)] min-h-64 flex-col">
                                 <HomeReviewTable
+                                    onRetry={retry}
                                     reviews={rows}
                                     loading={loading}
                                     selectedId={selectedId}

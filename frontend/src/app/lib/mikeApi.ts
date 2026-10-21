@@ -4593,6 +4593,10 @@ export interface HomeReview {
     notice_deadline: string | null;
     notice_days: number | null;
     term_end: string | null;
+    /** How many of the Ficha's tracked terms were found in the contract. */
+    ficha: { filled: number; total: number } | null;
+    /** The assignment agent's pick while nobody owns the review. */
+    suggested_assignee: string | null;
     updated_at: string;
 }
 
@@ -4632,8 +4636,9 @@ export interface WatchedFolder {
     contracts?: number;
 }
 
-export async function getHomeSummary(): Promise<HomeSummary> {
-    return apiRequest("/home");
+/** The home screen, narrowed to a workspace ("personal" or an organization id) when given. */
+export async function getHomeSummary(workspace?: string | null): Promise<HomeSummary> {
+    return apiRequest(workspace ? `/home?workspace=${encodeURIComponent(workspace)}` : "/home");
 }
 
 export async function listWatchedFolders(): Promise<WatchedFolder[]> {

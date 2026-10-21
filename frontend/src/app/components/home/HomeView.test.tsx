@@ -16,7 +16,7 @@ vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: { id: "u", email: "duda@avenia.io" } }),
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
-    useWorkspace: () => ({ activeOrganization: null }),
+    useWorkspace: () => ({ activeOrganization: null, workspaceId: "personal" }),
 }));
 vi.mock("@/app/contexts/PageChromeContext", () => ({ usePageChrome: () => ({ mobileActionsContainer: null }) }));
 const api = vi.hoisted(() => ({
@@ -26,6 +26,7 @@ const api = vi.hoisted(() => ({
     requestContractReview: vi.fn(),
     listWatchedFolders: vi.fn(),
     listPlaybooks: vi.fn(),
+    getProjectPeople: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (actual) => ({
     ...(await actual<typeof import("@/app/lib/mikeApi")>()),
@@ -58,7 +59,7 @@ function review(overrides: Partial<HomeReview>): HomeReview {
         aligned: 8,
         needs_review: 6,
         deviates: 3,
-        summary: "Vigência perpétua sem direito de rescisão.",
+        summary: "Vigência perpétua sem direito de rescisão (cl. 9). Foro em Manaus.",
         error: null,
         assignee_email: "duda@avenia.io",
         playbook_id: "pb1",
@@ -69,6 +70,8 @@ function review(overrides: Partial<HomeReview>): HomeReview {
         notice_deadline: "2026-11-01",
         notice_days: 61,
         term_end: "2027-01-01",
+        ficha: { filled: 7, total: 10 },
+        suggested_assignee: null,
         updated_at: new Date().toISOString(),
         ...overrides,
     };
@@ -115,23 +118,36 @@ beforeEach(() => {
     api.getCardActivity.mockResolvedValue([]);
     api.listWatchedFolders.mockResolvedValue([]);
     api.listPlaybooks.mockResolvedValue([]);
+    api.getProjectPeople.mockResolvedValue({
+        owner: { user_id: "u", email: "duda@avenia.io", display_name: "Duda" },
+        members: [{ email: "Ana@avenia.io", display_name: "Ana" }, { email: "duda@avenia.io", display_name: null }],
+    });
 });
 
 describe("HomeView", () => {
     it("greets with what the agents did, the counters and the queue, opening on my reviews", async () => {
         api.getHomeSummary.mockResolvedValue(
-            summary([review({}), review({ id: "r2", project_id: "p2", filename: "MSA.pdf", assignee_email: null, status: "running", step: "playbook" })]),
+            summary([
+                review({ assignee_email: "Duda@Avenia.io" }),
+                review({ id: "r2", project_id: "p2", filename: "MSA.pdf", counterparty: null, assignee_email: null, status: "running", step: "playbook" }),
+                review({ id: "r3", project_id: "p3", filename: "Nimbus.pdf", assignee_email: null, suggested_assignee: "Ana" }),
+            ]),
         );
         render(<HomeView />);
-        expect(await screen.findByText(/Revisei 2 contratos para você desde sua última visita/)).toBeInTheDocument();
+        await waitFor(() => expect(api.getHomeSummary).toHaveBeenCalledWith("personal"));
+        expect(await screen.findByText(/Revisei 3 contratos para você desde sua última visita/)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Prontos p\/ revisar/ })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Avisos em 30 dias/ })).toHaveTextContent("o mais próximo em 12 dias");
+        expect(screen.getByText("1", { selector: "span.text-amber-700" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Minhas revisões (1)" })).toHaveAttribute("aria-pressed", "true");
         const list = screen.getByRole("list", { name: "Revisões" });
         expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-        fireEvent.click(screen.getByRole("button", { name: "Todas (2)" }));
-        expect(within(list).getByText("Comparando com o playbook…")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Todas (3)" }));
+        // The running row shows its step in the status and in the summary column.
+        expect(within(list).getAllByText("Comparando com o playbook…")).toHaveLength(2);
+        expect(within(list).getByText("Contraparte não informada")).toBeInTheDocument();
         expect(within(list).getByText("Sem responsável")).toBeInTheDocument();
+        expect(within(list).getByText("sugerido: Ana")).toBeInTheDocument();
         // Prazos de aviso block and the shared activity feed.
         expect(screen.getByText("avisar até 01/11/2026 · renova sozinho")).toBeInTheDocument();
         expect(screen.getAllByText(/Agente de revisão revisou NDA Polaris.docx com 3 fontes/).length).toBeGreaterThan(0);
@@ -174,7 +190,9 @@ describe("HomeView", () => {
         api.updateContractReview.mockResolvedValue({});
         render(<HomeView />);
         const panel = await screen.findByRole("complementary", { name: "Detalhes" });
-        expect(within(panel).getByText("Vigência perpétua sem direito de rescisão.")).toBeInTheDocument();
+        expect(within(panel).getByText(/Vigência perpétua sem direito de rescisão/)).toBeInTheDocument();
+        expect(within(panel).getByRole("button", { name: "Ver a cláusula 9 na revisão" })).toBeInTheDocument();
+        expect(within(panel).getByRole("link", { name: "7 de 10 campos preenchidos" })).toHaveAttribute("href", "/projects/p1");
         expect(within(panel).getByText("Revisão")).toBeInTheDocument();
         expect(within(panel).getByRole("link", { name: /Abrir revisão/ })).toHaveAttribute(
             "href",
@@ -188,14 +206,21 @@ describe("HomeView", () => {
         await act(async () => toast.actions[0].onClick());
         expect(api.updateContractReview).toHaveBeenCalledWith("r1", { status: "ready" });
 
-        fireEvent.click(within(panel).getByRole("button", { name: "trocar" }));
-        fireEvent.change(within(panel).getByRole("textbox", { name: "E-mail do responsável" }), {
-            target: { value: "ana@avenia.io" },
-        });
-        fireEvent.click(within(panel).getByRole("button", { name: "Salvar" }));
+        const owner = within(panel).getByRole("combobox", { name: "Responsável" });
+        await waitFor(() => expect(owner).toBeEnabled());
+        expect(within(owner).getAllByRole("option").map((o) => o.textContent)).toEqual([
+            "Sem responsável",
+            "Duda (você)",
+            "Ana",
+        ]);
+        fireEvent.change(owner, { target: { value: "ana@avenia.io" } });
         await waitFor(() =>
             expect(api.updateContractReview).toHaveBeenCalledWith("r1", { assignee_email: "ana@avenia.io" }),
         );
+        const assigned = toasts.showToast.mock.calls.at(-1)![0];
+        expect(assigned.message).toBe("Atribuído a ana.");
+        await act(async () => assigned.actions[0].onClick());
+        expect(api.updateContractReview).toHaveBeenLastCalledWith("r1", { assignee_email: "duda@avenia.io" });
 
         fireEvent.keyDown(window, { key: "j" });
         expect(nav.replace).toHaveBeenLastCalledWith("?doc=r2", { scroll: false });
@@ -223,9 +248,78 @@ describe("HomeView", () => {
         render(<HomeView />);
         const panel = await screen.findByRole("complementary", { name: "Detalhes" });
         fireEvent.click(within(panel).getByRole("button", { name: /Aceitar revisão/ }));
-        await waitFor(() => expect(errors.notifyError).toHaveBeenCalled());
+        await waitFor(() =>
+            expect(errors.notifyError).toHaveBeenCalledWith(expect.anything(), { lang: "pt", action: "aceitar a revisão" }),
+        );
         expect(within(panel).getByRole("button", { name: /Aceitar revisão/ })).toBeInTheDocument();
         fireEvent.click(within(panel).getByRole("button", { name: "assumir" }));
-        await waitFor(() => expect(errors.notifyError).toHaveBeenCalledTimes(2));
+        await waitFor(() =>
+            expect(errors.notifyError).toHaveBeenCalledWith(expect.anything(), { lang: "pt", action: "atribuir a revisão" }),
+        );
+    });
+
+    it("keeps the queue on screen when a refresh fails, and says so once", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            api.getHomeSummary
+                .mockResolvedValueOnce(summary([review({ status: "running", step: "ficha" })]))
+                .mockRejectedValue(new Error("down"));
+            render(<HomeView />);
+            expect(await screen.findByText(/Revisei/)).toBeInTheDocument();
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(5_100);
+            });
+            await waitFor(() =>
+                expect(errors.notifyError).toHaveBeenCalledWith(expect.anything(), {
+                    lang: "pt",
+                    action: "atualizar o Início",
+                    dedupeKey: "home-refresh",
+                }),
+            );
+            expect(screen.queryByText("Não consegui carregar o Início")).toBeNull();
+            expect(screen.getByRole("list", { name: "Revisões" })).toHaveTextContent("NDA Polaris.docx");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("accepts with a and reviews again with r, but not while typing or sending", async () => {
+        nav.params = new URLSearchParams("doc=r1");
+        api.getHomeSummary.mockResolvedValue(summary([review({})]));
+        api.updateContractReview.mockResolvedValue({});
+        api.requestContractReview.mockResolvedValue({ review_id: "r1", queued: true });
+        render(<HomeView />);
+        await screen.findByRole("complementary", { name: "Detalhes" });
+
+        const editable = document.createElement("div");
+        editable.contentEditable = "true";
+        Object.defineProperty(editable, "isContentEditable", { value: true });
+        document.body.appendChild(editable);
+        fireEvent.keyDown(editable, { key: "a" });
+        expect(api.updateContractReview).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(window, { key: "a" });
+        await waitFor(() => expect(api.updateContractReview).toHaveBeenCalledWith("r1", { status: "done" }));
+
+        fireEvent.click(screen.getAllByRole("button", { name: /Enviar contratos/ })[0]);
+        await screen.findByRole("dialog", { name: "Enviar contratos" });
+        fireEvent.keyDown(window, { key: "r" });
+        expect(api.requestContractReview).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+        fireEvent.keyDown(window, { key: "r" });
+        await waitFor(() => expect(api.requestContractReview).toHaveBeenCalledWith("p1"));
+        editable.remove();
+    });
+
+    it("retries a failed review from its row", async () => {
+        api.getHomeSummary.mockResolvedValue(summary([review({ status: "failed" })]));
+        api.requestContractReview.mockRejectedValue(new Error("nope"));
+        render(<HomeView />);
+        fireEvent.click(await screen.findByRole("button", { name: "Tentar de novo: NDA Polaris.docx" }));
+        await waitFor(() =>
+            expect(errors.notifyError).toHaveBeenCalledWith(expect.anything(), { lang: "pt", action: "revisar de novo" }),
+        );
+        expect(nav.replace).not.toHaveBeenCalled();
     });
 });

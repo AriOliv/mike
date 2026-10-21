@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
     watchProject: vi.fn(),
     uploadProjectDocuments: vi.fn(),
     requestContractReview: vi.fn(),
+    deleteProject: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", () => api);
 const toasts = vi.hoisted(() => ({ showToast: vi.fn() }));
@@ -28,6 +29,7 @@ beforeEach(() => {
     api.createProject.mockImplementation(async (name: string) => ({ id: `p-${name}` }));
     api.watchProject.mockResolvedValue(undefined);
     api.requestContractReview.mockResolvedValue({ review_id: "r", queued: true });
+    api.deleteProject.mockResolvedValue(undefined);
 });
 
 describe("cardName", () => {
@@ -62,8 +64,14 @@ describe("SendContractsModal", () => {
         expect(api.createProject).toHaveBeenCalledWith("NDA Polaris", undefined, undefined, "o1");
         expect(api.watchProject).toHaveBeenCalledWith("f1", "p-NDA Polaris");
         expect(api.requestContractReview).toHaveBeenCalledTimes(1);
+        // The card of the file that failed does not stay behind, empty.
+        expect(api.deleteProject).toHaveBeenCalledWith("p-MSA");
+        expect(api.watchProject).not.toHaveBeenCalledWith("f1", "p-MSA");
         expect(toasts.showToast).toHaveBeenCalledWith(
-            expect.objectContaining({ message: "Recebi 1 de 2 contratos. Os outros não puderam ser enviados." }),
+            expect.objectContaining({
+                title: "Recebi 1 de 2 contratos",
+                message: "Não foram: MSA.pdf. Tente esses de novo.",
+            }),
         );
     });
 
@@ -74,7 +82,7 @@ describe("SendContractsModal", () => {
         const onSent = vi.fn();
         render(<SendContractsModal onClose={vi.fn()} onSent={onSent} />);
         expect(await screen.findByText("Fornecedores")).toBeInTheDocument();
-        fireEvent.drop(screen.getByRole("button", { name: /Arraste PDFs/ }), {
+        fireEvent.drop(screen.getByRole("button", { name: /Arraste os contratos/ }), {
             dataTransfer: { files: [pdf("A.pdf")] },
         });
         fireEvent.click(await screen.findByRole("button", { name: "Enviar e revisar" }));
@@ -86,7 +94,7 @@ describe("SendContractsModal", () => {
         );
     });
 
-    it("reports a failure and lets the person try again", async () => {
+    it("keeps the files that failed for another try when none went through", async () => {
         api.listWatchedFolders.mockResolvedValue([{ id: "f9", name: "Fornecedores" }]);
         api.listPlaybooks.mockResolvedValue([]);
         api.createProject.mockRejectedValueOnce(new Error("down"));
@@ -95,8 +103,33 @@ describe("SendContractsModal", () => {
         expect(await screen.findByText("Fornecedores")).toBeInTheDocument();
         fireEvent.change(screen.getByLabelText("Escolher contratos"), { target: { files: [pdf("A.pdf")] } });
         fireEvent.click(screen.getByRole("button", { name: "Enviar e revisar" }));
-        await waitFor(() => expect(errors.notifyError).toHaveBeenCalled());
+        await waitFor(() =>
+            expect(toasts.showToast).toHaveBeenCalledWith(
+                expect.objectContaining({ tone: "error", title: "Não consegui enviar os contratos" }),
+            ),
+        );
+        expect(api.deleteProject).not.toHaveBeenCalled();
         expect(onSent).not.toHaveBeenCalled();
         expect(screen.getByRole("button", { name: "Enviar e revisar" })).toBeEnabled();
+    });
+
+    it("says in Portuguese when the folder cannot be created, and filters dropped files", async () => {
+        api.listWatchedFolders.mockResolvedValue([]);
+        api.listPlaybooks.mockResolvedValue([]);
+        api.createWatchedFolder.mockRejectedValue(new Error("x"));
+        render(<SendContractsModal onClose={vi.fn()} onSent={vi.fn()} />);
+        await waitFor(() => expect(api.listWatchedFolders).toHaveBeenCalled());
+        fireEvent.drop(screen.getByRole("button", { name: /Arraste os contratos/ }), {
+            dataTransfer: { files: [pdf("A.pdf"), new File(["x"], "foto.png")] },
+        });
+        expect(await screen.findByText("Fora do envio: foto.png: só PDF ou DOCX")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Enviar e revisar" }));
+        await waitFor(() =>
+            expect(errors.notifyError).toHaveBeenCalledWith(expect.anything(), {
+                lang: "pt",
+                action: "criar a pasta monitorada",
+            }),
+        );
+        expect(api.createProject).not.toHaveBeenCalled();
     });
 });

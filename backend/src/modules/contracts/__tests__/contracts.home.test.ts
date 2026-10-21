@@ -8,13 +8,14 @@ const access = vi.hoisted(() => ({
 vi.mock("../../../lib/access", () => access);
 
 import { getHomeSummary } from "../contracts.service";
+import { saoPauloDate } from "../contracts.home";
 
 const caller = { userId: "u", userEmail: "Duda@Example.com" };
 const NOW = new Date("2026-10-20T12:00:00Z");
 
 const projects = [
-    { id: "p1", name: "NDA Polaris", counterparty: "Polaris", lane: "revisao", requester_name: "Ana", deadline: null, watched_folder_id: "f1" },
-    { id: "p2", name: "MSA Trópico", counterparty: "Trópico", lane: "triagem", requester_name: null, deadline: "2026-10-24", watched_folder_id: null },
+    { id: "p1", org_id: null, name: "NDA Polaris", counterparty: "Polaris", lane: "revisao", requester_name: "Ana", deadline: null, watched_folder_id: "f1" },
+    { id: "p2", org_id: "o1", name: "MSA Trópico", counterparty: "Trópico", lane: "triagem", requester_name: null, deadline: "2026-10-24", watched_folder_id: null },
 ];
 const review = (id: string, project: string, extra: Record<string, unknown>) => ({
     id,
@@ -51,7 +52,7 @@ describe("getHomeSummary", () => {
                 table: "contract_reviews",
                 data: [
                     review("r-old", "p1", { updated_at: "2026-10-01T00:00:00Z", finished_at: "2026-10-01T00:00:00Z" }),
-                    review("r1", "p1", { assignee_email: "duda@example.com" }),
+                    review("r1", "p1", { assignee_email: "Duda@Example.com" }),
                     review("r2", "p2", { status: "failed", updated_at: "2026-10-20T11:00:00Z", finished_at: null }),
                 ],
             },
@@ -61,6 +62,15 @@ describe("getHomeSummary", () => {
                 data: [
                     { project_id: "p1", notice_deadline: "2026-11-01", notice_days: 61, term_end: "2027-01-01", auto_renewal: true },
                     { project_id: "p2", notice_deadline: "2026-09-01", term_end: null, auto_renewal: null },
+                ],
+            },
+            {
+                table: "card_events",
+                data: [
+                    { project_id: "p2", after: { name: "Duda" } },
+                    { project_id: "p2", after: { name: "older pick" } },
+                    { project_id: "p1", after: { email: "ana@x.com" } },
+                    { project_id: "p1", after: null },
                 ],
             },
             { table: "watched_folders", data: null },
@@ -87,7 +97,14 @@ describe("getHomeSummary", () => {
             notice_days: 61,
             watched_folder_id: "f1",
         });
-        expect(home.reviews[0]).toMatchObject({ filename: null, notice_deadline: "2026-09-01" });
+        expect(home.reviews[0]).toMatchObject({
+            filename: null,
+            notice_deadline: "2026-09-01",
+            suggested_assignee: "Duda",
+            ficha: { filled: 1, total: 10 },
+        });
+        // Someone already owns r1, so the agent's pick is not shown.
+        expect(home.reviews[1]).toMatchObject({ suggested_assignee: null, ficha: { filled: 4, total: 10 } });
         expect(home.greeting).toEqual({ reviewed: 1, failed: 1, notices_closing: 1, ready: 1 });
         expect(home.counters).toEqual({ ready: 1, mine: 1, notices_30d: 1, folders: 1 });
         // A deadline already past is not "closing".
@@ -98,6 +115,29 @@ describe("getHomeSummary", () => {
         expect(home.activity[1].project_name).toBe("NDA Polaris");
         expect(home.activity[0].project_name).toBe("");
         fake.done();
+    });
+
+    it("narrows to the active workspace", async () => {
+        access.listAccessibleProjectIds.mockResolvedValue(["p1", "p2"]);
+        const fake = scriptedDb([
+            { table: "home_visits", data: { previous_seen_at: null, last_seen_at: "2026-10-20T11:30:00Z" } },
+            { table: "projects", data: projects },
+            { table: "contract_reviews", data: [review("r2", "p2", {})] },
+            { table: "document_versions", data: [] },
+            { table: "contract_terms", data: [] },
+            { table: "card_events", data: [] },
+            { table: "watched_folders", data: null },
+            { table: "card_events", data: [] },
+        ]);
+        const result = await getHomeSummary(fake.db, caller, NOW, "o1");
+        expect(result).toMatchObject({ ok: true, data: { reviews: [{ id: "r2", ficha: null }] } });
+        expect(fake.calls[2].filters).toContainEqual(["in", "project_id", ["p2"]]);
+        fake.done();
+    });
+
+    it("dates deadlines in São Paulo, not UTC", () => {
+        // 23:30 in São Paulo on the 20th is already the 21st in UTC.
+        expect(saoPauloDate(new Date("2026-10-21T02:30:00Z"))).toBe("2026-10-20");
     });
 
     it("starts a first visit with no 'since' and an empty home", async () => {

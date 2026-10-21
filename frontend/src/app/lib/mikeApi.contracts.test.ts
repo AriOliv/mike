@@ -113,6 +113,9 @@ describe("acervo and contract analysis", () => {
         fetchMock.mockResolvedValue(jsonResponse({ reviews: [] }));
         await getHomeSummary();
         expect(lastFetchCall().url).toMatch(/\/home$/);
+        fetchMock.mockResolvedValue(jsonResponse({ reviews: [] }));
+        await getHomeSummary("org 1");
+        expect(lastFetchCall().url).toMatch(/\/home\?workspace=org%201$/);
         fetchMock.mockResolvedValue(jsonResponse([]));
         await listWatchedFolders();
         expect(lastFetchCall().url).toMatch(/\/watched-folders$/);

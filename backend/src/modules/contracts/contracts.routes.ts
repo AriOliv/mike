@@ -6,6 +6,7 @@ import { requireAuth } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
+import { resolveWorkspaceFilter, sendWorkspaceFailure } from "../../lib/workspace";
 import {
     askAcervo,
     createWatchedFolder,
@@ -215,8 +216,11 @@ export const homeRouter = Router();
 homeRouter.get(
     "/",
     requireAuth,
-    asyncRoute(async (_req, res) => {
-        send(res, await getHomeSummary(createServerSupabase(), caller(res)));
+    asyncRoute(async (req, res) => {
+        const db = createServerSupabase();
+        const workspace = await resolveWorkspaceFilter(db, res.locals.userId as string, req.query.workspace);
+        if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+        send(res, await getHomeSummary(db, caller(res), new Date(), workspace.workspace));
     }),
 );
 
