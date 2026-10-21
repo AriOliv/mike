@@ -29,7 +29,8 @@ export type NavItem = {
 
 export const NAV_MAIN: readonly NavItem[] = [
     { href: "/pipeline", label: "Esteira", icon: "folder" },
-    { href: "/contratos", label: "Contratos", icon: "tabular" },
+    // Contratos (/contratos) comes back with its page, from PR #9 (253e3da7):
+    // a menu item never links to a route this branch does not have.
     { href: "/radar", label: "Prazos", icon: "workflow" },
     { href: "/radar-regulatorio", label: "Radar regulatório", icon: "workflow" },
     { href: "/acervo", label: "Perguntar", icon: "library" },
