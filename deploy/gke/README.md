@@ -84,6 +84,11 @@ deploy/gke/scripts/update-preview.sh
 4. Faz o Cloud Build do commit, o apply no namespace `preview` e roda as migrações
    (db-init), o rollout e o seed.
 
+Conflito real que alguém já resolveu à mão é regravado pelo `git rerere`, que
+fica neste clone. Para ensinar uma resolução nova: faça o merge num worktree,
+resolva, rode `git rerere` e depois `git commit`. Daí em diante o script
+aplica a resolução sozinho.
+
 Variáveis: `BRANCHES="..."` troca a lista, `SKIP_MERGE=1` redeploya a branch como
 está, `SKIP_BUILD=1` reaproveita a imagem do commit.
 
@@ -94,11 +99,12 @@ está, `SKIP_BUILD=1` reaproveita a imagem do commit.
   - 12 cards nas 6 lanes;
   - termos de contratos vigentes;
   - 7 prazos com data relativa a hoje.
-- `seed/integration/`, só no preview:
+- `seed/integration/`, só no preview. Cada arquivo declara na linha 1 as tabelas de que precisa e é pulado se o PR dele ficou fora do build:
   - org do time do Legal;
   - 6 pedidos LEG-0001..0006 em todos os status;
   - 2 varreduras do radar e 4 achados (alto/médio/baixo, cruzados com os cards);
-  - `agent_runs` e o log `card_events`.
+  - `agent_runs` e o log `card_events`;
+  - Início (`extra-inicio.sql`, do Beacon): 1 pasta monitorada, 6 documentos e 6 revisões em todos os estados.
 
 Tudo fictício, com ids fixos e idempotente. Os atos regulatórios são inventados
 e as URLs apontam para `example.invalid`.

@@ -1,3 +1,4 @@
+-- requires-table: public.legal_requests public.regulatory_scans public.card_events
 -- Seed sintético extra da prévia de integração (seed/integration, componente usado
 -- pelo overlay preview): pedidos ao
 -- Legal (20261020_93), radar regulatório (20261020_95) e o log card_events /

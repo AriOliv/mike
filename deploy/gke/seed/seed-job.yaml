@@ -60,6 +60,13 @@ spec:
               # overlays add extra-*.sql to seed-sql for tables only they have
               for f in /seed/extra-*.sql; do
                 [ -e "$f" ] || continue
+                # "-- requires-table: a b" on line 1: skip when a migration
+                # (a PR left out of this build) did not create those tables
+                miss=""
+                for t in $(sed -n '1s/^-- requires-table://p' "$f"); do
+                  [ "$(psql "$DB" -tAc "select to_regclass('$t') is not null")" = t ] || miss="$miss $t"
+                done
+                if [ -n "$miss" ]; then echo "skipping $f (missing:$miss)"; continue; fi
                 echo "applying $f"; psql "$DB" -v ON_ERROR_STOP=1 -f "$f"
               done
           env:

@@ -41,8 +41,11 @@ if [ "${SKIP_MERGE:-0}" != 1 ]; then
     elif [[ " $LOCAL_OK " == *" $b "* ]] && git rev-parse -q --verify "refs/heads/$b" >/dev/null; then
       ref="$b"; echo "using LOCAL $b (not pushed)"
     else skipped+=("$b"); continue; fi
-    if ! git merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
+    # rerere replays conflict resolutions already recorded on this machine
+    # (resolve once by hand in a worktree, `git rerere`, commit: next run is clean)
+    if ! git -c rerere.enabled=true -c rerere.autoupdate=true merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
       files=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+      if [ -z "$files" ]; then git commit -q --no-edit; echo "merged $ref (recorded resolution)"; merged+=("$ref"); continue; fi
       # The only conflicts we resolve here are "both sides appended a line"
       # in the registries every feature touches; anything else is real.
       trivial="backend/schema.sql backend/src/app.ts backend/src/jobs/registry.ts"
