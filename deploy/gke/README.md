@@ -79,7 +79,7 @@ export DEMO_PASSWORD=...   # do Secret preview/mike-secrets; nunca em arquivo
 node deploy/gke/scripts/preview-shots.mjs deploy/gke/shots/pedidos.json /tmp/shots/pedidos
 ```
 
-O backend aceita poucos logins errados por conta (10 em 15 min), então o script loga uma vez por conta e troca o tema na mesma sessão. Junte os roteiros numa rodada só em vez de rodar um por vez. Um passo que falha não interrompe a rodada: a foto sai do mesmo jeito, marcada com ⚠, e o script termina com código 1. No preview, o limite geral por IP é de 5000 a cada 15 min, porque atrás do GCLB todo mundo chega ao backend pelo mesmo endereço.
+O backend aceita poucos logins errados por conta (10 em 15 min), então o script loga uma vez por conta e troca o tema na mesma sessão. Junte os roteiros numa rodada só em vez de rodar um por vez. Um passo que falha não interrompe a rodada: a foto sai do mesmo jeito, marcada com ⚠, e o script termina com código 1. O limite geral é por pessoa (300 a cada 15 min por IP do cliente): o backend usa `TRUST_PROXY_HOPS=2` (LB + proxy do Next), e uma rodada de capturas cabe nele.
 
 Cada feature mantém o seu roteiro em `deploy/gke/shots/<feature>.json`. O de Pedidos (`pedidos.json`) serve de exemplo de passos: ele clica na linha "Triagem pronta" para fotografar o painel aberto. Precisa de `playwright-core` (vem com o `@playwright/test` da raiz) e de um Chromium no cache do Playwright, ou `CHROME=<caminho>`.
 

@@ -16,11 +16,6 @@ configMapGenerator:
   - name: mike-env
     literals:
       - PUBLIC_URL=https://preview.34-120-191-197.nip.io
-      # Behind GCLB + the Next proxy every client reaches the backend from the
-      # same address, so the per-IP budget (300/15 min) is shared by the whole
-      # team and the screenshot runs. Synthetic data, IAP in front: loosen it
-      # here only. The per-account login limit stays as is.
-      - RATE_LIMIT_GENERAL_MAX=5000
 images:
   - name: mike-backend
     newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend
