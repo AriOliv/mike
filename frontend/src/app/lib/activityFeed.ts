@@ -68,6 +68,38 @@ const STATUS_LABEL: Record<string, string> = {
     concluido: "Concluído",
 };
 
+/** Card and Ficha fields as people name them. */
+export const FIELD_LABEL: Record<string, string> = {
+    lane: "etapa",
+    status: "progresso",
+    assignee_email: "responsável",
+    priority: "prioridade",
+    deadline: "prazo",
+    risk_level: "risco",
+    contract_type: "tipo de contrato",
+    counterparty: "contraparte",
+    requester_name: "solicitante",
+    triage: "triagem",
+    notice_days: "aviso prévio",
+    notice_deadline: "prazo do aviso",
+    term_end: "vencimento",
+    auto_renewal: "renovação automática",
+    penalty_value: "multa",
+    liability_cap: "limite de responsabilidade",
+};
+
+/**
+ * A field in words: its label when known, the text as is when it already
+ * reads as words ("Cessão do contrato"), and nothing for an unknown internal
+ * name ("risk_level", "identificacao.tipo"), which never reaches the screen.
+ */
+export function fieldLabel(field: string | null | undefined): string | undefined {
+    const name = field?.trim();
+    if (!name) return undefined;
+    if (FIELD_LABEL[name]) return FIELD_LABEL[name];
+    return /[_.]/.test(name) || /^[a-z]+[A-Z]/.test(name) ? undefined : name;
+}
+
 /** "agent:revisor@1" → "revisor". */
 function agentKey(actorId: string): string {
     return actorId.replace(/^agent:/, "").split("@")[0];
@@ -127,8 +159,10 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "comentou" };
         case "review.accepted":
             return { verb: "aceitou a revisão" };
-        case "field.updated":
-            return { verb: "atualizou", object: event.field ?? undefined };
+        case "field.updated": {
+            const what = fieldLabel(event.field);
+            return what ? { verb: "atualizou", object: what } : { verb: "atualizou o contrato" };
+        }
         case "review.clause_aceito":
         case "review.clause_editado":
         case "review.clause_rejeitado":
@@ -137,7 +171,7 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "começou a trabalhar neste contrato" };
         case "agent.suggested": {
             // The field it suggested ("risco alto", "Duda como responsável"), else a plain sentence.
-            const what = event.field?.trim() || text(after.suggestion) || text(after.value);
+            const what = fieldLabel(event.field) ?? text(after.suggestion) ?? text(after.value);
             return what ? { verb: "sugeriu", object: what, sources } : { verb: "fez uma sugestão", sources };
         }
         case "agent.failed":
