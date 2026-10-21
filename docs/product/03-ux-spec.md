@@ -4,7 +4,7 @@
 > Protótipo navegável: [`prototype/index.html`](prototype/index.html). Abre direto no navegador, sem build.
 > Insumos: fork `mike-fork` (Pipeline, Radar, Acervo, Dossiê, Tabular Review), wireframe do Ada Legal
 > (`avn-clm/Wireframes Legal AI (offline).html`), `docs/notion-cards-tasks-sync.md`, e a pesquisa do
-> Sonar ([`01-pesquisa-competitiva.md`](01-pesquisa-competitiva.md)). Os padrões do Sonar aparecem
+> Sonar (documento interno, fora deste repositório). Os padrões do Sonar aparecem
 > marcados como **[Sonar n]**.
 
 ## Resumo em uma frase
