@@ -49,6 +49,11 @@ spec:
             - { name: STORAGE_DRIVER, value: fs }
             - { name: STORAGE_FS_ROOT, value: /data/files }
             - { name: WORKERS_MODE, value: thread }
+            # Two proxies in front: the Google LB (appends the client to
+            # X-Forwarded-For) and the Next /api proxy (forwards it as-is).
+            # With 1, req.ip is the LB and the whole team shares one per-IP
+            # rate-limit bucket. backend/src/__tests__/integration/trustProxy.rateLimit.test.ts
+            - { name: TRUST_PROXY_HOPS, value: "2" }
             # Never report to the upstream community Sentry project.
             - { name: SENTRY_DISABLED, value: "true" }
           volumeMounts: [{ name: files, mountPath: /data }]
