@@ -74,8 +74,9 @@ deploy/gke/scripts/update-preview.sh
    - `feat/inicio-contract-intelligence`
    - `feat/revisao-playbook`
 
-   Usa a branch do `origin`. Se não estiver pushada, cai para a branch local e
-   avisa. Se não existir, pula.
+   Usa sempre a branch do `origin`; se ela não estiver pushada, pula. A exceção
+   é quem estiver em `LOCAL_OK` (hoje só `feat/radar-regulatorio`), que entra
+   pelos commits locais com aviso.
 2. Resolve sozinho só os conflitos de "os dois lados acrescentaram uma linha" em
    `backend/schema.sql`, `backend/src/app.ts` e `backend/src/jobs/registry.ts`.
    Em qualquer outro conflito ele para, sem push, e diz qual branch conflitou com qual.

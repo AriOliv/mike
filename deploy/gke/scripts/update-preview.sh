@@ -24,6 +24,9 @@ P="${PROJECT:-ari-teste-492120}"; REGION=southamerica-east1; NS=preview
 BASE="${BASE:-sync/upstream-2026-10}"; TARGET="${TARGET:-integration/harvey}"
 # infra/gke-staging carries deploy/gke itself; the rest in merge order.
 BRANCHES="${BRANCHES:-infra/gke-staging feat/card-events feat/ui-verdict feat/ui-agent-suggestion feat/intake-orquestracao feat/radar-regulatorio feat/inicio-contract-intelligence feat/revisao-playbook}"
+# Branches allowed to come from a LOCAL ref while their owner has not pushed
+# yet (committed work only; uncommitted changes in their worktrees never enter).
+LOCAL_OK="${LOCAL_OK:-feat/radar-regulatorio}"
 REG="southamerica-east1-docker.pkg.dev/$P/mike"
 
 git diff --quiet && git diff --cached --quiet || { echo "working tree is dirty; commit or stash first"; exit 1; }
@@ -33,10 +36,10 @@ if [ "${SKIP_MERGE:-0}" != 1 ]; then
   git checkout -q -B "$TARGET" "origin/$BASE"
   merged=() skipped=()
   for b in $BRANCHES; do
-    # prefer the pushed branch; fall back to a local one (a teammate's
-    # committed work not pushed yet) and say so
+    # the pushed branch; a local one only when listed in LOCAL_OK
     if git rev-parse -q --verify "origin/$b" >/dev/null; then ref="origin/$b"
-    elif git rev-parse -q --verify "refs/heads/$b" >/dev/null; then ref="$b"; echo "using LOCAL $b (not pushed)"
+    elif [[ " $LOCAL_OK " == *" $b "* ]] && git rev-parse -q --verify "refs/heads/$b" >/dev/null; then
+      ref="$b"; echo "using LOCAL $b (not pushed)"
     else skipped+=("$b"); continue; fi
     if ! git merge -q --no-ff --no-edit "$ref" >/dev/null 2>&1; then
       files=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
