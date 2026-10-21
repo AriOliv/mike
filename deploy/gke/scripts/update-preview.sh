@@ -114,10 +114,20 @@ OVERLAY=deploy/gke/overlays/$NS
 kubectl apply -f "$OVERLAY/namespace.yaml"
 deploy/gke/scripts/bootstrap-secrets.sh "$NS"
 kubectl -n "$NS" delete job db-init seed --ignore-not-found
+# RESET_DB=1: recreate the (synthetic) database, e.g. after a branch rewrote a
+# migration the preview already applied. Only ever the preview namespace.
+if [ "${RESET_DB:-0}" = 1 ]; then
+  echo "resetting the preview database (synthetic data, re-seeded below)"
+  kubectl -n "$NS" scale statefulset/db --replicas=0
+  kubectl -n "$NS" wait --for=delete pod/db-0 --timeout=5m 2>/dev/null || true
+  kubectl -n "$NS" delete pvc data-db-0 --ignore-not-found --wait=true
+  kubectl -n "$NS" delete pvc backend-files --ignore-not-found --wait=false
+fi
 # render with the tag of this commit (no kustomize CLI / file edits needed)
 kubectl kustomize "$OVERLAY" \
   | sed -E "s#($REG/(backend|frontend)):latest#\1:$TAG#g" \
   | kubectl apply -f -
+[ "${RESET_DB:-0}" != 1 ] || kubectl -n "$NS" scale statefulset/db --replicas=1
 kubectl -n "$NS" wait --for=condition=complete job/db-init --timeout=15m
 kubectl -n "$NS" rollout restart deploy/auth deploy/rest >/dev/null  # pick up roles on first boot
 kubectl -n "$NS" rollout status deploy/backend --timeout=10m

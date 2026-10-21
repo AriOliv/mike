@@ -94,7 +94,7 @@ fica neste clone. Para ensinar uma resolução nova: faça o merge num worktree,
 resolva, rode `git rerere` e depois `git commit`. Daí em diante o script
 aplica a resolução sozinho.
 
-Variáveis: `BRANCHES="..."` troca a lista, `SKIP_MERGE=1` redeploya a branch como
+Variáveis: `RESET_DB=1` recria o banco do preview (sintético, re-seed), para quando uma branch reescreveu uma migração já aplicada; `BRANCHES="..."` troca a lista, `SKIP_MERGE=1` redeploya a branch como
 está, `SKIP_BUILD=1` reaproveita a imagem do commit.
 
 ## Seed
