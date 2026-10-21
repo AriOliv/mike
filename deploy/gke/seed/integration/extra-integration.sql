@@ -8,18 +8,23 @@
 
 begin;
 
--- Time do Legal: org de equipe com a conta legal como owner e a solicitante
--- como member (a fila inteira é do time; a solicitante vê só os pedidos dela).
+-- Time do Legal: org de equipe com só a conta legal (owner). A solicitante fica
+-- fora: o #8 trata qualquer membro como time, e ela vê os pedidos dela por
+-- requester_id/e-mail ("Meus pedidos").
 with legal as (select id from public._seed_users where role = 'legal')
 insert into public.organizations (id, name, created_by, kind)
 select '00000000-0000-4000-c000-000000000001'::uuid, 'Avenia Legal (demo)', legal.id, 'team' from legal
 on conflict (id) do nothing;
 
 insert into public.org_members (org_id, user_id, role)
-select '00000000-0000-4000-c000-000000000001'::uuid, u.id,
-       case when u.role = 'legal' then 'owner' else 'member' end
-from public._seed_users u
+select '00000000-0000-4000-c000-000000000001'::uuid, u.id, 'owner'
+from public._seed_users u where u.role = 'legal'
 on conflict (org_id, user_id) do nothing;
+
+-- seeds antigos punham a solicitante como member
+delete from public.org_members m
+using public._seed_users u
+where m.org_id = '00000000-0000-4000-c000-000000000001' and m.user_id = u.id and u.role = 'solicitante';
 
 insert into public.legal_teams (org_id, sla_days, auto_assign)
 values ('00000000-0000-4000-c000-000000000001', '{}'::jsonb, false)
