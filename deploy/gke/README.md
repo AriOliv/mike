@@ -12,7 +12,9 @@ DNS endpoint). Produção continua na VM `mike-clm`.
 | prévia de integração | `preview` | https://preview.34-120-191-197.nip.io | `integration/preview` = sync + PRs abertos | `scripts/update-preview.sh` |
 
 Os dois passam pelo mesmo HTTPS LB (Gateway `staging/mike-edge`, IP
-`mike-staging-ip`) e pelo mesmo IAP: só contas `@avenia.io` entram. O preview
+`mike-staging-ip`) e pelo IAP, que libera:
+- no **staging** só as pessoas listadas em `scripts/grant-iap.sh` (`STAGING_MEMBERS`), uma a uma, sem domínio e sem service account;
+- na **prévia**, todo `@avenia.io` e a SA de E2E. O preview
 não tem Gateway próprio. As rotas dele se penduram no do staging com
 `hostnames: [preview…]`, e o listener aceita rotas de namespaces com o label
 `app.kubernetes.io/part-of: mike`.
@@ -30,7 +32,7 @@ não tem Gateway próprio. As rotas dele se penduram no do staging com
 
 A service account `mike-preview-e2e@ari-teste-492120.iam.gserviceaccount.com`:
 - não tem chave;
-- tem `roles/iap.httpsResourceAccessor` só nos backend services do Mike (`scripts/grant-iap.sh`).
+- tem `roles/iap.httpsResourceAccessor` só no backend service da **prévia** (`scripts/grant-iap.sh`). No staging ela não entra: um agente lá usa a credencial de uma pessoa da lista.
 
 Quem roda o teste gera um token curto (1 h) por impersonação. Para isso precisa
 de `roles/iam.serviceAccountTokenCreator` na SA. Peça ao Ari; hoje só ele tem.
