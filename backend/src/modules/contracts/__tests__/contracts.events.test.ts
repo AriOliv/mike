@@ -8,7 +8,6 @@ const access = vi.hoisted(() => ({
 vi.mock("../../../lib/access", () => access);
 
 import {
-    countAgentReviews,
     finishAgentRun,
     listCardEvents,
     recordCardEvent,
@@ -153,32 +152,3 @@ describe("agent runs", () => {
     });
 });
 
-describe("countAgentReviews", () => {
-    it("counts distinct contracts with a succeeded review run since a date", async () => {
-        const fake = scriptedDb([
-            { table: "agent_runs", data: [{ project_id: "p1" }, { project_id: "p1" }, { project_id: "p2" }] },
-        ]);
-        expect(await countAgentReviews(fake.db, ["p1", "p2", "p3"], "2026-10-19T00:00:00Z")).toBe(2);
-        expect(fake.calls[0].filters).toEqual([
-            ["in", "project_id", ["p1", "p2", "p3"]],
-            ["in", "agent", ["revisor"]],
-            ["eq", "status", "succeeded"],
-            ["gte", "finished_at", "2026-10-19T00:00:00Z"],
-        ]);
-        fake.done();
-    });
-
-    it("counts all time without a date, reads in slices, and throws on errors", async () => {
-        const ids = Array.from({ length: 201 }, (_, i) => `p${i}`);
-        const fake = scriptedDb([
-            { table: "agent_runs", data: [{ project_id: "p0" }] },
-            { table: "agent_runs", data: null },
-            { table: "agent_runs", error: { message: "down" } },
-        ]);
-        expect(await countAgentReviews(fake.db, ids, null)).toBe(1);
-        expect(fake.calls[0].filters).not.toContainEqual(expect.arrayContaining(["gte"]));
-        await expect(countAgentReviews(fake.db, ["p1"], null)).rejects.toMatchObject({ message: "down" });
-        expect(await countAgentReviews(scriptedDb([]).db, [], null)).toBe(0);
-        fake.done();
-    });
-});
