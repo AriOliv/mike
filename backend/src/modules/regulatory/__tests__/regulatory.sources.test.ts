@@ -100,6 +100,10 @@ describe("gov.br RSS", () => {
 });
 
 describe("helpers", () => {
+    it("decodes an escaped entity once, never twice", () => {
+        expect(cleanText("Lei &amp;lt;n.º 14.478&amp;gt; &amp;amp;")).toBe("Lei &lt;n.º 14.478&gt; &amp;");
+    });
+
     it("cleans markup and entities", () => {
         expect(cleanText("<p>a&nbsp;&amp; b &quot;c&quot; &#39;d&#39; &lt;e&gt;</p>")).toBe(`a & b "c" 'd' <e>`);
         expect(cleanText(42)).toBe("");

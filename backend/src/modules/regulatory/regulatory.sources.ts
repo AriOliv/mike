@@ -47,11 +47,12 @@ export function cleanText(value: unknown): string {
     return value
         .replace(/<[^>]+>/g, " ")
         .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
+        // Last, so "&amp;lt;" reads "&lt;" and is not decoded twice into "<".
+        .replace(/&amp;/g, "&")
         .replace(/\s+/g, " ")
         .trim();
 }
