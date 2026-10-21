@@ -18,6 +18,7 @@ import {
     getDossier,
     integrationStatus,
     listObligations,
+    listCardEvents,
     listPipeline,
     putDossier,
     syncDocumentsToDrive,
@@ -107,7 +108,7 @@ obligationsRouter.delete(
 
 obligationsRouter.use(routerErrorHandler("[obligations]"));
 
-// ── /projects/:projectId/{dossier,preview,terms} ─────────────────────────────
+// ── /projects/:projectId/{dossier,preview,terms,activity} ─────────────────────────────
 export const projectContractRouter = Router({ mergeParams: true });
 
 projectContractRouter.get(
@@ -165,6 +166,18 @@ projectContractRouter.post(
         send(
             res,
             await extractContractTerms(createServerSupabase(), caller(res), req.params.projectId),
+        );
+    }),
+);
+
+projectContractRouter.get(
+    "/activity",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const limit = Number(req.query.limit ?? 50);
+        send(
+            res,
+            await listCardEvents(createServerSupabase(), caller(res), req.params.projectId, limit),
         );
     }),
 );
