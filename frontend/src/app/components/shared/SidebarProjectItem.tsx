@@ -232,7 +232,7 @@ export function SidebarProjectItem({
                 }}
                 className="font-medium text-gray-700 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
             >
-                Retry
+                Tentar de novo
             </button>
         </li>
     );
@@ -327,12 +327,12 @@ export function SidebarProjectItem({
                         // request failed and the other came back empty.
                         retryRow(
                             loadError && data !== null
-                                ? "Could not refresh items."
-                                : "Could not load items.",
+                                ? "Não foi possível atualizar a lista."
+                                : "Não foi possível carregar a lista.",
                         )
                     ) : items && items.length === 0 ? (
                         <li className="flex min-h-7 items-center pl-2 pr-2 text-xs text-gray-500">
-                            No chats or reviews yet
+                            Nenhuma conversa ou revisão ainda
                         </li>
                     ) : (
                         <>
@@ -378,7 +378,7 @@ export function SidebarProjectItem({
                             {/* A refresh that failed keeps the items it
                                 had; a partial load shows what did load. */}
                             {loadError
-                                ? retryRow("Could not refresh items.")
+                                ? retryRow("Não foi possível atualizar a lista.")
                                 : data?.incomplete &&
                                   retryRow("Some items could not be loaded.")}
                             {canSeeMore && (

@@ -761,11 +761,11 @@ export function ProjectSectionToolbar({
                 backAction
                     ? []
                     : [
-                          { id: "documents", label: "Documents" },
-                          { id: "assistant", label: "Chats" },
-                          { id: "reviews", label: "Tabular Reviews" },
-                          { id: "review", label: "Review" },
-                          { id: "dossier", label: "Analysis" },
+                          { id: "documents", label: "Documentos" },
+                          { id: "assistant", label: "Conversas" },
+                          { id: "reviews", label: "Revisão em tabela" },
+                          { id: "review", label: "Revisão" },
+                          { id: "dossier", label: "Análise" },
                       ]
             }
             active={activeSection}

@@ -328,7 +328,7 @@ describe("SidebarProjectItem", () => {
     renderItem(project());
 
     expect(
-      await screen.findByText("No chats or reviews yet"),
+      await screen.findByText("Nenhuma conversa ou revisão ainda"),
     ).toBeInTheDocument();
   });
 
@@ -343,7 +343,7 @@ describe("SidebarProjectItem", () => {
       "Some items could not be loaded.",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
     expect(
       await screen.findByRole("link", { name: "Tabular review: Lease review" }),
     ).toBeInTheDocument();
@@ -356,13 +356,13 @@ describe("SidebarProjectItem", () => {
     renderItem(project());
 
     expect(
-      await screen.findByRole("button", { name: "Retry" }),
+      await screen.findByRole("button", { name: "Tentar de novo" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("No chats or reviews yet"),
+      screen.queryByText("Nenhuma conversa ou revisão ainda"),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
     expect(
       await screen.findByRole("link", { name: "Chat: Due diligence" }),
     ).toBeInTheDocument();
@@ -388,13 +388,13 @@ describe("SidebarProjectItem", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not refresh items.",
+      "Não foi possível atualizar a lista.",
     );
     expect(
       screen.getByRole("link", { name: "Chat: Due diligence" }),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
     await waitFor(() =>
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
@@ -408,7 +408,7 @@ describe("SidebarProjectItem", () => {
     vi.mocked(listTabularReviews).mockRejectedValueOnce(new Error("boom"));
     renderItem(project());
 
-    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Tentar de novo" }));
 
     await waitFor(() =>
       expect(

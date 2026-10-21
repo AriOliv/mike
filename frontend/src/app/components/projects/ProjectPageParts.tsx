@@ -482,16 +482,16 @@ export function ProjectPageHeader({
         <PageHeader
             breadcrumbs={[
                 {
-                    label: "Projects",
+                    label: "Projetos",
                     onClick: onBackToProjects,
-                    title: "Back to Projects",
+                    title: "Voltar para Projetos",
                 },
                 {
                     ...(project
                         ? {
                               label: project.name,
                               onClick: onProjectRoot,
-                              title: "Back to project documents",
+                              title: "Voltar para os documentos do projeto",
                           }
                         : {
                               loading: true,
@@ -499,9 +499,9 @@ export function ProjectPageHeader({
                           }),
                 },
                 ...(activeSection === "assistant"
-                    ? [{ label: "Chats" }]
+                    ? [{ label: "Conversas" }]
                     : activeSection === "reviews"
-                      ? [{ label: "Tabular Reviews" }]
+                      ? [{ label: "Revisão em tabela" }]
                       : (documentFolderBreadcrumbs ?? [])),
             ]}
             actionGroups={[
