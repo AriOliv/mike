@@ -81,23 +81,23 @@ export async function signUpThroughUi(page, { email, password }) {
  * The shape is deliberate: OnboardingGate
  * (frontend/src/app/components/auth/OnboardingGate.tsx) pins anyone whose
  * profile.onboardingComplete is false to /onboarding/**, and bounces everyone
- * else off it to /assistant. Both /login and /signup push to
+ * else off it to the home screen (/inicio). Both /login and /signup push to
  * /onboarding/profile unconditionally, so a RETURNING account also visits that
  * URL for a moment before the gate replaces it — meaning the URL alone cannot
  * tell the two cases apart. Waiting for "either the step-1 Continue button or
- * the assistant composer" is what disambiguates them.
+ * the home screen's summary" is what disambiguates them.
  *
  * Step 1 (/onboarding/profile) collects Name + Organisation — the two fields
  * the old signup form used to ask for, which is why they are filled here — and
  * step 2 (/onboarding/practice) collects optional practice details. "Skip"
  * advances to step 3 (/onboarding/invitations), where "Finish" completes
- * onboarding and replaces the URL with /assistant.
+ * onboarding and replaces the URL with /inicio.
  */
 export async function completeOnboardingIfRequired(
   page,
   { name, organisation } = {},
 ) {
-  await page.waitForURL(/\/(assistant|onboarding\/profile)/, {
+  await page.waitForURL(/\/(inicio|onboarding\/profile)/, {
     timeout: 45_000,
   });
 
@@ -106,11 +106,9 @@ export async function completeOnboardingIfRequired(
       name: "Continue",
       exact: true,
     });
-    const assistantInput = page.getByRole("combobox", {
-      name: "How can I help?",
-    });
+    const homeSummary = page.getByRole("region", { name: "Resumo" });
     await continueButton
-      .or(assistantInput)
+      .or(homeSummary)
       .first()
       .waitFor({ state: "visible", timeout: 20_000 });
 
@@ -129,7 +127,7 @@ export async function completeOnboardingIfRequired(
     }
   }
 
-  await page.waitForURL(/\/assistant/, { timeout: 30_000 });
+  await page.waitForURL(/\/inicio/, { timeout: 30_000 });
 }
 
 /**

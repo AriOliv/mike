@@ -4565,6 +4565,337 @@ export async function getCardActivity(projectId: string, limit = 50): Promise<Ca
     return apiRequest(`/projects/${projectId}/activity?limit=${limit}`);
 }
 
+// ── Requests to the legal team ("pedidos") ─────────────────────────────────
+export type RequestKind = "contrato_novo" | "revisao" | "aditivo" | "nda" | "parecer" | "outro";
+export type RequestUrgency = "normal" | "alta" | "urgente";
+export type RequestStatus =
+    | "novo"
+    | "em_triagem"
+    | "em_andamento"
+    | "aguardando_solicitante"
+    | "entregue"
+    | "cancelado";
+export type RequestSla = "no_prazo" | "estourando" | "estourado" | "pausado" | "encerrado";
+export type RequesterStep = "recebido" | "em_analise" | "assinatura" | "concluido";
+
+export interface RequestMessage {
+    id: string;
+    kind: "question" | "answer" | "note";
+    body: string;
+    author_name: string | null;
+    author_email: string;
+    created_at: string;
+}
+
+export interface RequestParticipant {
+    id: string;
+    email: string;
+    role: "external" | "viewer";
+    label: string | null;
+    expires_at: string;
+    revoked_at: string | null;
+}
+
+export interface RequestTriage {
+    kind?: RequestKind;
+    kind_changed?: boolean;
+    counterparty?: string | null;
+    area?: string | null;
+    missing?: string[];
+    assignee_id?: string | null;
+    assignee_name?: string | null;
+    assignee_reason?: string | null;
+    playbook_id?: string | null;
+    playbook_name?: string | null;
+    ai?: boolean;
+    suggested_at?: string;
+    decision?: "accepted" | "edited" | "rejected" | null;
+    decided_at?: string;
+    decided_by?: string;
+}
+
+export interface LegalRequest {
+    id: string;
+    code: string;
+    title: string;
+    kind: RequestKind;
+    kind_label: string;
+    counterparty: string | null;
+    context: string;
+    urgency: RequestUrgency;
+    needed_by: string | null;
+    status: RequestStatus;
+    step: RequesterStep;
+    due_at: string;
+    sla: RequestSla;
+    summary: string | null;
+    assignee_name: string | null;
+    requester_name: string | null;
+    requester_email: string;
+    requester_area: string | null;
+    delivery: {
+        message: string | null;
+        delivered_at: string | null;
+        documents: { id: string; filename: string }[];
+    } | null;
+    messages: RequestMessage[];
+    created_at: string;
+    updated_at: string;
+    audience: "team" | "requester" | "guest";
+    // Team only.
+    number?: number;
+    project_id?: string | null;
+    lane?: string | null;
+    assignee_id?: string | null;
+    triage?: RequestTriage | null;
+    participants?: RequestParticipant[];
+    source?: { channel?: string; permalink?: string };
+    can_decide?: boolean;
+}
+
+export interface RequestListItem {
+    id: string;
+    code: string;
+    title: string;
+    kind: RequestKind;
+    kind_label: string;
+    counterparty: string | null;
+    status: RequestStatus;
+    sla: RequestSla;
+    due_at: string;
+    requester_name: string | null;
+    requester_email: string;
+    requester_area: string | null;
+    assignee_id: string | null;
+    assignee_name: string | null;
+    suggested_assignee_name: string | null;
+    triaged: boolean;
+    triage_pending: boolean;
+    channel: string;
+    project_id: string | null;
+    external: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RequestList {
+    scope: "team" | "requester";
+    is_head: boolean;
+    items: RequestListItem[];
+    counts: {
+        sem_dono: number;
+        sla_estourando: number;
+        aguardando_solicitante: number;
+        concluidos_semana: number;
+        meus: number;
+    };
+    team: { id: string; name: string; email: string }[];
+}
+
+export interface NewRequest {
+    kind: RequestKind;
+    title?: string;
+    counterparty?: string;
+    context?: string;
+    urgency?: RequestUrgency;
+    needed_by?: string | null;
+    document_ids?: string[];
+    requester_area?: string;
+}
+
+const jsonPost = (body: unknown): RequestInit => ({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+});
+
+export async function getRequestRole(): Promise<{
+    configured: boolean;
+    role: "head" | "team" | "requester";
+    /** The caller's remembered requesting area; null until they first say it. */
+    area: string | null;
+    areas: string[];
+}> {
+    return apiRequest("/requests/me");
+}
+
+export async function listRequests(options: { mine?: boolean } = {}): Promise<RequestList> {
+    return apiRequest(options.mine ? "/requests?mine=1" : "/requests");
+}
+
+export async function getRequest(id: string): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}`);
+}
+
+export async function createRequest(
+    body: NewRequest,
+): Promise<{ request: LegalRequest; deduplicated: boolean }> {
+    return apiRequest("/requests", jsonPost(body));
+}
+
+export async function assignRequest(id: string, assigneeId: string | null): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/assign`, jsonPost({ assignee_id: assigneeId }));
+}
+
+export async function decideRequestTriage(
+    id: string,
+    body: {
+        decision: "accepted" | "edited" | "rejected" | "reopened";
+        kind?: RequestKind;
+        counterparty?: string | null;
+        assignee_id?: string | null;
+        reason?: string;
+    },
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/triage`, jsonPost(body));
+}
+
+export async function postRequestMessage(
+    id: string,
+    body: string,
+    kind: "question" | "note" = "note",
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/messages`, jsonPost({ body, kind }));
+}
+
+export async function deliverRequest(
+    id: string,
+    body: { message?: string; document_ids?: string[] },
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/deliver`, jsonPost(body));
+}
+
+export async function inviteRequestParticipant(
+    id: string,
+    body: { email: string; role?: "external" | "viewer"; label?: string; days?: number },
+): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/participants`, jsonPost(body));
+}
+
+export async function revokeRequestParticipant(id: string, participantId: string): Promise<LegalRequest> {
+    return apiRequest(`/requests/${id}/participants/${participantId}`, { method: "DELETE" });
+}
+
+// ── Home ("Início"): automatic review of watched folders ────────────────────
+export type ContractReviewStatus = "queued" | "running" | "ready" | "done" | "failed";
+
+export interface HomeReview {
+    id: string;
+    project_id: string;
+    project_name: string;
+    counterparty: string | null;
+    lane: string | null;
+    document_id: string;
+    filename: string | null;
+    status: ContractReviewStatus;
+    /** What the agent is doing while it runs. */
+    step: "lendo" | "ficha" | "playbook" | null;
+    aligned: number;
+    needs_review: number;
+    deviates: number;
+    summary: string | null;
+    error: string | null;
+    assignee_email: string | null;
+    playbook_id: string | null;
+    playbook_run_id: string | null;
+    watched_folder_id: string | null;
+    requester_name: string | null;
+    deadline: string | null;
+    notice_deadline: string | null;
+    notice_days: number | null;
+    term_end: string | null;
+    /** The Ficha's headline: fields a person checked out of those that apply. */
+    ficha: { verified: number; total: number } | null;
+    /** The assignment agent's pick while nobody owns the review. */
+    suggested_assignee: string | null;
+    /** The owner's profile name, when they have one. */
+    assignee_name: string | null;
+    /** The request this contract came from (LEG-0142), for the link. */
+    request: { id: string; code: string } | null;
+    updated_at: string;
+}
+
+export interface HomeDeadline {
+    project_id: string;
+    project_name: string;
+    counterparty: string | null;
+    notice_deadline: string;
+    notice_days: number | null;
+    term_end: string | null;
+    auto_renewal: boolean | null;
+    days_left: number;
+}
+
+export interface HomeSummary {
+    /** When the caller last opened the home screen; null on a first visit. */
+    since: string | null;
+    greeting: { reviewed: number; reviewed_90d: number; failed: number; notices_closing: number; ready: number };
+    counters: { ready: number; mine: number; notices_30d: number; folders: number };
+    reviews: HomeReview[];
+    deadlines: HomeDeadline[];
+    activity: (CardEvent & { project_name: string })[];
+}
+
+export interface WatchedFolder {
+    id: string;
+    org_id: string | null;
+    name: string;
+    source: "upload" | "drive";
+    drive_folder_id: string | null;
+    drive_link: string | null;
+    playbook_id: string | null;
+    default_assignee_email: string | null;
+    active: boolean;
+    last_scanned_at: string | null;
+    created_at: string;
+    contracts?: number;
+}
+
+/** The home screen, narrowed to a workspace ("personal" or an organization id) when given. */
+export async function getHomeSummary(workspace?: string | null): Promise<HomeSummary> {
+    return apiRequest(workspace ? `/home?workspace=${encodeURIComponent(workspace)}` : "/home");
+}
+
+export async function listWatchedFolders(): Promise<WatchedFolder[]> {
+    return apiRequest("/watched-folders");
+}
+
+export async function createWatchedFolder(payload: {
+    name: string;
+    source?: "upload" | "drive";
+    drive_link?: string | null;
+    playbook_id?: string | null;
+    default_assignee_email?: string | null;
+    org_id?: string | null;
+}): Promise<WatchedFolder> {
+    return apiRequest("/watched-folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function watchProject(folderId: string, projectId: string): Promise<void> {
+    await apiRequest(`/watched-folders/${folderId}/projects/${projectId}`, { method: "PUT" });
+}
+
+/** Review the card's latest document now. */
+export async function requestContractReview(
+    projectId: string,
+): Promise<{ review_id: string; queued: boolean }> {
+    return apiRequest(`/projects/${projectId}/review`, { method: "POST" });
+}
+
+export async function updateContractReview(
+    reviewId: string,
+    payload: { status?: "done" | "ready"; assignee_email?: string | null },
+): Promise<{ id: string; status: ContractReviewStatus; assignee_email: string | null }> {
+    return apiRequest(`/contract-reviews/${reviewId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
 
 // ── Acervo ("Perguntar"): questions across the whole corpus ────────────────
 export interface AcervoSource {
@@ -4990,3 +5321,285 @@ export async function listContractFichas(
     return apiRequest(`/contracts/fichas${qs ? `?${qs}` : ""}`);
 }
 
+// ── Regulatory radar ("Radar regulatório") ──────────────────────────────────
+export type RegulatorySourceId = "bcb_normativos" | "dou" | "cvm_noticias" | "rfb_noticias";
+export type RegulatoryTopic = "psp" | "cripto" | "cambio" | "lgpd" | "pld";
+export type RegulatoryImpact = "alto" | "medio" | "baixo";
+export type RegulatoryChangeStatus = "nova" | "lida" | "arquivada";
+export type RegulatoryTab = "todas" | "nao_lidas" | "favoritas" | "arquivadas";
+
+export interface RegulatoryPreset {
+    key: string;
+    name: string;
+    description: string;
+    sources: RegulatorySourceId[];
+    issuers: string[];
+    keywords: string[];
+    topics: RegulatoryTopic[];
+}
+
+export interface RegulatoryCatalog {
+    presets: RegulatoryPreset[];
+    sources: { id: RegulatorySourceId; label: string }[];
+    topics: RegulatoryTopic[];
+}
+
+export interface RegulatoryScan {
+    id: string;
+    user_id: string | null;
+    org_id: string | null;
+    name: string;
+    preset: string | null;
+    sources: RegulatorySourceId[];
+    issuers: string[];
+    keywords: string[];
+    topics: RegulatoryTopic[];
+    enabled: boolean;
+    last_run_at: string | null;
+    last_error: string | null;
+    created_at: string;
+    counts: { novas: number; abertas: number; alto: number };
+}
+
+export interface RegulatoryAffectedContract {
+    project_id: string;
+    name: string;
+    counterparty: string | null;
+    term: string;
+    quote: string;
+}
+
+export interface RegulatoryChange {
+    id: string;
+    scan_id: string;
+    source: RegulatorySourceId;
+    title: string;
+    act_type: string | null;
+    issuer: string | null;
+    published_at: string | null;
+    url: string | null;
+    excerpt: string | null;
+    summary: string | null;
+    summary_quote: string | null;
+    impact: RegulatoryImpact;
+    impact_reason: string | null;
+    effective_date: string | null;
+    topics: RegulatoryTopic[];
+    matched_terms: string[];
+    affected: RegulatoryAffectedContract[];
+    affected_hidden: number;
+    suggested_action: string | null;
+    status: RegulatoryChangeStatus;
+    starred: boolean;
+    request_project_id: string | null;
+    obligation_id: string | null;
+    decided_by: string | null;
+    decided_at: string | null;
+    created_at: string;
+}
+
+export interface RegulatoryChangeList {
+    changes: RegulatoryChange[];
+    tabs: Record<RegulatoryTab, number>;
+}
+
+export async function getRegulatoryCatalog(): Promise<RegulatoryCatalog> {
+    return apiRequest("/regulatory/presets");
+}
+
+export async function listRegulatoryScans(): Promise<RegulatoryScan[]> {
+    return apiRequest("/regulatory/scans");
+}
+
+export async function createRegulatoryScan(body: {
+    preset?: string;
+    name?: string;
+    org_id?: string | null;
+    sources?: RegulatorySourceId[];
+    issuers?: string[];
+    keywords?: string[];
+    topics?: RegulatoryTopic[];
+}): Promise<RegulatoryScan> {
+    return apiRequest("/regulatory/scans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export async function updateRegulatoryScan(
+    id: string,
+    patch: { name?: string; enabled?: boolean; keywords?: string[] },
+): Promise<RegulatoryScan> {
+    return apiRequest(`/regulatory/scans/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+    });
+}
+
+export async function deleteRegulatoryScan(id: string): Promise<void> {
+    return apiRequest(`/regulatory/scans/${id}`, { method: "DELETE" });
+}
+
+export async function runRegulatoryScan(id: string): Promise<{ queued: boolean }> {
+    return apiRequest(`/regulatory/scans/${id}/run`, { method: "POST" });
+}
+
+export async function listRegulatoryChanges(params?: {
+    scanId?: string | null;
+    tab?: RegulatoryTab;
+    q?: string;
+}): Promise<RegulatoryChangeList> {
+    const qs = new URLSearchParams();
+    if (params?.scanId) qs.set("scan_id", params.scanId);
+    if (params?.tab) qs.set("tab", params.tab);
+    if (params?.q) qs.set("q", params.q);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiRequest(`/regulatory/changes${suffix}`);
+}
+
+export async function updateRegulatoryChange(
+    id: string,
+    patch: { status?: RegulatoryChangeStatus; starred?: boolean },
+): Promise<RegulatoryChange> {
+    return apiRequest(`/regulatory/changes/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+    });
+}
+
+/** "Criar pedido": a card on the pipeline's Entrada lane carrying the change. */
+export async function createRequestFromRegulatoryChange(
+    id: string,
+    body: { assignee_email?: string | null } = {},
+): Promise<{ project_id: string; change: RegulatoryChange }> {
+    return apiRequest(`/regulatory/changes/${id}/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+/** "Criar obrigação": the date the rule takes effect, on the deadline radar. */
+export async function createObligationFromRegulatoryChange(
+    id: string,
+    body: { due_date?: string } = {},
+): Promise<{ obligation_id: string; change: RegulatoryChange }> {
+    return apiRequest(`/regulatory/changes/${id}/obligation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export type RegulatoryRuleStatus = "pendente" | "aprovada" | "rejeitada";
+
+export interface RegulatoryRuleSuggestion {
+    id: string;
+    change_id: string;
+    org_id: string | null;
+    playbook_id: string | null;
+    title: string;
+    guidance: string;
+    source_quote: string | null;
+    source_url: string | null;
+    status: RegulatoryRuleStatus;
+    suggested_by: string;
+    decided_by: string | null;
+    decided_at: string | null;
+    decision_note: string | null;
+    created_at: string;
+}
+
+/** "Adicionar ao playbook": a suggested rule an organization admin approves before it counts. */
+export async function suggestRuleFromRegulatoryChange(
+    id: string,
+    body: { guidance?: string; playbook_id?: string | null } = {},
+): Promise<RegulatoryRuleSuggestion> {
+    return apiRequest(`/regulatory/changes/${id}/rule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export async function listRegulatoryRuleSuggestions(status?: RegulatoryRuleStatus): Promise<RegulatoryRuleSuggestion[]> {
+    return apiRequest(`/regulatory/rules${status ? `?status=${status}` : ""}`);
+}
+
+export async function decideRegulatoryRuleSuggestion(
+    id: string,
+    body: { status: "aprovada" | "rejeitada"; note?: string },
+): Promise<RegulatoryRuleSuggestion> {
+    return apiRequest(`/regulatory/rules/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+// ── Legal dashboard ("Painel do Legal") ─────────────────────────────────────
+export interface DashboardAssumptions {
+    minutes_per_review: number;
+    minutes_per_terms: number;
+    minutes_per_regulatory_triage: number;
+}
+
+export interface LegalDashboard {
+    period_days: number;
+    generated_at: string;
+    volume: {
+        opened: number;
+        closed: number;
+        open: number;
+        weekly: { week: string; opened: number; closed: number }[];
+        by_type: { label: string; count: number }[];
+        by_requester: { label: string; count: number }[];
+    };
+    cycle: {
+        median_days_to_close: number | null;
+        closed_measured: number;
+        stage_age: { lane: PipelineLane; open: number; median_days: number | null }[];
+        per_stage_history: { lane: PipelineLane; moves: number; median_days: number | null }[];
+        per_stage_moves: number;
+    };
+    sla: { closed_with_deadline: number; on_time: number; rate: number | null; open_overdue: number };
+    notice: { due_in_30_days: number; missed_in_period: number };
+    /** Null until the Ficha is installed on this database. */
+    ficha: { contracts: number; fields: number; verified: number; rate: number | null } | null;
+    agents: {
+        contracts_reviewed_by_agents: number;
+        contracts_reviewed_by_people: number;
+        playbook_runs: number;
+        terms_extracted: number;
+        regulatory_changes_triaged: number;
+        regulatory_turned_into_work: number;
+    };
+    hours_saved: { hours: number; assumptions: DashboardAssumptions; formula: string };
+    adoption: {
+        people: { email: string; assigned_open: number; closed: number; reviews_run: number }[];
+        reviews_by_user_id: { user_id: string; count: number }[];
+    };
+    ai_cost: {
+        total_usd: number;
+        runs: number;
+        per_contract_usd: number;
+        by_agent: { agent: string; usd: number }[];
+    } | null;
+}
+
+export async function getLegalDashboard(params?: {
+    period?: 30 | 90 | 365;
+    assumptions?: Partial<DashboardAssumptions>;
+}): Promise<LegalDashboard> {
+    const qs = new URLSearchParams();
+    if (params?.period) qs.set("period", String(params.period));
+    const a = params?.assumptions;
+    if (a?.minutes_per_review) qs.set("min_review", String(a.minutes_per_review));
+    if (a?.minutes_per_terms) qs.set("min_terms", String(a.minutes_per_terms));
+    if (a?.minutes_per_regulatory_triage) qs.set("min_regulatory", String(a.minutes_per_regulatory_triage));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiRequest(`/dashboard${suffix}`);
+}

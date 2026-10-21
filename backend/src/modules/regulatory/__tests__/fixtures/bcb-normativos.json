@@ -1,0 +1,75 @@
+{
+ "TotalRows": 5,
+ "RowCount": 5,
+ "Rows": [
+  {
+   "title": "Comunicado N° 46.152",
+   "RefinableString01": "string;#20/10/2026 18:30",
+   "AssuntoNormativoOWSMTXT": "<div class=\"ExternalClass413C1BC7079D4394B701582FC17CA384\">Divulga condições para a realização de operações compromissadas com instituições financeiras participantes do módulo Oferta Pública (Ofpub).</div>",
+   "ResponsavelOWSText": "DEMAB",
+   "listItemId": "136553",
+   "TipodoNormativoOWSCHCS": "Comunicado",
+   "NumeroOWSNMBR": "46152.0000000000",
+   "RevogadoOWSBOOL": "0",
+   "HitHighlightedSummary": "Divulga condições para a realização de operações compromissadas com instituições financeiras participantes do módulo Oferta Pública (Ofpub <ddd/> II – valor financeiro máximo desta oferta <ddd/> ",
+   "CanceladoOWSBOOL": "0",
+   "data": "2026-10-20T21:30:14Z",
+   "RefinableString03": "string;#Comunicado",
+   "RowNumber": 0
+  },
+  {
+   "title": "Comunicado N° 46.151",
+   "RefinableString01": "string;#20/10/2026 18:30",
+   "AssuntoNormativoOWSMTXT": "<div class=\"ExternalClassCCA66746B78F410F9D4E11A88DE327FE\">Divulga as condições de oferta pública para a realização de operações de swap para fins de rolagem do vencimento de 03/11/2026</div>",
+   "ResponsavelOWSText": "DEPIN",
+   "listItemId": "136552",
+   "TipodoNormativoOWSCHCS": "Comunicado",
+   "NumeroOWSNMBR": "46151.0000000000",
+   "RevogadoOWSBOOL": "0",
+   "HitHighlightedSummary": "Divulga as condições de oferta pública para a realização de operações de swap para fins de rolagem do vencimento de 03/11/2026 <ddd/> O Banco Central do Brasil, tendo em vista o disposto <ddd/> ",
+   "CanceladoOWSBOOL": "0",
+   "data": "2026-10-20T21:30:09Z",
+   "RefinableString03": "string;#Comunicado",
+   "RowNumber": 1
+  },
+  {
+   "title": "Comunicado N° 46.150",
+   "RefinableString01": "string;#20/10/2026 14:48",
+   "AssuntoNormativoOWSMTXT": "<div class=\"ExternalClass42D3EE932877473DBA52C4CB24BCFE8E\">Divulga intenção de cancelar a autorização para funcionamento da Sants Sociedade de Crédito Direto S.A.\r\n</div>",
+   "ResponsavelOWSText": "DEORF",
+   "listItemId": "136551",
+   "TipodoNormativoOWSCHCS": "Comunicado",
+   "NumeroOWSNMBR": "46150.0000000000",
+   "RevogadoOWSBOOL": "0",
+   "HitHighlightedSummary": "Divulga intenção de cancelar a autorização para funcionamento da Sants Sociedade de Crédito Direto S.A. <ddd/> O Banco Central do Brasil, com base no disposto no artigo 23, § 1º, inciso I <ddd/> ",
+   "CanceladoOWSBOOL": "0",
+   "data": "2026-10-20T17:48:14Z",
+   "RefinableString03": "string;#Comunicado",
+   "RowNumber": 2
+  },
+  {
+   "title": "Resolução BCB N° 999",
+   "RefinableString01": "string;#19/10/2026 10:00",
+   "AssuntoNormativoOWSMTXT": "<div>Dispõe sobre a prestação de serviços de ativos virtuais por prestadoras de serviços de ativos virtuais. Esta Resolução entra em vigor em 2 de fevereiro de 2027.</div>",
+   "ResponsavelOWSText": "DENOR",
+   "listItemId": "900001",
+   "TipodoNormativoOWSCHCS": "Resolução BCB",
+   "NumeroOWSNMBR": "999.0000000000",
+   "RevogadoOWSBOOL": "0",
+   "CanceladoOWSBOOL": "0",
+   "data": "2026-10-19T13:00:00Z",
+   "RowNumber": 3
+  },
+  {
+   "title": "Circular N° 1",
+   "RefinableString01": "string;#01/01/2020 10:00",
+   "AssuntoNormativoOWSMTXT": "<div>Revogada.</div>",
+   "listItemId": "900002",
+   "TipodoNormativoOWSCHCS": "Circular",
+   "NumeroOWSNMBR": "1.0",
+   "RevogadoOWSBOOL": "1",
+   "CanceladoOWSBOOL": "0",
+   "data": "2020-01-01T13:00:00Z"
+  }
+ ]
+}

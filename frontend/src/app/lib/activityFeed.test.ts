@@ -3,6 +3,7 @@ import {
     activitySentence,
     actorLabel,
     describeEvent,
+    fieldLabel,
     relativeTime,
     toActivityItems,
     type CardEventRow,
@@ -22,6 +23,17 @@ function event(overrides: Partial<CardEventRow>): CardEventRow {
         ...overrides,
     };
 }
+
+describe("fieldLabel", () => {
+    it("names known fields, keeps words, and hides internal names", () => {
+        expect(fieldLabel("assignee_email")).toBe("responsável");
+        expect(fieldLabel("Cessão do contrato")).toBe("Cessão do contrato");
+        expect(fieldLabel("identificacao.tipo")).toBeUndefined();
+        expect(fieldLabel("riskLevel")).toBeUndefined();
+        expect(fieldLabel("  ")).toBeUndefined();
+        expect(fieldLabel(null)).toBeUndefined();
+    });
+});
 
 describe("actorLabel", () => {
     it("prefers the stored name", () => {
@@ -59,6 +71,16 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "assignee.changed", after: null }))).toEqual({
             verb: "removeu o responsável",
         });
+        expect(
+            describeEvent(event({ action: "assignee.changed", after: { name: "Legal Demo", steps: ["x"] } })),
+        ).toEqual({ verb: "atribuiu a", object: "Legal Demo" });
+        expect(describeEvent(event({ action: "assignee.changed", after: { email: "ana@x.com" } })).object).toBe("ana");
+        expect(describeEvent(event({ action: "assignee.suggested", after: { name: "Duda" } }))).toEqual({
+            verb: "sugeriu como responsável",
+            object: "Duda",
+        });
+        expect(describeEvent(event({ action: "assignee.suggested", after: { email: "duda@x.com" } })).object).toBe("duda");
+        expect(describeEvent(event({ action: "assignee.suggested" })).object).toBeUndefined();
     });
 
     it("describes progress, known and unknown", () => {
@@ -80,6 +102,30 @@ describe("describeEvent", () => {
         });
     });
 
+    it("describes the requests' moves: triage, suggestion, questions, delivery, guests", () => {
+        expect(describeEvent(event({ action: "request.created", after: { code: "LEG-0007" } })).object).toBe("LEG-0007");
+        expect(describeEvent(event({ action: "request.triaged", after: { kind: "nda" } }))).toEqual({
+            verb: "fez a triagem",
+            object: "NDA",
+        });
+        expect(describeEvent(event({ action: "request.triaged", after: {} })).object).toBeUndefined();
+        expect(describeEvent(event({ action: "triage.accepted" })).verb).toBe("aceitou a triagem");
+        expect(describeEvent(event({ action: "triage.edited" })).verb).toBe("ajustou a triagem");
+        expect(describeEvent(event({ action: "triage.rejected" })).verb).toBe("recusou a triagem");
+        expect(describeEvent(event({ action: "triage.reopened" })).verb).toBe("reabriu a triagem");
+        expect(describeEvent(event({ action: "request.question" })).verb).toBe("perguntou ao solicitante");
+        expect(describeEvent(event({ action: "request.answered" })).verb).toBe("respondeu");
+        expect(describeEvent(event({ action: "request.delivered" })).verb).toBe("entregou o pedido");
+        expect(
+            describeEvent(event({ action: "participant.invited", after: { email: "a@b.c", label: "Escritório X" } })).object,
+        ).toBe("Escritório X");
+        expect(describeEvent(event({ action: "participant.invited", after: { email: "a@b.c" } })).object).toBe("a@b.c");
+        expect(describeEvent(event({ action: "participant.revoked", after: { email: "a@b.c" } }))).toEqual({
+            verb: "removeu o acesso de",
+            object: "a@b.c",
+        });
+    });
+
     it("describes the remaining actions and falls back to the raw action", () => {
         expect(describeEvent(event({ action: "document.added", after: { document: "B" } })).object).toBe("B");
         expect(describeEvent(event({ action: "folder.watched", after: { folder: "Fornecedores" } })).object).toBe(
@@ -91,8 +137,33 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "comment.added" })).verb).toBe("comentou");
         expect(describeEvent(event({ action: "review.accepted" })).verb).toBe("aceitou a revisão");
         expect(describeEvent(event({ action: "field.updated", field: "prazo" })).object).toBe("prazo");
-        expect(describeEvent(event({ action: "field.updated" })).object).toBeUndefined();
-        expect(describeEvent(event({ action: "x.y" })).verb).toBe("x.y");
+        expect(describeEvent(event({ action: "field.updated", field: "status" })).object).toBe("progresso");
+        expect(describeEvent(event({ action: "field.updated", field: "risk_level" })).object).toBe("risco");
+        expect(describeEvent(event({ action: "field.updated", field: "some_column" }))).toEqual({
+            verb: "atualizou o contrato",
+        });
+        expect(describeEvent(event({ action: "field.updated" })).verb).toBe("atualizou o contrato");
+        expect(describeEvent(event({ action: "x.y" })).verb).toBe("registrou uma atualização");
+        expect(describeEvent(event({ action: "agent.started" })).verb).toBe("começou a trabalhar neste contrato");
+        expect(describeEvent(event({ action: "agent.suggested", field: "risk_level" })).object).toBe("risco");
+        expect(describeEvent(event({ action: "agent.suggested", field: "triage" })).object).toBe("triagem");
+        expect(describeEvent(event({ action: "agent.suggested", field: "x.y", after: { value: "z" } })).object).toBe("z");
+        expect(describeEvent(event({ action: "agent.suggested", field: "risco", after: { sources: 2 } }))).toEqual({
+            verb: "sugeriu",
+            object: "risco",
+            sources: 2,
+        });
+        expect(describeEvent(event({ action: "agent.suggested", after: { suggestion: "risco alto" } })).object).toBe(
+            "risco alto",
+        );
+        expect(describeEvent(event({ action: "agent.suggested", after: { value: "NDA" } })).object).toBe("NDA");
+        expect(describeEvent(event({ action: "agent.suggested" }))).toEqual({ verb: "fez uma sugestão", sources: undefined });
+        expect(describeEvent(event({ action: "agent.failed" })).verb).toBe("não conseguiu terminar o trabalho");
+        expect(describeEvent(event({ action: "document.version_added", after: { document: "v2.docx" } })).object).toBe(
+            "v2.docx",
+        );
+        expect(describeEvent(event({ action: "notification.sent", after: { to: "Slack" } })).object).toBe("Slack");
+        expect(describeEvent(event({ action: "kb.ask" })).verb).toBe("perguntou à base");
     });
 });
 

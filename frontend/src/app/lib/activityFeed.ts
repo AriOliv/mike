@@ -61,12 +61,53 @@ const LANE_LABEL: Record<string, string> = {
     arquivado: "Arquivado",
 };
 
+const KIND_LABEL: Record<string, string> = {
+    contrato_novo: "Contrato novo",
+    revisao: "Revisão de contrato",
+    aditivo: "Aditivo ou renovação",
+    nda: "NDA",
+    parecer: "Parecer ou dúvida",
+    outro: "Outro",
+};
+
 const STATUS_LABEL: Record<string, string> = {
     a_fazer: "A fazer",
     em_andamento: "Em andamento",
     bloqueado: "Bloqueado",
     concluido: "Concluído",
 };
+
+/** Card and Ficha fields as people name them. */
+export const FIELD_LABEL: Record<string, string> = {
+    lane: "etapa",
+    status: "progresso",
+    assignee_email: "responsável",
+    priority: "prioridade",
+    deadline: "prazo",
+    risk_level: "risco",
+    contract_type: "tipo de contrato",
+    counterparty: "contraparte",
+    requester_name: "solicitante",
+    triage: "triagem",
+    notice_days: "aviso prévio",
+    notice_deadline: "prazo do aviso",
+    term_end: "vencimento",
+    auto_renewal: "renovação automática",
+    penalty_value: "multa",
+    liability_cap: "limite de responsabilidade",
+};
+
+/**
+ * A field in words: its label when known, the text as is when it already
+ * reads as words ("Cessão do contrato"), and nothing for an unknown internal
+ * name ("risk_level", "identificacao.tipo"), which never reaches the screen.
+ */
+export function fieldLabel(field: string | null | undefined): string | undefined {
+    const name = field?.trim();
+    if (!name) return undefined;
+    if (FIELD_LABEL[name]) return FIELD_LABEL[name];
+    return /[_.]/.test(name) || /^[a-z]+[A-Z]/.test(name) ? undefined : name;
+}
 
 /** "agent:revisor@1" → "revisor". */
 function agentKey(actorId: string): string {
@@ -99,8 +140,13 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "moveu para", object: (lane && LANE_LABEL[lane]) ?? lane ?? "fora da esteira" };
         }
         case "assignee.changed": {
-            const who = text(event.after);
+            // A plain e-mail from the pipeline, or { name, email } from an agent.
+            const who = text(event.after) ?? text(after.name) ?? text(after.email);
             return who ? { verb: "atribuiu a", object: who.split("@")[0] } : { verb: "removeu o responsável" };
+        }
+        case "assignee.suggested": {
+            const who = text(after.name) ?? text(after.email);
+            return { verb: "sugeriu como responsável", object: who?.split("@")[0] };
         }
         case "status.changed": {
             const status = text(event.after);
@@ -117,19 +163,57 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
         case "folder.watched":
             return { verb: "passou a monitorar a pasta", object: text(after.folder) };
         case "request.created":
-            return { verb: "criou o pedido", object: text(after.request) };
+            return { verb: "criou o pedido", object: text(after.request) ?? text(after.code) };
+        case "request.triaged":
+            return { verb: "fez a triagem", object: text(after.kind) && KIND_LABEL[text(after.kind)!] };
+        case "triage.accepted":
+            return { verb: "aceitou a triagem" };
+        case "triage.edited":
+            return { verb: "ajustou a triagem" };
+        case "triage.rejected":
+            return { verb: "recusou a triagem" };
+        case "triage.reopened":
+            return { verb: "reabriu a triagem" };
+        case "request.question":
+            return { verb: "perguntou ao solicitante" };
+        case "request.answered":
+            return { verb: "respondeu" };
+        case "request.delivered":
+            return { verb: "entregou o pedido" };
+        case "participant.invited":
+            return { verb: "convidou", object: text(after.label) ?? text(after.email) };
+        case "participant.revoked":
+            return { verb: "removeu o acesso de", object: text(after.email) };
         case "comment.added":
             return { verb: "comentou" };
         case "review.accepted":
             return { verb: "aceitou a revisão" };
-        case "field.updated":
-            return { verb: "atualizou", object: event.field ?? undefined };
+        case "field.updated": {
+            const what = fieldLabel(event.field);
+            return what ? { verb: "atualizou", object: what } : { verb: "atualizou o contrato" };
+        }
         case "review.clause_aceito":
         case "review.clause_editado":
         case "review.clause_rejeitado":
             return clauseDecision(event, after);
+        case "agent.started":
+            return { verb: "começou a trabalhar neste contrato" };
+        case "agent.suggested": {
+            // The field it suggested ("risco alto", "Duda como responsável"), else a plain sentence.
+            const what = fieldLabel(event.field) ?? text(after.suggestion) ?? text(after.value);
+            return what ? { verb: "sugeriu", object: what, sources } : { verb: "fez uma sugestão", sources };
+        }
+        case "agent.failed":
+            return { verb: "não conseguiu terminar o trabalho" };
+        case "document.version_added":
+            return { verb: "adicionou uma nova versão", object: text(after.document) };
+        case "notification.sent":
+            return { verb: "avisou", object: text(after.to) };
+        case "kb.ask":
+            return { verb: "perguntou à base" };
         default:
-            return { verb: event.action };
+            // An action this screen does not know yet: say something true, never the raw name.
+            return { verb: "registrou uma atualização" };
     }
 }
 

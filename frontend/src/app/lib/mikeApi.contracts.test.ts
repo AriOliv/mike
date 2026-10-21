@@ -18,7 +18,23 @@ import {
     fetchAuthedObjectUrl,
     getContractTerms,
     getDocumentPreview,
+    createWatchedFolder,
     getCardActivity,
+    assignRequest,
+    createRequest,
+    decideRequestTriage,
+    deliverRequest,
+    getRequest,
+    getRequestRole,
+    inviteRequestParticipant,
+    listRequests,
+    postRequestMessage,
+    revokeRequestParticipant,
+    getHomeSummary,
+    listWatchedFolders,
+    requestContractReview,
+    updateContractReview,
+    watchProject,
     getDossier,
     getIntegrationStatus,
     getObligations,
@@ -116,6 +132,44 @@ describe("acervo and contract analysis", () => {
         expect(lastFetchCall().url).toMatch(/limit=5$/);
     });
 
+    it("reads the home screen and the watched folders", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ reviews: [] }));
+        await getHomeSummary();
+        expect(lastFetchCall().url).toMatch(/\/home$/);
+        fetchMock.mockResolvedValue(jsonResponse({ reviews: [] }));
+        await getHomeSummary("org 1");
+        expect(lastFetchCall().url).toMatch(/\/home\?workspace=org%201$/);
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        await listWatchedFolders();
+        expect(lastFetchCall().url).toMatch(/\/watched-folders$/);
+    });
+
+    it("creates a watched folder and puts a card in it", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "f1" }));
+        await createWatchedFolder({ name: "Fornecedores", playbook_id: "pb1" });
+        const created = lastFetchCall();
+        expect(created.url).toMatch(/\/watched-folders$/);
+        expect(created.init?.method).toBe("POST");
+        expect(JSON.parse(String(created.init?.body))).toEqual({ name: "Fornecedores", playbook_id: "pb1" });
+
+        fetchMock.mockResolvedValue(jsonResponse({ project_id: "p1" }));
+        await watchProject("f1", "p1");
+        expect(lastFetchCall().url).toMatch(/\/watched-folders\/f1\/projects\/p1$/);
+        expect(lastFetchCall().init?.method).toBe("PUT");
+    });
+
+    it("queues a review and decides one", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ review_id: "r1", queued: true }));
+        await expect(requestContractReview("p1")).resolves.toEqual({ review_id: "r1", queued: true });
+        expect(lastFetchCall().url).toMatch(/\/projects\/p1\/review$/);
+        expect(lastFetchCall().init?.method).toBe("POST");
+
+        fetchMock.mockResolvedValue(jsonResponse({ id: "r1", status: "done" }));
+        await updateContractReview("r1", { status: "done" });
+        expect(lastFetchCall().url).toMatch(/\/contract-reviews\/r1$/);
+        expect(JSON.parse(String(lastFetchCall().init?.body))).toEqual({ status: "done" });
+    });
+
     it("reads a project's dossier", async () => {
         fetchMock.mockResolvedValue(jsonResponse(null));
         await expect(getDossier("p1")).resolves.toBeNull();
@@ -180,6 +234,53 @@ describe("radar", () => {
         fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
         await deleteObligation("o1");
         expect(lastFetchCall().url).toMatch(/\/obligations\/o1$/);
+        expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+});
+
+describe("requests to the legal team", () => {
+    it("reads the caller's role, the queue, their own list and one request", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await getRequestRole();
+        expect(lastFetchCall().url).toMatch(/\/requests\/me$/);
+        await listRequests();
+        expect(lastFetchCall().url).toMatch(/\/requests$/);
+        await listRequests({ mine: true });
+        expect(lastFetchCall().url).toMatch(/\/requests\?mine=1$/);
+        await getRequest("r1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1$/);
+    });
+
+    it("POSTs a new request and each of the team's moves", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await createRequest({ kind: "nda", counterparty: "Polaris" });
+        expect(lastFetchCall().url).toMatch(/\/requests$/);
+        expect(lastFetchCall().init.method).toBe("POST");
+        expect(jsonBody()).toEqual({ kind: "nda", counterparty: "Polaris" });
+
+        await assignRequest("r1", "u2");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/assign$/);
+        expect(jsonBody()).toEqual({ assignee_id: "u2" });
+
+        await decideRequestTriage("r1", { decision: "edited", kind: "parecer" });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/triage$/);
+        expect(jsonBody()).toEqual({ decision: "edited", kind: "parecer" });
+
+        await postRequestMessage("r1", "Tem a minuta?", "question");
+        expect(jsonBody()).toEqual({ body: "Tem a minuta?", kind: "question" });
+        await postRequestMessage("r1", "Segue");
+        expect(jsonBody()).toEqual({ body: "Segue", kind: "note" });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/messages$/);
+
+        await deliverRequest("r1", { message: "ok", document_ids: ["d1"] });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/deliver$/);
+
+        await inviteRequestParticipant("r1", { email: "x@y.z", label: "Escritório X" });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/participants$/);
+        expect(jsonBody()).toEqual({ email: "x@y.z", label: "Escritório X" });
+
+        await revokeRequestParticipant("r1", "p1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/participants\/p1$/);
         expect(lastFetchCall().init.method).toBe("DELETE");
     });
 });

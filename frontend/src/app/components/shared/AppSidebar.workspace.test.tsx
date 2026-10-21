@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   organizations: [] as Org[] | null,
   setWorkspace: vi.fn(),
   push: vi.fn(),
-  pathname: "/assistant",
+  pathname: "/inicio",
   showToast: vi.fn(),
   chats: [] as Chat[],
 }));
@@ -105,7 +105,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.workspaceId = "personal";
   state.organizations = [];
-  state.pathname = "/assistant";
+  state.pathname = "/inicio";
   state.chats = [];
   vi.mocked(listTabularReviews).mockResolvedValue([]);
   vi.mocked(listProjectsPage).mockResolvedValue([]);
@@ -178,7 +178,7 @@ describe("AppSidebar workspace switcher", () => {
     // Still the way home, whatever it is called.
     expect(screen.getByRole("link", { name: "Acme LLP" })).toHaveAttribute(
       "href",
-      "/assistant",
+      "/inicio",
     );
   });
 
@@ -372,11 +372,11 @@ describe("AppSidebar workspace switcher", () => {
     );
     // The switcher is navigation. The list being left is not reloaded for
     // the new workspace first: the workspace has not changed yet.
-    expect(state.push).toHaveBeenCalledExactlyOnceWith("/assistant");
+    expect(state.push).toHaveBeenCalledExactlyOnceWith("/inicio");
     expect(state.setWorkspace).not.toHaveBeenCalled();
     expect(state.showToast).not.toHaveBeenCalled();
 
-    state.pathname = "/assistant";
+    state.pathname = "/inicio";
     view.rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
     expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith(BETA.id);
     // The notice comes with the switch, not before it.

@@ -10,6 +10,8 @@
  * Ficha's columns.
  */
 
+import { DEFAULT_HOME } from "./authRedirects";
+
 export type NavIconKey =
     | "chat"
     | "ide"
@@ -28,9 +30,12 @@ export type NavItem = {
 };
 
 export const NAV_MAIN: readonly NavItem[] = [
+    { href: DEFAULT_HOME, label: "Início", icon: "tabular" },
+    { href: "/pedidos", label: "Pedidos", icon: "chat" },
     { href: "/pipeline", label: "Esteira", icon: "folder" },
     { href: "/contratos", label: "Contratos", icon: "tabular" },
     { href: "/radar", label: "Prazos", icon: "workflow" },
+    { href: "/radar-regulatorio", label: "Radar regulatório", icon: "workflow" },
     { href: "/acervo", label: "Perguntar", icon: "library" },
 ];
 
@@ -46,10 +51,36 @@ export const NAV_MORE: readonly NavItem[] = [
     { href: "/workflows", label: "Workflows", icon: "workflow" },
     { href: "/projects", label: "Projetos", icon: "folder", exact: true },
     { href: "/assistant", label: "Assistente", icon: "chat", exact: true },
+    { href: "/painel", label: "Painel do Legal", icon: "tabular" },
 ];
 
 /** Whether `item` is the page the user is on. */
 export function isNavItemActive(item: NavItem, pathname: string): boolean {
     if (item.exact) return pathname === item.href;
     return pathname === item.href || pathname.startsWith(item.href + "/");
+}
+
+/** Who the caller is to the Legal team, as GET /requests/me answers it. */
+export type NavRole = "head" | "team" | "requester";
+
+/** The only pages someone outside the Legal team works in (docs/product/05 §1). */
+const REQUESTER_HREFS: readonly string[] = ["/inicio", "/pedidos"];
+
+/**
+ * The menu for `role`. Whoever only asks the Legal team for things sees
+ * Início and their Pedidos, with no "Mais" and no project lists: the team's
+ * workstation is not theirs. An unknown role (still loading, or a server
+ * without the requests module) gets the whole menu, as before.
+ */
+export function navForRole(role: NavRole | null): {
+    main: readonly NavItem[];
+    more: readonly NavItem[];
+    workLists: boolean;
+} {
+    if (role !== "requester") return { main: NAV_MAIN, more: NAV_MORE, workLists: true };
+    return {
+        main: NAV_MAIN.filter((item) => REQUESTER_HREFS.includes(item.href)),
+        more: [],
+        workLists: false,
+    };
 }

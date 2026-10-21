@@ -278,7 +278,7 @@ try {
   //    password login goes), and OnboardingGate then decides: round one is a
   //    brand-new account, so it stays on the wizard and we walk it; round two
   //    is the SAME account coming back with onboarding already complete, so
-  //    the gate bounces it straight to /assistant and the helper is a no-op.
+  //    the gate bounces it straight to /inicio and the helper is a no-op.
   //    That asymmetry is the interesting half of the guest story, which is why
   //    the same helper runs in both rounds instead of only the first.
   for (const round of ["first click (creates the guest account)", "second click (signs into it)"]) {
