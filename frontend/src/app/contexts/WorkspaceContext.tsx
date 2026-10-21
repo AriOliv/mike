@@ -70,16 +70,37 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
 // A convenience remembered per account and per browser: it can come back
 // empty or throw (private windows, blocked site data), and the app must work
 // the same without it.
-function readStoredWorkspace(userId: string | undefined): string {
-    if (!userId) return PERSONAL_WORKSPACE;
+function readStoredWorkspace(userId: string | undefined): string | null {
+    if (!userId) return null;
     try {
-        return (
-            window.localStorage.getItem(STORAGE_PREFIX + userId) ||
-            PERSONAL_WORKSPACE
-        );
+        return window.localStorage.getItem(STORAGE_PREFIX + userId) || null;
     } catch {
-        return PERSONAL_WORKSPACE;
+        return null;
     }
+}
+
+/**
+ * Where an account with no remembered workspace starts, once its
+ * organizations are known: the one team it belongs to, if it belongs to
+ * exactly one, since that is where its work is; otherwise Personal, rather
+ * than guessing between several.
+ */
+export function defaultWorkspace(orgs: Org[]): string {
+    const teams = orgs.filter((org) => (org.kind ?? "team") === "team");
+    return teams.length === 1 ? teams[0].id : PERSONAL_WORKSPACE;
+}
+
+/**
+ * The selection for an account: its remembered workspace, or Personal until
+ * its organizations are read and a default is picked (`pending`).
+ */
+function initialSelection(userId: string | undefined) {
+    const stored = readStoredWorkspace(userId);
+    return {
+        userId,
+        workspaceId: stored ?? PERSONAL_WORKSPACE,
+        pending: stored === null,
+    };
 }
 
 /** Also used during onboarding, before the app's WorkspaceProvider mounts. */
@@ -95,16 +116,15 @@ export function storeWorkspace(userId: string | undefined, workspaceId: string) 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const { user } = useAuth();
     const userId = user?.id;
-    const [selection, setSelection] = useState(() => ({
-        userId,
-        workspaceId: readStoredWorkspace(userId),
-    }));
+    const [selection, setSelection] = useState(() =>
+        initialSelection(userId),
+    );
     const [organizations, setOrganizations] = useState<Org[] | null>(null);
 
     // A different account signed in under the same mounted provider: its
     // remembered workspace applies, not the previous account's.
     if (selection.userId !== userId) {
-        setSelection({ userId, workspaceId: readStoredWorkspace(userId) });
+        setSelection(initialSelection(userId));
         setOrganizations(null);
     }
     const storedWorkspaceId = selection.workspaceId;
@@ -120,17 +140,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             return;
         }
         setOrganizations(next);
-        // The remembered workspace is only as good as the membership behind
-        // it. One the caller no longer belongs to falls back to Personal
-        // rather than leaving every list empty — and stays there, so being
-        // invited back later does not silently move them again.
-        setSelection((current) =>
-            current.userId !== userId ||
-            current.workspaceId === PERSONAL_WORKSPACE ||
-            next.some((org) => org.id === current.workspaceId)
+        setSelection((current) => {
+            if (current.userId !== userId) return current;
+            // Nothing remembered yet: start where this account's work is.
+            if (current.pending)
+                return {
+                    userId,
+                    workspaceId: defaultWorkspace(next),
+                    pending: false,
+                };
+            // The remembered workspace is only as good as the membership
+            // behind it. One the caller no longer belongs to falls back to
+            // Personal rather than leaving every list empty — and stays
+            // there, so being invited back later does not silently move them
+            // again.
+            return current.workspaceId === PERSONAL_WORKSPACE ||
+                next.some((org) => org.id === current.workspaceId)
                 ? current
-                : { userId, workspaceId: PERSONAL_WORKSPACE },
-        );
+                : { userId, workspaceId: PERSONAL_WORKSPACE, pending: false };
+        });
     }, [userId]);
 
     useEffect(() => {
@@ -165,9 +193,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             ? PERSONAL_WORKSPACE
             : storedWorkspaceId;
 
+    // Remembered only once it is a choice, so a reload before the
+    // organizations arrive still gets the default picked for it.
+    const pending = selection.pending;
     useEffect(() => {
-        storeWorkspace(userId, workspaceId);
-    }, [userId, workspaceId]);
+        if (!pending) storeWorkspace(userId, workspaceId);
+    }, [userId, workspaceId, pending]);
 
     // Which providers the active organization can run. Held with the id it
     // was read for, so switching workspace never shows one organization's
@@ -205,7 +236,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                 next === PERSONAL_WORKSPACE ||
                 (organizations ?? []).some((org) => org.id === next);
             if (known) {
-                setSelection({ userId, workspaceId: next });
+                setSelection({ userId, workspaceId: next, pending: false });
                 return;
             }
             // Not one this provider has heard of — yet. An organization the
@@ -220,7 +251,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                     if (orgs.some((org) => org.id === next))
                         setSelection((current) =>
                             current.userId === userId
-                                ? { userId, workspaceId: next }
+                                ? { userId, workspaceId: next, pending: false }
                                 : current,
                         );
                 })

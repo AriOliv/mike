@@ -1663,6 +1663,8 @@ export interface Org {
     updated_at?: string;
     /** The caller's role in this org. */
     role: OrgRole;
+    /** "team" for one people create and join; a person's own is never listed. */
+    kind?: "team" | "personal";
     can_access_private_content?: boolean;
     /**
      * When the organization's logo was last set, or null/absent for none. It
