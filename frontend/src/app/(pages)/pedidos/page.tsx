@@ -262,7 +262,7 @@ export default function PedidosPage() {
                         <TableHeaderCell className="w-24">ID</TableHeaderCell>
                         <TableHeaderCell className="w-72">Pedido</TableHeaderCell>
                         <TableHeaderCell className="w-44">Solicitante</TableHeaderCell>
-                        <TableHeaderCell className="w-24">Canal</TableHeaderCell>
+                        {openId ? null : <TableHeaderCell className="w-24">Canal</TableHeaderCell>}
                         <TableHeaderCell className="w-36">Prazo</TableHeaderCell>
                         <TableHeaderCell className="w-44">Status</TableHeaderCell>
                         <TableHeaderCell className="w-48">Responsável</TableHeaderCell>
@@ -273,11 +273,13 @@ export default function PedidosPage() {
                     {loading ? (
                         [0, 1, 2, 3, 4].map((i) => (
                             <TableRow key={i} interactive={false} className="h-11 pl-3">
-                                {["w-16", "w-56", "w-32", "w-14", "w-24", "w-28", "w-32"].map((w, j) => (
-                                    <TableCell key={j} className={cn(["w-24", "w-72", "w-44", "w-24", "w-36", "w-44", "w-48"][j])}>
-                                        <SkeletonLine className={w} />
-                                    </TableCell>
-                                ))}
+                                {["w-16", "w-56", "w-32", "w-14", "w-24", "w-28", "w-32"].map((w, j) =>
+                                    openId && j === CHANNEL_COLUMN ? null : (
+                                        <TableCell key={j} className={cn(["w-24", "w-72", "w-44", "w-24", "w-36", "w-44", "w-48"][j])}>
+                                            <SkeletonLine className={w} />
+                                        </TableCell>
+                                    ),
+                                )}
                             </TableRow>
                         ))
                     ) : failed ? (
@@ -333,6 +335,7 @@ export default function PedidosPage() {
                                 item={item}
                                 focused={i === cursor}
                                 selected={item.id === openId}
+                                compact={!!openId}
                                 onOpen={() => {
                                     setCursor(i);
                                     openPanel(item.id);
@@ -362,15 +365,21 @@ function stepOf(item: RequestListItem) {
     return "em_analise" as const;
 }
 
+/** Canal is the column that gives way when the panel is open, so Prazo stays whole. */
+const CHANNEL_COLUMN = 3;
+
 function QueueRow({
     item,
     focused,
     selected,
+    compact,
     onOpen,
 }: {
     item: RequestListItem;
     focused: boolean;
     selected: boolean;
+    /** The request panel is open beside the queue. */
+    compact: boolean;
     onOpen: () => void;
 }) {
     const tone = slaTone(item.sla);
@@ -403,7 +412,7 @@ function QueueRow({
                     <span className="block truncate text-[11px] text-gray-500">{item.requester_area}</span>
                 ) : null}
             </TableCell>
-            <TableCell className="w-24">{CHANNEL_LABEL[item.channel] ?? item.channel}</TableCell>
+            {compact ? null : <TableCell className="w-24">{CHANNEL_LABEL[item.channel] ?? item.channel}</TableCell>}
             <TableCell className={cn("w-36", SLA_TONE_CLASS[tone], tone !== "default" && "font-medium")}>
                 {slaText(item.sla, item.due_at)}
             </TableCell>

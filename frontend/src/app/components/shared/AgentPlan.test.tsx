@@ -13,7 +13,7 @@ const steps: AgentPlanStep[] = [
 describe("AgentPlan", () => {
     it("lists people and agents in order with their state in words", () => {
         render(<AgentPlan steps={steps} />);
-        expect(screen.getByText("2 de 5 passos · 1 de agentes")).toBeInTheDocument();
+        expect(screen.getByText("2 de 5 passos feitos · 1 por agentes")).toBeInTheDocument();
         expect(screen.getByRole("img", { name: "Agente" })).toBeInTheDocument();
         expect(screen.getByText("· solicitante")).toBeInTheDocument();
         for (const word of ["feito", "aguardando", "em andamento", "a fazer"]) {

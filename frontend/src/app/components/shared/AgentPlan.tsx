@@ -82,7 +82,7 @@ export function AgentPlan({ title = "Plano", steps, onChangeOwner, className }: 
             <header className="mb-2 flex items-baseline justify-between gap-2">
                 <h3 className="font-medium text-gray-500">{title}</h3>
                 <span className="text-[11px] text-gray-400">
-                    {done} de {steps.length} passos · {agents} de agentes
+                    {done} de {steps.length} passos feitos · {agents} por agentes
                 </span>
             </header>
             <ol className="space-y-2">
