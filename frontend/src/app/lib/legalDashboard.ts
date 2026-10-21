@@ -2,6 +2,8 @@
 // and the cost line. React-free so every branch is tested.
 
 import type { LegalDashboard, PipelineLane } from "./mikeApi";
+import { actorLabel } from "./activityFeed";
+import { plural } from "./regulatoryRadar";
 
 export const LANE_LABEL: Record<PipelineLane, string> = {
     entrada: "Entrada",
@@ -47,32 +49,36 @@ export function headlineTiles(d: LegalDashboard): Tile[] {
             id: "volume",
             value: fmt(d.volume.opened),
             label: "Pedidos recebidos",
-            hint: `${fmt(d.volume.closed)} concluídos · ${fmt(d.volume.open)} em aberto`,
+            hint: `${plural(d.volume.closed, "concluído", "concluídos")} · ${fmt(d.volume.open)} em aberto`,
         },
         {
             id: "ciclo",
             value: fmt(d.cycle.median_days_to_close, " d"),
             label: "Tempo até concluir (mediana)",
-            hint: d.cycle.closed_measured ? `${d.cycle.closed_measured} pedidos medidos` : "nenhum pedido concluído no período",
+            hint: d.cycle.closed_measured
+                ? plural(d.cycle.closed_measured, "pedido medido", "pedidos medidos")
+                : "nenhum pedido concluído no período",
         },
         {
             id: "sla",
             value: d.sla.rate === null ? "—" : `${fmt(d.sla.rate)}%`,
             label: "Prazo cumprido",
-            hint: late ? `${late} em aberto já passaram do prazo` : `${d.sla.on_time} de ${d.sla.closed_with_deadline} no prazo`,
+            hint: late
+                ? `${plural(late, "em aberto já passou", "em aberto já passaram")} do prazo`
+                : `${d.sla.on_time} de ${d.sla.closed_with_deadline} no prazo`,
             tone: late > 0 ? "critico" : d.sla.rate !== null && d.sla.rate < 80 ? "atencao" : "default",
         },
         {
             id: "aviso",
             value: fmt(d.notice.due_in_30_days),
             label: "Avisos prévios em 30 dias",
-            hint: missed ? `${missed} perdidos no período` : "nenhum aviso perdido no período",
+            hint: missed ? `${plural(missed, "perdido", "perdidos")} no período` : "nenhum aviso perdido no período",
             tone: missed > 0 ? "critico" : d.notice.due_in_30_days > 0 ? "atencao" : "default",
         },
     ];
 }
 
-/** Agents vs. people, in one sentence each. */
+/** Agents vs. people, in one sentence each; at most four in a row. AI cost has its own section. */
 export function agentTiles(d: LegalDashboard): Tile[] {
     const a = d.agents;
     const total = a.contracts_reviewed_by_agents + a.contracts_reviewed_by_people;
@@ -88,15 +94,15 @@ export function agentTiles(d: LegalDashboard): Tile[] {
             id: "horas",
             value: fmt(d.hours_saved.hours, " h"),
             label: "Horas poupadas (estimativa)",
-            hint: "veja a conta abaixo",
+            hint: d.hours_saved.formula,
         },
+        fichaTile(d),
         {
             id: "regulatorio",
             value: fmt(a.regulatory_changes_triaged),
             label: "Mudanças regulatórias triadas",
-            hint: `${fmt(a.regulatory_turned_into_work)} viraram pedido ou prazo`,
+            hint: `${plural(a.regulatory_turned_into_work, "virou", "viraram")} pedido ou prazo`,
         },
-        costTile(d),
     ];
 }
 
@@ -113,8 +119,31 @@ export function costTile(d: LegalDashboard): Tile {
         id: "custo",
         value: money(d.ai_cost.total_usd),
         label: "Custo de IA",
-        hint: `${money(d.ai_cost.per_contract_usd)} por contrato · ${d.ai_cost.runs} execuções`,
+        hint: `${money(d.ai_cost.per_contract_usd)} por contrato · ${plural(d.ai_cost.runs, "execução", "execuções")}`,
     };
+}
+
+export function fichaTile(d: LegalDashboard): Tile {
+    if (!d.ficha || d.ficha.rate === null) {
+        return {
+            id: "ficha",
+            value: "—",
+            label: "Campos da Ficha verificados",
+            hint: d.ficha ? "nenhuma Ficha preenchida ainda" : "aparece quando a Ficha estiver ativa",
+        };
+    }
+    return {
+        id: "ficha",
+        value: `${fmt(d.ficha.rate)}%`,
+        label: "Campos da Ficha verificados",
+        hint: `${fmt(d.ficha.verified)} de ${plural(d.ficha.fields, "campo", "campos")} em ${plural(d.ficha.contracts, "contrato", "contratos")}`,
+        tone: d.ficha.rate < 50 ? "atencao" : "default",
+    };
+}
+
+/** "revisor@1" → "Agente de revisão": never an internal id on screen. */
+export function agentLabel(agent: string): string {
+    return actorLabel({ actor_type: "agent", actor_id: agent, actor_name: null });
 }
 
 export function stageRows(d: LegalDashboard) {
@@ -124,7 +153,7 @@ export function stageRows(d: LegalDashboard) {
         return {
             label: LANE_LABEL[s.lane],
             value: h?.median_days ?? null,
-            note: `${h?.moves ?? 0} passagens · ${s.open} parados agora`,
+            note: `${plural(h?.moves ?? 0, "passagem", "passagens")} · ${plural(s.open, "parado", "parados")} agora`,
         };
     });
 }
@@ -133,7 +162,7 @@ export function stuckRows(d: LegalDashboard) {
     return d.cycle.stage_age.map((s) => ({
         label: LANE_LABEL[s.lane],
         value: s.median_days,
-        note: `${s.open} em aberto`,
+        note: `${fmt(s.open)} em aberto`,
     }));
 }
 

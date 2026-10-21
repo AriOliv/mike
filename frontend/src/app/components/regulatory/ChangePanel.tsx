@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, ArchiveRestore, CalendarPlus, ExternalLink, FilePlus2, Star } from "lucide-react";
+import { Archive, ArchiveRestore, BookPlus, CalendarPlus, Diamond, ExternalLink, FilePlus2, Star } from "lucide-react";
 import { DetailPanel } from "@/app/components/shared/DetailPanel";
+import { AgentSuggestion } from "@/app/components/shared/AgentSuggestion";
 import { DeadlineBadge } from "@/app/components/ui/deadline-badge";
 import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -23,13 +24,27 @@ type Props = {
     change: RegulatoryChange;
     scanName: string | null;
     busy: boolean;
+    /** The open playbook-rule suggestion for this change, if one exists. */
+    ruleSuggested: boolean;
     onClose: () => void;
     onStar: () => void;
     onArchive: () => void;
     onRestore: () => void;
     onRequest: () => void;
     onObligation: (dueDate?: string) => void;
+    onSuggestRule: (guidance?: string) => void;
 };
+
+/** The agent's mark: whatever an agent wrote carries it, so authorship is never a guess. */
+function AgentMark() {
+    return (
+        <Diamond
+            aria-label="escrito pelo Agente regulatório"
+            role="img"
+            className="mr-1 inline h-3 w-3 shrink-0 fill-violet-100 align-[-1px] text-violet-700"
+        />
+    );
+}
 
 /** One quote, opened from its numbered pill: the verbatim passage and where it came from. */
 function Quote({ n, label, quote, href, open, onToggle }: {
@@ -42,8 +57,8 @@ function Quote({ n, label, quote, href, open, onToggle }: {
 }) {
     return (
         <div className="text-xs">
-            <div className="flex items-center gap-2">
-                <CitationPillUI active={open} onClick={onToggle} aria-label={`Citação ${n}: ${label}`}>
+            <div className="flex items-start gap-2">
+                <CitationPillUI active={open} onClick={onToggle} aria-label={`Citação ${n}: ${label}`} className="mt-px shrink-0">
                     {n}
                 </CitationPillUI>
                 {href ? (
@@ -51,17 +66,17 @@ function Quote({ n, label, quote, href, open, onToggle }: {
                         href={href}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex min-w-0 items-center gap-1 truncate text-gray-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        className="min-w-0 break-words text-gray-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                     >
                         {label}
-                        <ExternalLink aria-hidden="true" className="h-3 w-3 shrink-0" />
+                        <ExternalLink aria-hidden="true" className="ml-1 inline h-3 w-3 align-[-2px]" />
                     </a>
                 ) : (
-                    <span className="min-w-0 truncate text-gray-700">{label}</span>
+                    <span className="min-w-0 break-words text-gray-700">{label}</span>
                 )}
             </div>
             {open ? (
-                <blockquote className="mt-1.5 border-l-2 border-gray-200 pl-3 text-[13px] leading-relaxed text-gray-700">
+                <blockquote className="mt-1.5 border-l-2 border-gray-200 pl-3 text-[13px] leading-relaxed text-gray-700 [overflow-wrap:anywhere]">
                     “{quote}”
                 </blockquote>
             ) : null}
@@ -69,16 +84,23 @@ function Quote({ n, label, quote, href, open, onToggle }: {
     );
 }
 
+/** What accepting the agent's suggestion does: the action it names. */
+export function suggestedActionKind(change: Pick<RegulatoryChange, "impact" | "request_project_id">): "pedido" | "lida" {
+    return change.impact === "alto" && !change.request_project_id ? "pedido" : "lida";
+}
+
 export function ChangePanel({
     change,
     scanName,
     busy,
+    ruleSuggested,
     onClose,
     onStar,
     onArchive,
     onRestore,
     onRequest,
     onObligation,
+    onSuggestRule,
 }: Props) {
     const router = useRouter();
     const [openQuote, setOpenQuote] = useState<number | null>(1);
@@ -86,6 +108,8 @@ export function ChangePanel({
     const archived = change.status === "arquivada";
     const verdict = impactVerdict(change.impact);
     const officialQuote = change.summary_quote ?? change.excerpt ?? "";
+    const decided = archived || !!change.request_project_id || !!change.obligation_id || ruleSuggested;
+    const accepts = suggestedActionKind(change);
 
     const fields = [
         {
@@ -93,7 +117,12 @@ export function ChangePanel({
             value: (
                 <span className="flex flex-col items-start gap-1">
                     <VerdictLabelUI verdict={verdict} label={IMPACT_LABEL[change.impact]} />
-                    {change.impact_reason ? <span className="text-gray-600">{change.impact_reason}</span> : null}
+                    {change.impact_reason ? (
+                        <span className="break-words text-gray-600">
+                            <AgentMark />
+                            {change.impact_reason}
+                        </span>
+                    ) : null}
                 </span>
             ),
             emphasis: change.impact === "alto",
@@ -103,7 +132,7 @@ export function ChangePanel({
         {
             label: "Vigência",
             value: change.effective_date ? (
-                <span className="flex items-center gap-2">
+                <span className="flex flex-wrap items-center gap-2">
                     {brDate(change.effective_date)}
                     <DeadlineBadge date={change.effective_date} kind="vigencia" />
                 </span>
@@ -116,12 +145,12 @@ export function ChangePanel({
             value: change.topics.length ? change.topics.map((t) => TOPIC_LABEL[t]).join(" · ") : "—",
         },
         { label: "Varredura", value: scanName ?? "—" },
-        ...(change.suggested_action ? [{ label: "Sugestão", value: change.suggested_action, emphasis: true }] : []),
     ];
 
     const summary = (
         <div className="space-y-3">
-            <p>
+            <p className="break-words">
+                {change.summary ? <AgentMark /> : null}
                 {change.summary ?? change.excerpt ?? "O texto oficial não traz ementa."}
                 {officialQuote ? (
                     <CitationPillUI
@@ -152,6 +181,27 @@ export function ChangePanel({
 
     const aside = (
         <div className="space-y-5">
+            {change.suggested_action && !decided ? (
+                <AgentSuggestion
+                    agent="Agente regulatório"
+                    meta={`${change.affected.length + change.affected_hidden} ${
+                        change.affected.length + change.affected_hidden === 1 ? "contrato" : "contratos"
+                    } · 1 fonte oficial`}
+                    label={<VerdictLabelUI verdict={verdict} label={IMPACT_LABEL[change.impact]} />}
+                    title={change.suggested_action}
+                    editableText={change.summary ?? change.excerpt ?? change.title}
+                    busy={busy}
+                    onAccept={accepts === "pedido" ? onRequest : onRestore}
+                    onEdit={(text) => onSuggestRule(text)}
+                    onReject={() => onArchive()}
+                >
+                    <p className="text-xs text-gray-600">
+                        Aceitar {accepts === "pedido" ? "cria o pedido na Entrada" : "marca como lida"}; Editar transforma o
+                        texto numa regra sugerida para o playbook; Rejeitar arquiva.
+                    </p>
+                </AgentSuggestion>
+            ) : null}
+
             <section aria-label="Contratos afetados">
                 <h3 className="mb-2 text-xs font-medium text-gray-500">
                     {affectedLabel(change.affected.length, change.affected_hidden)}
@@ -169,7 +219,7 @@ export function ChangePanel({
                                 <button
                                     type="button"
                                     onClick={() => router.push(`/projects/${a.project_id}`)}
-                                    className="block max-w-full truncate text-left text-xs font-medium text-gray-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                                    className="block max-w-full break-words text-left text-xs font-medium text-gray-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                                 >
                                     {a.name}
                                     {a.counterparty ? <span className="font-normal text-gray-500"> · {a.counterparty}</span> : null}
@@ -189,17 +239,30 @@ export function ChangePanel({
 
             <section aria-label="O que fazer" className="space-y-2">
                 <h3 className="text-xs font-medium text-gray-500">O que fazer</h3>
-                {change.request_project_id ? (
-                    <PillButtonUI tone="white" onClick={() => router.push(`/projects/${change.request_project_id}`)}>
-                        <FilePlus2 aria-hidden="true" className="h-3.5 w-3.5" />
-                        Abrir pedido criado
-                    </PillButtonUI>
-                ) : (
-                    <PillButtonUI tone="black" disabled={busy} onClick={onRequest}>
-                        <FilePlus2 aria-hidden="true" className="h-3.5 w-3.5" />
-                        Criar pedido <kbd className="ml-1 text-[10px] opacity-60">c</kbd>
-                    </PillButtonUI>
-                )}
+                <div className="flex flex-wrap gap-2">
+                    {change.request_project_id ? (
+                        <PillButtonUI tone="white" onClick={() => router.push(`/projects/${change.request_project_id}`)}>
+                            <FilePlus2 aria-hidden="true" className="h-3.5 w-3.5" />
+                            Abrir pedido criado
+                        </PillButtonUI>
+                    ) : (
+                        <PillButtonUI tone="black" disabled={busy} onClick={onRequest}>
+                            <FilePlus2 aria-hidden="true" className="h-3.5 w-3.5" />
+                            Criar pedido <kbd className="ml-1 text-[10px] opacity-60">c</kbd>
+                        </PillButtonUI>
+                    )}
+                    {ruleSuggested ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                            <BookPlus aria-hidden="true" className="h-3.5 w-3.5" />
+                            Regra sugerida, aguardando a Head
+                        </span>
+                    ) : (
+                        <PillButtonUI tone="white" disabled={busy} onClick={() => onSuggestRule()}>
+                            <BookPlus aria-hidden="true" className="h-3.5 w-3.5" />
+                            Adicionar ao playbook
+                        </PillButtonUI>
+                    )}
+                </div>
                 {change.obligation_id ? (
                     <p className="text-xs text-gray-600">A vigência já está nos Prazos.</p>
                 ) : change.effective_date ? (

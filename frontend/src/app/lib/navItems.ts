@@ -28,10 +28,12 @@ export type NavItem = {
 export const NAV_MAIN: readonly NavItem[] = [
     { href: "/pipeline", label: "Esteira", icon: "folder" },
     { href: "/radar", label: "Prazos", icon: "workflow" },
+    { href: "/radar-regulatorio", label: "Radar regulatório", icon: "workflow" },
     { href: "/acervo", label: "Perguntar", icon: "library" },
 ];
 
 export const NAV_MORE: readonly NavItem[] = [
+    { href: "/painel", label: "Painel do Legal", icon: "tabular" },
     { href: "/playbooks", label: "Playbooks", icon: "playbook" },
     { href: "/tabular-reviews", label: "Revisão em grade", icon: "tabular" },
     { href: "/library", label: "Biblioteca", icon: "library" },

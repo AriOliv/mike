@@ -14,6 +14,9 @@ import {
     createObligationFromRegulatoryChange,
     createRegulatoryScan,
     createRequestFromRegulatoryChange,
+    decideRegulatoryRuleSuggestion,
+    listRegulatoryRuleSuggestions,
+    suggestRuleFromRegulatoryChange,
     deleteRegulatoryScan,
     getLegalDashboard,
     getRegulatoryCatalog,
@@ -97,6 +100,25 @@ describe("regulatory changes", () => {
         expect(jsonBody()).toEqual({});
         await createObligationFromRegulatoryChange("c1", { due_date: "2026-12-01" });
         expect(jsonBody()).toEqual({ due_date: "2026-12-01" });
+    });
+});
+
+describe("playbook rule suggestions", () => {
+    it("suggests, lists and decides a rule", async () => {
+        await suggestRuleFromRegulatoryChange("c1");
+        expect(lastFetchCall().url).toMatch(/\/regulatory\/changes\/c1\/rule$/);
+        expect(jsonBody()).toEqual({});
+        await suggestRuleFromRegulatoryChange("c1", { guidance: "Exigir segregação", playbook_id: "pb1" });
+        expect(jsonBody()).toEqual({ guidance: "Exigir segregação", playbook_id: "pb1" });
+
+        await listRegulatoryRuleSuggestions();
+        expect(lastFetchCall().url).toMatch(/\/regulatory\/rules$/);
+        await listRegulatoryRuleSuggestions("pendente");
+        expect(lastFetchCall().url).toMatch(/\/regulatory\/rules\?status=pendente$/);
+
+        await decideRegulatoryRuleSuggestion("r1", { status: "aprovada" });
+        expect(lastFetchCall().init.method).toBe("PATCH");
+        expect(jsonBody()).toEqual({ status: "aprovada" });
     });
 });
 

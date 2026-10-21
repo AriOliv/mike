@@ -34,6 +34,7 @@ const data: LegalDashboard = {
     },
     sla: { closed_with_deadline: 8, on_time: 7, rate: 87.5, open_overdue: 1 },
     notice: { due_in_30_days: 2, missed_in_period: 0 },
+    ficha: { contracts: 4, fields: 60, verified: 45, rate: 75 },
     agents: {
         contracts_reviewed_by_agents: 6,
         contracts_reviewed_by_people: 2,
@@ -60,10 +61,13 @@ describe("LegalDashboardView", () => {
     it("leads with the team's work, then what the agents did", async () => {
         render(<LegalDashboardView />);
         expect(await screen.findByText("Pedidos recebidos")).toBeInTheDocument();
-        expect(screen.getByText("1 em aberto já passaram do prazo")).toBeInTheDocument();
+        expect(screen.getByText("1 em aberto já passou do prazo")).toBeInTheDocument();
         expect(screen.getByText("Contratos revisados por agentes")).toBeInTheDocument();
-        expect(screen.getByText(/US\$\s?3,20/)).toBeInTheDocument();
-        expect(screen.getByText(/6 revisões × 90 min/)).toBeInTheDocument();
+        expect(screen.getByText(/US\$\s?3,20 no período/)).toBeInTheDocument();
+        expect(screen.getByText("Agente de revisão")).toBeInTheDocument();
+        expect(screen.getByText("Campos da Ficha verificados")).toBeInTheDocument();
+        expect(screen.getByText("75%")).toBeInTheDocument();
+        expect(screen.getAllByText(/6 revisões × 90 min/)).toHaveLength(2);
         expect(screen.getByText("duda")).toBeInTheDocument();
     });
 
@@ -100,6 +104,7 @@ describe("LegalDashboardView", () => {
         });
         render(<LegalDashboardView />);
         fireEvent.click(await screen.findByRole("button", { name: "Abrir a esteira" }));
+        expect(screen.queryByText(/US\$/)).toBeNull();
         expect(nav.push).toHaveBeenCalledWith("/pipeline");
     });
 

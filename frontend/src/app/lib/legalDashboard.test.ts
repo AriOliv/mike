@@ -3,7 +3,9 @@ import type { LegalDashboard } from "./mikeApi";
 import {
     agentTiles,
     clampMinutes,
+    agentLabel,
     costTile,
+    fichaTile,
     fmt,
     headlineTiles,
     money,
@@ -28,6 +30,7 @@ const base: LegalDashboard = {
     },
     sla: { closed_with_deadline: 8, on_time: 7, rate: 87.5, open_overdue: 0 },
     notice: { due_in_30_days: 0, missed_in_period: 0 },
+    ficha: { contracts: 5, fields: 80, verified: 60, rate: 75 },
     agents: {
         contracts_reviewed_by_agents: 6,
         contracts_reviewed_by_people: 2,
@@ -78,7 +81,16 @@ describe("headline tiles", () => {
             notice: { due_in_30_days: 3, missed_in_period: 1 },
         });
         expect(late[2]).toMatchObject({ tone: "critico", hint: "2 em aberto já passaram do prazo" });
-        expect(late[3]).toMatchObject({ tone: "critico", hint: "1 perdidos no período" });
+        expect(late[3]).toMatchObject({ tone: "critico", hint: "1 perdido no período" });
+        const one = headlineTiles({
+            ...base,
+            volume: { ...base.volume, closed: 1 },
+            cycle: { ...base.cycle, closed_measured: 1 },
+            sla: { ...base.sla, open_overdue: 1 },
+        });
+        expect(one[0].hint).toBe("1 concluído · 7 em aberto");
+        expect(one[1].hint).toBe("1 pedido medido");
+        expect(one[2].hint).toBe("1 em aberto já passou do prazo");
         const weak = headlineTiles({ ...base, sla: { ...base.sla, rate: 60 }, notice: { due_in_30_days: 3, missed_in_period: 0 } });
         expect(weak[2].tone).toBe("atencao");
         expect(weak[3].tone).toBe("atencao");
@@ -94,11 +106,17 @@ describe("headline tiles", () => {
 
 describe("agent tiles", () => {
     it("shows the agents' share and what the radar produced", () => {
-        const [agentes, horas, regulatorio, custo] = agentTiles(base);
+        const tiles = agentTiles(base);
+        expect(tiles.map((t) => t.id)).toEqual(["agentes", "horas", "ficha", "regulatorio"]);
+        const [agentes, horas, ficha, regulatorio] = tiles;
         expect(agentes).toMatchObject({ value: "6", hint: "75% das revisões · 2 só por pessoas" });
-        expect(horas.value).toBe("14,5 h");
+        expect(horas).toMatchObject({ value: "14,5 h", hint: "6 revisões × 90 min" });
+        expect(ficha).toMatchObject({ value: "75%", hint: "60 de 80 campos em 5 contratos", tone: "default" });
         expect(regulatorio).toMatchObject({ value: "14", hint: "3 viraram pedido ou prazo" });
-        expect(custo).toMatchObject({ value: "—", hint: "nenhuma execução com custo registrado" });
+        expect(costTile(base)).toMatchObject({ value: "—", hint: "nenhuma execução com custo registrado" });
+        expect(agentTiles({ ...base, agents: { ...base.agents, regulatory_turned_into_work: 1 } })[3].hint).toBe(
+            "1 virou pedido ou prazo",
+        );
     });
 
     it("says when nothing was reviewed, and shows recorded cost", () => {
@@ -110,6 +128,25 @@ describe("agent tiles", () => {
         const cost = costTile({ ...base, ai_cost: { total_usd: 3.2, runs: 12, per_contract_usd: 0.4, by_agent: [] } });
         expect(cost.value).toMatch(/3,20/);
         expect(cost.hint).toMatch(/0,40 por contrato · 12 execuções/);
+        expect(costTile({ ...base, ai_cost: { total_usd: 1, runs: 1, per_contract_usd: 1, by_agent: [] } }).hint).toMatch(/1 execução$/);
+    });
+
+    it("explains a Ficha tile with nothing to count", () => {
+        expect(fichaTile({ ...base, ficha: null })).toMatchObject({ value: "—", hint: "aparece quando a Ficha estiver ativa" });
+        expect(fichaTile({ ...base, ficha: { contracts: 0, fields: 0, verified: 0, rate: null } })).toMatchObject({
+            hint: "nenhuma Ficha preenchida ainda",
+        });
+        expect(fichaTile({ ...base, ficha: { contracts: 1, fields: 1, verified: 0, rate: 0 } })).toMatchObject({
+            value: "0%",
+            hint: "0 de 1 campo em 1 contrato",
+            tone: "atencao",
+        });
+    });
+
+    it("names agents in Portuguese, never by id", () => {
+        expect(agentLabel("revisor@1")).toBe("Agente de revisão");
+        expect(agentLabel("regulatorio")).toBe("Agente regulatório");
+        expect(agentLabel("desconhecido")).toBe("Agente");
     });
 });
 
@@ -119,6 +156,9 @@ describe("stages", () => {
             { label: "Entrada", value: 2, note: "4 passagens · 2 parados agora" },
             { label: "Revisão", value: null, note: "0 passagens · 3 parados agora" },
         ]);
+        const one = { ...base, cycle: { ...base.cycle, stage_age: [{ lane: "entrada" as const, open: 1, median_days: 1 }], per_stage_history: [{ lane: "entrada" as const, moves: 1, median_days: 1 }] } };
+        expect(stageRows(one)).toEqual([{ label: "Entrada", value: 1, note: "1 passagem · 1 parado agora" }]);
+        expect(stageRows(base).length).toBe(2);
         expect(stuckRows(base)).toEqual([
             { label: "Entrada", value: 1.5, note: "2 em aberto" },
             { label: "Revisão", value: null, note: "3 em aberto" },

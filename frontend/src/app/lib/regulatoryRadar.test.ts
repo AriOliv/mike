@@ -8,9 +8,18 @@ import {
     deadlineTone,
     deadlineTooltip,
     impactVerdict,
+    plural,
     relativeRun,
     scanHeadline,
 } from "./regulatoryRadar";
+
+describe("plural", () => {
+    it("agrees the word with the count", () => {
+        expect(plural(1, "dia", "dias")).toBe("1 dia");
+        expect(plural(0, "dia", "dias")).toBe("0 dias");
+        expect(plural(3, "mudança", "mudanças")).toBe("3 mudanças");
+    });
+});
 
 describe("impact", () => {
     it("maps onto the traffic light", () => {
@@ -39,9 +48,16 @@ describe("dates", () => {
 
 describe("deadline badge", () => {
     it("steps through the tones", () => {
-        expect([-1, 0, 7, 8, 30, 31, 60, 61, 90, 91].map(deadlineTone)).toEqual([
+        expect([-1, 0, 7, 8, 30, 31, 60, 61, 90, 91].map((d) => deadlineTone(d))).toEqual([
             "vencido", "d7", "d7", "d30", "d30", "d60", "d60", "d90", "d90", "longe",
         ]);
+    });
+
+    it("calls a rule already in effect 'em vigor', in grey, never overdue", () => {
+        expect(deadlineTone(-5, "vigencia")).toBe("em_vigor");
+        expect(deadlineLabel(-5, "vigencia")).toBe("em vigor");
+        expect(deadlineTone(-5, "prazo")).toBe("vencido");
+        expect(deadlineTooltip({ date: "2026-01-02", kind: "vigencia", past: true })).toBe("em vigor desde 02/01/2026");
     });
 
     it("labels the count", () => {
@@ -55,6 +71,9 @@ describe("deadline badge", () => {
             "aviso até 11/10/2026 (vencimento 10/11/2026 − 30 dias de aviso)",
         );
         expect(deadlineTooltip({ date: "2026-10-11" })).toBe("aviso até 11/10/2026");
+        expect(deadlineTooltip({ date: "2026-10-11", endDate: "2026-10-12", noticeDays: 1 })).toBe(
+            "aviso até 11/10/2026 (vencimento 12/10/2026 − 1 dia de aviso)",
+        );
         expect(deadlineTooltip({ date: "2027-02-02", kind: "vigencia" })).toBe("entra em vigor em 02/02/2027");
         expect(deadlineTooltip({ date: "2026-12-01", kind: "prazo" })).toBe("prazo até 01/12/2026");
     });

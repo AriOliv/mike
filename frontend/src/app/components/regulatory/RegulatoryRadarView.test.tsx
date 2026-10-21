@@ -20,6 +20,9 @@ const api = vi.hoisted(() => ({
     updateRegulatoryChange: vi.fn(),
     createRequestFromRegulatoryChange: vi.fn(),
     createObligationFromRegulatoryChange: vi.fn(),
+    listRegulatoryRuleSuggestions: vi.fn(),
+    suggestRuleFromRegulatoryChange: vi.fn(),
+    updatePipelineCard: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (actual) => ({ ...(await actual<typeof import("@/app/lib/mikeApi")>()), ...api }));
 const toasts = vi.hoisted(() => ({ showToast: vi.fn() }));
@@ -33,7 +36,7 @@ vi.mock("@/app/lib/userFacingError", async (actual) => ({
     ...errors,
 }));
 
-import { RegulatoryRadarView } from "./RegulatoryRadarView";
+import { RegulatoryRadarView, isTyping } from "./RegulatoryRadarView";
 
 const catalog = {
     presets: [
@@ -103,16 +106,33 @@ beforeEach(() => {
         changes: [change(), change({ id: "c2", title: "Comunicado nº 1", impact: "baixo", status: "lida", affected: [], affected_hidden: 0, effective_date: null })],
         tabs,
     });
+    api.listRegulatoryRuleSuggestions.mockResolvedValue([]);
     api.updateRegulatoryChange.mockImplementation(async (id: string, patch: Partial<RegulatoryChange>) => change({ id, ...patch }));
 });
 
 describe("RegulatoryRadarView", () => {
+    it("leaves the keyboard to fields, selects and the agent card", () => {
+        const input = document.createElement("input");
+        const select = document.createElement("select");
+        const article = document.createElement("article");
+        const inside = document.createElement("button");
+        article.appendChild(inside);
+        const div = document.createElement("div");
+        expect(isTyping(input)).toBe(true);
+        expect(isTyping(select)).toBe(true);
+        expect(isTyping(inside)).toBe(true);
+        expect(isTyping(div)).toBe(false);
+        expect(isTyping(null)).toBe(false);
+        expect(isTyping(window)).toBe(false);
+    });
+
     it("teaches what to watch when there is no scan, and starts one in a click", async () => {
         api.listRegulatoryScans.mockResolvedValue([]);
         api.listRegulatoryChanges.mockResolvedValue({ changes: [], tabs: { todas: 0, nao_lidas: 0, favoritas: 0, arquivadas: 0 } });
         api.createRegulatoryScan.mockResolvedValue(scan({ name: "LGPD / ANPD" }));
         render(<RegulatoryRadarView />);
         expect(await screen.findByText("Escolha o que vigiar")).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: /Começar por BCB/ })).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: /LGPD \/ ANPD/ }));
         await waitFor(() => expect(api.createRegulatoryScan).toHaveBeenCalledWith({ preset: "lgpd_anpd", org_id: "o1" }));
         expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: "success" }));
@@ -120,7 +140,8 @@ describe("RegulatoryRadarView", () => {
 
     it("leads with what the scan found and orders the changes it lists", async () => {
         render(<RegulatoryRadarView />);
-        expect(await screen.findByText(/encontrou 2 mudanças\./)).toBeInTheDocument();
+        expect(await screen.findByText("2 mudanças")).toBeInTheDocument();
+        expect(screen.getByText("BCB — pagamentos, cripto e câmbio", { selector: "strong" })).toBeInTheDocument();
         const rows = screen.getAllByRole("listitem");
         expect(within(rows[0]).getByText("Resolução BCB nº 999")).toBeInTheDocument();
         expect(within(rows[0]).getByText("2 contratos afetados (1 sem acesso)")).toBeInTheDocument();
@@ -148,9 +169,83 @@ describe("RegulatoryRadarView", () => {
 
         fireEvent.click(within(panel).getByRole("button", { name: /Criar pedido/ }));
         await waitFor(() => expect(api.createRequestFromRegulatoryChange).toHaveBeenCalledWith("c1"));
+        const created = toasts.showToast.mock.calls.find((c) => c[0].message === "Pedido criado na Entrada da esteira.")?.[0];
+        const undo = created.actions.find((a: { label: string }) => a.label === "Desfazer");
+        api.updatePipelineCard.mockResolvedValueOnce({});
+        await act(async () => undo.onClick());
+        expect(api.updatePipelineCard).toHaveBeenCalledWith("pnew", { lane: null });
+        api.updatePipelineCard.mockRejectedValueOnce(new Error("x"));
+        await act(async () => undo.onClick());
+        expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), { lang: "pt", action: "desfazer o pedido" });
         fireEvent.click(within(panel).getByRole("button", { name: /Criar obrigação nos Prazos/ }));
         await waitFor(() => expect(api.createObligationFromRegulatoryChange).toHaveBeenCalledWith("c1", {}));
         expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ message: "Vigência adicionada aos Prazos." }));
+    });
+
+    it("suggests a playbook rule the Head approves, never writing the playbook", async () => {
+        nav.params = new URLSearchParams("mudanca=c1");
+        api.suggestRuleFromRegulatoryChange.mockResolvedValue({ id: "r1", change_id: "c1", status: "pendente" });
+        render(<RegulatoryRadarView />);
+        const panel = await screen.findByRole("complementary", { name: "Detalhes" });
+        fireEvent.click(within(panel).getByRole("button", { name: "Adicionar ao playbook" }));
+        await waitFor(() => expect(api.suggestRuleFromRegulatoryChange).toHaveBeenCalledWith("c1", {}));
+        expect(toasts.showToast).toHaveBeenCalledWith({
+            tone: "success",
+            message: "Regra sugerida no playbook. A Head aprova antes de valer.",
+        });
+        expect(await within(panel).findByText("Regra sugerida, aguardando a Head")).toBeInTheDocument();
+    });
+
+    it("lets a person decide the agent's suggestion: accept runs it, edit becomes a rule, reject archives", async () => {
+        nav.params = new URLSearchParams("mudanca=c1");
+        api.createRequestFromRegulatoryChange.mockResolvedValue({ project_id: "pnew", change: change({ request_project_id: "pnew" }) });
+        api.suggestRuleFromRegulatoryChange.mockResolvedValue({ id: "r1", change_id: "c1", status: "pendente" });
+        render(<RegulatoryRadarView />);
+        const panel = await screen.findByRole("complementary", { name: "Detalhes" });
+        const card = within(panel).getByRole("article");
+        expect(within(card).getByText("Agente regulatório")).toBeInTheDocument();
+        expect(within(panel).getAllByRole("img", { name: "escrito pelo Agente regulatório" }).length).toBeGreaterThan(0);
+
+        fireEvent.click(within(card).getByRole("button", { name: /Editar/ }));
+        fireEvent.change(within(card).getByLabelText("Sua redação"), { target: { value: "Exigir segregação dos ativos." } });
+        fireEvent.click(within(card).getByRole("button", { name: "Salvar edição" }));
+        await waitFor(() =>
+            expect(api.suggestRuleFromRegulatoryChange).toHaveBeenCalledWith("c1", { guidance: "Exigir segregação dos ativos." }),
+        );
+    });
+
+    it("accepts the agent's suggestion by creating the request it names", async () => {
+        nav.params = new URLSearchParams("mudanca=c1");
+        api.createRequestFromRegulatoryChange.mockResolvedValue({ project_id: "pnew", change: change({ request_project_id: "pnew" }) });
+        render(<RegulatoryRadarView />);
+        const card = within(await screen.findByRole("complementary", { name: "Detalhes" })).getByRole("article");
+        fireEvent.click(within(card).getByRole("button", { name: /Aceitar/ }));
+        await waitFor(() => expect(api.createRequestFromRegulatoryChange).toHaveBeenCalledWith("c1"));
+    });
+
+    it("rejecting the agent's suggestion archives the change", async () => {
+        nav.params = new URLSearchParams("mudanca=c1");
+        render(<RegulatoryRadarView />);
+        const card = within(await screen.findByRole("complementary", { name: "Detalhes" })).getByRole("article");
+        fireEvent.click(within(card).getByRole("button", { name: /Rejeitar/ }));
+        fireEvent.click(within(card).getByRole("button", { name: "Rejeitar" }));
+        await waitFor(() => expect(api.updateRegulatoryChange).toHaveBeenCalledWith("c1", { status: "arquivada" }));
+    });
+
+    it("reports failures in Portuguese, naming what failed", async () => {
+        nav.params = new URLSearchParams("mudanca=c1");
+        api.createObligationFromRegulatoryChange.mockRejectedValue(new Error("x"));
+        api.suggestRuleFromRegulatoryChange.mockRejectedValue(new Error("x"));
+        render(<RegulatoryRadarView />);
+        const panel = await screen.findByRole("complementary", { name: "Detalhes" });
+        fireEvent.click(within(panel).getByRole("button", { name: /Criar obrigação nos Prazos/ }));
+        await waitFor(() =>
+            expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), { lang: "pt", action: "criar a obrigação" }),
+        );
+        fireEvent.click(within(panel).getByRole("button", { name: "Adicionar ao playbook" }));
+        await waitFor(() =>
+            expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), { lang: "pt", action: "sugerir a regra" }),
+        );
     });
 
     it("asks for a date when the act does not state when it takes effect", async () => {
@@ -183,6 +278,11 @@ describe("RegulatoryRadarView", () => {
         await waitFor(() => expect(api.updateRegulatoryChange).toHaveBeenCalledWith("c1", { status: "arquivada" }));
         const archived = toasts.showToast.mock.calls.find((c) => c[0].message === "Mudança arquivada.")?.[0];
         expect(archived.actions[0].label).toBe("Desfazer");
+        await act(async () => archived.actions[0].onClick());
+        expect(api.updateRegulatoryChange).toHaveBeenLastCalledWith("c1", { status: "nova" });
+        api.updateRegulatoryChange.mockRejectedValueOnce(new Error("x"));
+        await act(async () => archived.actions[0].onClick());
+        expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), { lang: "pt", action: "desfazer o arquivamento" });
     });
 
     it("moves through the list with j and k", async () => {
@@ -208,6 +308,7 @@ describe("RegulatoryRadarView", () => {
         api.listRegulatoryScans.mockRejectedValue(new Error("boom"));
         render(<RegulatoryRadarView />);
         expect(await screen.findByText("Não consegui carregar o radar")).toBeInTheDocument();
+        expect(screen.getByText(/servidor|errado/i)).toBeInTheDocument();
         api.listRegulatoryScans.mockResolvedValue([scan()]);
         fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
         expect(await screen.findByText("Resolução BCB nº 999")).toBeInTheDocument();

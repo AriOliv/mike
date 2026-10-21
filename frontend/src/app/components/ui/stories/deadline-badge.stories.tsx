@@ -15,5 +15,6 @@ export const AllTones = () => (
         <DeadlineBadge date="2026-10-25" kind="prazo" now={now} />
         <DeadlineBadge date="2026-10-20" kind="vigencia" now={now} />
         <DeadlineBadge date="2026-10-01" now={now} />
+        <DeadlineBadge date="2026-09-01" kind="vigencia" now={now} />
     </div>
 );

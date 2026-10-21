@@ -28,6 +28,9 @@ import {
     createRegulatoryScan,
     createRequestFromRegulatoryChange,
     getRegulatoryCatalog,
+    listRegulatoryRuleSuggestions,
+    suggestRuleFromRegulatoryChange,
+    updatePipelineCard,
     listRegulatoryChanges,
     listRegulatoryScans,
     runRegulatoryScan,
@@ -46,7 +49,7 @@ import {
     changeMeta,
     impactVerdict,
     relativeRun,
-    scanHeadline,
+    plural,
 } from "@/app/lib/regulatoryRadar";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
 import { cn } from "@/app/lib/utils";
@@ -62,10 +65,18 @@ const COLUMNS = {
 
 const IMPACT_SHORT = { alto: "Alto", medio: "Médio", baixo: "Baixo" } as const;
 
-function isTyping(target: EventTarget | null): boolean {
+/**
+ * The screen's shortcuts stay out of the way while someone types or picks in
+ * a field, and while an agent's suggestion card has the focus (its own a/e/r
+ * win there).
+ */
+export function isTyping(target: EventTarget | null): boolean {
     const el = target as HTMLElement | null;
-    return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    if (!el || typeof el.closest !== "function") return false;
+    return !!el.closest("input, textarea, select, [contenteditable=''], [contenteditable='true'], article") || el.isContentEditable === true;
 }
+
+const PT = (action: string) => ({ lang: "pt" as const, action });
 
 export function RegulatoryRadarView() {
     const router = useRouter();
@@ -81,24 +92,32 @@ export function RegulatoryRadarView() {
     const [query, setQuery] = useState("");
     const [busy, setBusy] = useState(false);
     const [creating, setCreating] = useState<string | null>(null);
+    const [ruleChangeIds, setRuleChangeIds] = useState<Set<string>>(new Set());
     const selectedId = params.get("mudanca");
     const rowsRef = useRef<HTMLDivElement>(null);
 
     const load = useCallback(async () => {
         try {
-            const [nextScans, nextList, nextCatalog] = await Promise.all([
+            const [nextScans, nextList, nextRules] = await Promise.all([
                 listRegulatoryScans(),
                 listRegulatoryChanges({ scanId, tab, q: query.trim() || undefined }),
-                catalog ? Promise.resolve(catalog) : getRegulatoryCatalog(),
+                listRegulatoryRuleSuggestions("pendente"),
             ]);
             setScans(nextScans);
             setList(nextList);
-            setCatalog(nextCatalog);
+            setRuleChangeIds(new Set(nextRules.map((r) => r.change_id)));
             setError(null);
         } catch (e) {
-            setError(describeError(e).message);
+            setError(describeError(e, PT("carregar o radar")).message);
         }
-    }, [scanId, tab, query, catalog]);
+    }, [scanId, tab, query]);
+
+    // The preset catalog never changes while the page is open: read it once.
+    useEffect(() => {
+        getRegulatoryCatalog()
+            .then(setCatalog)
+            .catch(() => setCatalog({ presets: [], sources: [], topics: [] }));
+    }, []);
 
     useEffect(() => {
         const t = setTimeout(() => void load(), query ? 250 : 0);
@@ -150,7 +169,7 @@ export function RegulatoryRadarView() {
             replace(await updateRegulatoryChange(change.id, { starred: !change.starred }));
         } catch (e) {
             replace(change);
-            notifyError(e);
+            notifyError(e, PT("favoritar a mudança"));
         }
     }
 
@@ -168,8 +187,14 @@ export function RegulatoryRadarView() {
                         {
                             label: "Desfazer",
                             onClick: async () => {
-                                await updateRegulatoryChange(change.id, { status: change.status === "arquivada" ? "lida" : change.status });
-                                void load();
+                                try {
+                                    await updateRegulatoryChange(change.id, {
+                                        status: change.status === "arquivada" ? "lida" : change.status,
+                                    });
+                                    await load();
+                                } catch (e) {
+                                    notifyError(e, PT("desfazer o arquivamento"));
+                                }
                             },
                         },
                     ],
@@ -177,7 +202,7 @@ export function RegulatoryRadarView() {
             }
             await load();
         } catch (e) {
-            notifyError(e);
+            notifyError(e, PT(status === "arquivada" ? "arquivar a mudança" : "restaurar a mudança"));
         } finally {
             setBusy(false);
         }
@@ -191,10 +216,25 @@ export function RegulatoryRadarView() {
             showToast({
                 tone: "success",
                 message: "Pedido criado na Entrada da esteira.",
-                actions: [{ label: "Abrir", onClick: () => router.push(`/projects/${result.project_id}`) }],
+                durationMs: 10_000,
+                actions: [
+                    { label: "Abrir", onClick: () => router.push(`/projects/${result.project_id}`) },
+                    {
+                        // Takes the card off the pipeline; the project stays, so nothing is lost.
+                        label: "Desfazer",
+                        onClick: async () => {
+                            try {
+                                await updatePipelineCard(result.project_id, { lane: null });
+                                showToast({ tone: "info", message: "Pedido tirado da esteira." });
+                            } catch (e) {
+                                notifyError(e, PT("desfazer o pedido"));
+                            }
+                        },
+                    },
+                ],
             });
         } catch (e) {
-            notifyError(e);
+            notifyError(e, PT("criar o pedido"));
         } finally {
             setBusy(false);
         }
@@ -211,7 +251,20 @@ export function RegulatoryRadarView() {
                 actions: [{ label: "Ver Prazos", onClick: () => router.push("/radar") }],
             });
         } catch (e) {
-            notifyError(e);
+            notifyError(e, PT("criar a obrigação"));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function suggestRule(change: RegulatoryChange, guidance?: string) {
+        setBusy(true);
+        try {
+            await suggestRuleFromRegulatoryChange(change.id, guidance ? { guidance } : {});
+            setRuleChangeIds((cur) => new Set(cur).add(change.id));
+            showToast({ tone: "success", message: "Regra sugerida no playbook. A Head aprova antes de valer." });
+        } catch (e) {
+            notifyError(e, PT("sugerir a regra"));
         } finally {
             setBusy(false);
         }
@@ -225,7 +278,7 @@ export function RegulatoryRadarView() {
             showToast({ tone: "success", message: `Varredura “${scan.name}” criada. A primeira busca já começou.` });
             await load();
         } catch (e) {
-            notifyError(e);
+            notifyError(e, PT("criar a varredura"));
         } finally {
             setCreating(null);
         }
@@ -236,7 +289,7 @@ export function RegulatoryRadarView() {
             await updateRegulatoryScan(scan.id, { enabled: !scan.enabled });
             await load();
         } catch (e) {
-            notifyError(e);
+            notifyError(e, PT(scan.enabled ? "pausar a varredura" : "retomar a varredura"));
         }
     }
 
@@ -245,7 +298,7 @@ export function RegulatoryRadarView() {
             await runRegulatoryScan(scan.id);
             showToast({ tone: "info", message: `Buscando agora em “${scan.name}”…` });
         } catch (e) {
-            notifyError(e);
+            notifyError(e, PT("rodar a varredura"));
         }
     }
 
@@ -374,7 +427,7 @@ export function RegulatoryRadarView() {
                     </div>
                 ) : loading ? (
                     <div className="space-y-4 pt-2">
-                        <div className="h-6 w-96 animate-pulse rounded bg-gray-100" />
+                        <div className="h-6 w-full max-w-96 animate-pulse rounded bg-gray-100" />
                         <StatTiles tiles={[0, 1, 2, 3].map((i) => ({ id: String(i), value: 0, label: "" }))} loading />
                     </div>
                 ) : scans && scans.length === 0 ? (
@@ -383,6 +436,18 @@ export function RegulatoryRadarView() {
                             icon={<Radar className="text-gray-400" />}
                             title="Escolha o que vigiar"
                             description="Eu leio o BCB, o Diário Oficial, a CVM e a Receita, separo o que mexe com pagamentos, cripto, câmbio e dados pessoais, e digo quais contratos nossos são afetados."
+                            action={
+                                catalog?.presets[0] ? (
+                                    <PillButtonUI
+                                        tone="black"
+                                        disabled={creating !== null}
+                                        onClick={() => void startPreset(catalog.presets[0].key)}
+                                    >
+                                        <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                                        Começar por {catalog.presets[0].name}
+                                    </PillButtonUI>
+                                ) : undefined
+                            }
                         />
                         <div className="mt-6">{presetPicker(false)}</div>
                     </div>
@@ -393,9 +458,11 @@ export function RegulatoryRadarView() {
                                 <Diamond aria-hidden="true" className="mt-1.5 h-3.5 w-3.5 shrink-0 fill-violet-600 text-violet-600" />
                                 {freshest ? (
                                     <span>
-                                        {scanHeadline(freshest.name, freshest.counts.novas).lead}{" "}
-                                        <strong className="font-medium">{freshest.name}</strong>{" "}
-                                        {scanHeadline(freshest.name, freshest.counts.novas).tail}
+                                        Sua varredura <strong className="font-semibold">{freshest.name}</strong> encontrou{" "}
+                                        <strong className="font-semibold">
+                                            {plural(freshest.counts.novas, "mudança", "mudanças")}
+                                        </strong>
+                                        .
                                     </span>
                                 ) : (
                                     <span>Nenhuma mudança nova desde a sua última visita.</span>
@@ -497,14 +564,19 @@ export function RegulatoryRadarView() {
                                                         >
                                                             <div className={cn("flex min-w-0 items-center gap-2", COLUMNS.change)}>
                                                                 {change.status === "nova" ? (
-                                                                    <span aria-label="não lida" className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-600" />
+                                                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-600">
+                                                                        <span className="sr-only">Não lida.</span>
+                                                                    </span>
                                                                 ) : (
                                                                     <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0" />
                                                                 )}
                                                                 <div className="min-w-0">
                                                                     <p className={cn("truncate text-xs text-gray-900", change.status === "nova" && "font-medium")}>
                                                                         {change.starred ? (
-                                                                            <Star aria-label="favorita" className="mr-1 inline h-3 w-3 fill-amber-400 text-amber-500" />
+                                                                            <>
+                                                                                <Star aria-hidden="true" className="mr-1 inline h-3 w-3 fill-amber-400 text-amber-500" />
+                                                                                <span className="sr-only">Favorita. </span>
+                                                                            </>
                                                                         ) : null}
                                                                         {change.title}
                                                                     </p>
@@ -573,6 +645,8 @@ export function RegulatoryRadarView() {
                     change={selected}
                     scanName={scanName(selected.scan_id)}
                     busy={busy}
+                    ruleSuggested={ruleChangeIds.has(selected.id)}
+                    onSuggestRule={(guidance) => void suggestRule(selected, guidance)}
                     onClose={() => open(null)}
                     onStar={() => void star(selected)}
                     onArchive={() => void archive(selected, "arquivada")}

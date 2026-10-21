@@ -6,12 +6,14 @@ describe("navItems", () => {
         expect(NAV_MAIN.map((item) => item.label)).toEqual([
             "Esteira",
             "Prazos",
+            "Radar regulatório",
             "Perguntar",
         ]);
     });
 
     it("keeps the platform's other tools under Mais", () => {
         expect(NAV_MORE.map((item) => item.label)).toEqual([
+            "Painel do Legal",
             "Playbooks",
             "Revisão em grade",
             "Biblioteca",
@@ -32,6 +34,11 @@ describe("navItems", () => {
         expect(isNavItemActive(esteira, "/pipeline")).toBe(true);
         expect(isNavItemActive(esteira, "/pipeline/abc")).toBe(true);
         expect(isNavItemActive(esteira, "/pipeline-old")).toBe(false);
+    });
+
+    it("does not mark Prazos active on the regulatory radar", () => {
+        const prazos = NAV_MAIN.find((item) => item.href === "/radar")!;
+        expect(isNavItemActive(prazos, "/radar-regulatorio")).toBe(false);
     });
 
     it("marks an exact item active only on its own path", () => {

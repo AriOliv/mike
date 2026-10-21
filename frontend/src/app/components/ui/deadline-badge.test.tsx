@@ -25,6 +25,13 @@ describe("DeadlineBadge", () => {
         expect(badge).toHaveClass("ml-1");
     });
 
+    it("reads 'em vigor' in grey once a rule has taken effect", () => {
+        render(<DeadlineBadge date="2026-09-01" kind="vigencia" now={now} />);
+        const badge = screen.getByText("em vigor").closest("span")!;
+        expect(badge).toHaveAttribute("data-tone", "em_vigor");
+        expect(badge).toHaveAttribute("title", "em vigor desde 01/09/2026");
+    });
+
     it("defaults to today", () => {
         const today = new Date();
         const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;

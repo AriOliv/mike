@@ -11,6 +11,8 @@
 
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { cn } from "@/app/lib/utils";
+import { fmt } from "@/app/lib/legalDashboard";
+import { plural } from "@/app/lib/regulatoryRadar";
 
 /** Chart roles. `.dark` on <html> switches them, like every other token in the app. */
 export const VIZ_STYLE = `
@@ -175,7 +177,7 @@ export function WeeklyColumns({ data }: { data: WeeklyPoint[] }) {
                         <g key={t}>
                             <line x1={pad.left} x2={W - pad.right} y1={y(t)} y2={y(t)} stroke={t === 0 ? "var(--viz-axis)" : "var(--viz-grid)"} strokeWidth={1} />
                             <text x={pad.left - 6} y={y(t)} dy="0.32em" textAnchor="end" className="fill-gray-400 text-[10px] tabular-nums">
-                                {t}
+                                {fmt(t)}
                             </text>
                         </g>
                     ))}
@@ -193,6 +195,20 @@ export function WeeklyColumns({ data }: { data: WeeklyPoint[] }) {
                                         {shortWeek(d.week)}
                                     </text>
                                 ) : null}
+                                {hover === i ? (
+                                    // Focus/hover band: the ring a keyboard user sees.
+                                    <rect
+                                        x={pad.left + band * i + 1}
+                                        y={pad.top}
+                                        width={Math.max(0, band - 2)}
+                                        height={plotH}
+                                        fill="none"
+                                        stroke="var(--viz-series-1)"
+                                        strokeOpacity={0.5}
+                                        strokeWidth={1.5}
+                                        rx={4}
+                                    />
+                                ) : null}
                                 {/* The hit target is the whole week band, not the 12px column. */}
                                 <rect
                                     x={pad.left + band * i}
@@ -201,12 +217,12 @@ export function WeeklyColumns({ data }: { data: WeeklyPoint[] }) {
                                     height={plotH}
                                     fill="transparent"
                                     tabIndex={0}
-                                    aria-label={`Semana de ${shortWeek(d.week)}: ${d.opened} entradas, ${d.closed} concluídos`}
+                                    aria-label={`Semana de ${shortWeek(d.week)}: ${plural(d.opened, "entrada", "entradas")}, ${plural(d.closed, "concluído", "concluídos")}`}
                                     onPointerEnter={() => setHover(i)}
                                     onPointerLeave={() => setHover(null)}
                                     onFocus={() => setHover(i)}
                                     onBlur={() => setHover(null)}
-                                    className="outline-none"
+                                    className="cursor-default focus-visible:outline-none"
                                 />
                             </g>
                         );
@@ -263,7 +279,7 @@ export function HorizontalBars({
                 {rows.map((r) => (
                     <tr key={r.label} className="border-t border-gray-100 first:border-t-0">
                         <td className="py-1">{r.label}</td>
-                        <td className="py-1 text-right">{r.value === null ? "—" : `${r.value} ${unit}`}</td>
+                        <td className="py-1 text-right">{r.value === null ? "—" : `${fmt(r.value)} ${unit}`}</td>
                         <td className="py-1 pl-3 text-right text-gray-500">{r.note ?? ""}</td>
                     </tr>
                 ))}
@@ -284,14 +300,13 @@ export function HorizontalBars({
                                 <span className="truncate text-gray-600">{r.label}</span>
                                 <span
                                     className="flex items-center gap-2"
-                                    tabIndex={0}
-                                    title={r.value === null ? `${r.label}: sem dado` : `${r.label}: ${r.value} ${unit}${r.note ? ` · ${r.note}` : ""}`}
+                                    title={r.value === null ? `${r.label}: sem dado` : `${r.label}: ${fmt(r.value)} ${unit}${r.note ? ` · ${r.note}` : ""}`}
                                 >
                                     <svg viewBox={`0 0 ${W} 12`} preserveAspectRatio="none" className="h-3 flex-1" aria-hidden="true">
                                         <path d={barPath(0, 0, share * (W - 2), 12)} fill="var(--viz-seq)" />
                                     </svg>
                                     <span className="w-20 shrink-0 tabular-nums text-gray-800">
-                                        {r.value === null ? <span className="text-gray-300">—</span> : `${r.value} ${unit}`}
+                                        {r.value === null ? <span className="text-gray-300">—</span> : `${fmt(r.value)} ${unit}`}
                                     </span>
                                 </span>
                             </li>

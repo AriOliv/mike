@@ -4911,6 +4911,52 @@ export async function createObligationFromRegulatoryChange(
     });
 }
 
+export type RegulatoryRuleStatus = "pendente" | "aprovada" | "rejeitada";
+
+export interface RegulatoryRuleSuggestion {
+    id: string;
+    change_id: string;
+    org_id: string | null;
+    playbook_id: string | null;
+    title: string;
+    guidance: string;
+    source_quote: string | null;
+    source_url: string | null;
+    status: RegulatoryRuleStatus;
+    suggested_by: string;
+    decided_by: string | null;
+    decided_at: string | null;
+    decision_note: string | null;
+    created_at: string;
+}
+
+/** "Adicionar ao playbook": a suggested rule the Head approves before it counts. */
+export async function suggestRuleFromRegulatoryChange(
+    id: string,
+    body: { guidance?: string; playbook_id?: string | null } = {},
+): Promise<RegulatoryRuleSuggestion> {
+    return apiRequest(`/regulatory/changes/${id}/rule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export async function listRegulatoryRuleSuggestions(status?: RegulatoryRuleStatus): Promise<RegulatoryRuleSuggestion[]> {
+    return apiRequest(`/regulatory/rules${status ? `?status=${status}` : ""}`);
+}
+
+export async function decideRegulatoryRuleSuggestion(
+    id: string,
+    body: { status: "aprovada" | "rejeitada"; note?: string },
+): Promise<RegulatoryRuleSuggestion> {
+    return apiRequest(`/regulatory/rules/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
 // ── Legal dashboard ("Painel do Legal") ─────────────────────────────────────
 export interface DashboardAssumptions {
     minutes_per_review: number;
@@ -4938,6 +4984,8 @@ export interface LegalDashboard {
     };
     sla: { closed_with_deadline: number; on_time: number; rate: number | null; open_overdue: number };
     notice: { due_in_30_days: number; missed_in_period: number };
+    /** Null until the Ficha is installed on this database. */
+    ficha: { contracts: number; fields: number; verified: number; rate: number | null } | null;
     agents: {
         contracts_reviewed_by_agents: number;
         contracts_reviewed_by_people: number;

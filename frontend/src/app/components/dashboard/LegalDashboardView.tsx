@@ -11,8 +11,11 @@ import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { getLegalDashboard, type DashboardAssumptions, type LegalDashboard } from "@/app/lib/mikeApi";
 import {
     PERIODS,
+    agentLabel,
     agentTiles,
     clampMinutes,
+    costTile,
+    money,
     headlineTiles,
     personLabel,
     stageRows,
@@ -43,7 +46,7 @@ export function LegalDashboardView() {
             setData(next);
             setError(null);
         } catch (e) {
-            setError(describeError(e).message);
+            setError(describeError(e, { lang: "pt", action: "carregar o painel" }).message);
         } finally {
             setRefetching(false);
         }
@@ -212,16 +215,21 @@ export function LegalDashboardView() {
                             )}
                         </section>
 
-                        {data.ai_cost ? (
-                            <section aria-label="Custo por agente" className="mt-6 max-w-2xl">
+                        <section aria-label="Custo de IA" className="mt-6 max-w-2xl">
+                            <h2 className="mb-2 text-xs font-medium text-gray-500">Custo de IA</h2>
+                            {data.ai_cost ? (
                                 <HorizontalBars
-                                    title="Custo de IA por agente"
-                                    subtitle="Soma do que cada execução registrou, em dólares"
-                                    rows={data.ai_cost.by_agent.map((r) => ({ label: r.agent, value: r.usd }))}
+                                    title={`${money(data.ai_cost.total_usd)} no período`}
+                                    subtitle={costTile(data).hint}
+                                    rows={data.ai_cost.by_agent.map((r) => ({ label: agentLabel(r.agent), value: r.usd }))}
                                     unit="US$"
                                 />
-                            </section>
-                        ) : null}
+                            ) : (
+                                <p className="text-xs text-gray-400">
+                                    Nenhuma execução de agente registrou custo no período. O custo aparece aqui assim que os agentes rodarem com o provedor que informa o gasto.
+                                </p>
+                            )}
+                        </section>
                     </div>
                 )}
             </div>
