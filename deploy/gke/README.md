@@ -1,7 +1,10 @@
 # Mike no GKE (staging e prévia de integração)
 
 Cluster `mike-gke` (Autopilot, southamerica-east1, nós privados, kubectl só pelo
-DNS endpoint). Dados **só sintéticos**; produção continua na VM `mike-clm`.
+DNS endpoint). Produção continua na VM `mike-clm`.
+
+- **staging** recebe os **contratos reais** da Avenia (decisão de 21/10/2026). Não tem seed. Os discos têm snapshot diário com 14 dias de retenção (`mike-staging-daily`). **Nunca** aponte script de captura ou e2e para ele.
+- **preview** é 100% fictícia. É o único lugar de capturas e e2e.
 
 | Ambiente | Namespace | URL | O que roda | Atualiza com |
 |---|---|---|---|---|
@@ -124,7 +127,7 @@ está, `SKIP_BUILD=1` reaproveita a imagem do commit.
 
 ## Seed
 
-- `seed/`, nos dois ambientes:
+- `seed/`, só no preview (o staging não tem seed):
   - 2 usuários demo;
   - 12 cards nas 6 lanes;
   - termos de contratos vigentes;

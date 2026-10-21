@@ -1,14 +1,14 @@
-# staging.clm.avenia.tech — stable environment the Legal team tests on.
-# Synthetic data only. Until the Cloudflare record exists, the same deployment
-# also answers on <ip>.nip.io (both certificates are attached).
+# staging.clm.avenia.tech — the environment the Legal team works on, with the
+# Avenia's REAL contracts (decision of 2026-10-21). No synthetic seed here, and
+# never point screenshot/e2e scripts at it: the preview is the fictitious one.
+# Disks: daily snapshot (mike-staging-daily, 14 days). The same deployment also
+# answers on <ip>.nip.io (both certificates are attached).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: staging
 resources:
   - namespace.yaml
   - ../../base
-components:
-  - ../../seed
 configMapGenerator:
   - name: mike-env
     literals:

@@ -22,7 +22,8 @@ fi
 
 kubectl apply -f "$OVERLAY/namespace.yaml"
 deploy/gke/scripts/bootstrap-secrets.sh "$ENV"
-# Jobs are immutable: recreate so a new image re-runs migrations and the seed.
+# Jobs are immutable: recreate so a new image re-runs migrations (and the seed,
+# where the overlay has one; staging has real data and none).
 kubectl -n "$ENV" delete job db-init seed --ignore-not-found
 (cd "$OVERLAY" && kustomize edit set image "mike-backend=*:$TAG" "mike-frontend=*:$TAG" 2>/dev/null) || \
   sed -i.bak -E "s/newTag: .*/newTag: $TAG/" "$OVERLAY/kustomization.yaml"
@@ -30,6 +31,8 @@ kubectl apply -k "$OVERLAY"
 kubectl -n "$ENV" wait --for=condition=complete job/db-init --timeout=15m
 kubectl -n "$ENV" rollout status deploy/backend --timeout=10m
 kubectl -n "$ENV" rollout status deploy/frontend --timeout=10m
-kubectl -n "$ENV" wait --for=condition=complete job/seed --timeout=10m
+if kubectl -n "$ENV" get job seed >/dev/null 2>&1; then
+  kubectl -n "$ENV" wait --for=condition=complete job/seed --timeout=10m
+fi
 deploy/gke/scripts/grant-iap.sh "$ENV" >/dev/null
 echo "rolled $ENV to $TAG"
