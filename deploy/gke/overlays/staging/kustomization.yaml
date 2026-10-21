@@ -9,6 +9,8 @@ namespace: staging
 resources:
   - namespace.yaml
   - ../../base
+components:
+  - ../../staging-egress
 configMapGenerator:
   - name: mike-env
     literals:

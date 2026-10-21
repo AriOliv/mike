@@ -2,8 +2,8 @@
 #   - pods may talk to each other inside the namespace;
 #   - only the frontend accepts traffic from Google's L7 LB proxies / health
 #     checkers (35.191.0.0/16, 130.211.0.0/22).
-# Egress stays open for now (Cloud NAT → LiteLLM, GitHub); tighten when the
-# agents' egress list is known.
+# Egress: open in the preview (fictitious); staging adds a default-deny egress
+# allowlist (../staging-egress: DNS, the namespace, the LiteLLM gateway).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
