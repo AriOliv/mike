@@ -109,7 +109,7 @@ ev(pid, ago, actor_type, actor_id, actor_name, action, after) as (values
   ('00000000-0000-4000-a000-000000000004'::uuid, interval '3 hours', 'hermes', 'hermes:docbot', 'Assistente no Slack',
    'request.created', '{"request":"LEG-0142"}'::jsonb),
   ('00000000-0000-4000-a000-000000000004'::uuid, interval '170 minutes', 'agent', 'agent:atribuicao', 'Agente de atribuição',
-   'assignee.changed', '{"steps":["Contou os cards abertos de cada pessoa","Parceria vai para quem tem menos carga"],"confirmed_by":"Legal Demo"}'::jsonb),
+   'assignee.changed', '{"name":"Legal Demo","email":"legal.demo@avenia.io","steps":["Contou os cards abertos de cada pessoa","Parceria vai para quem tem menos carga"],"confirmed_by":"Legal Demo"}'::jsonb),
   ('00000000-0000-4000-a000-000000000004'::uuid, interval '35 minutes', 'agent', 'agent:revisor@1', 'Agente de revisão',
    'review.completed', '{"document":"Parceria Orion (fictícia).docx","sources":3}'::jsonb),
   ('00000000-0000-4000-a000-000000000005'::uuid, interval '20 hours', 'agent', 'agent:revisor@1', 'Agente de revisão',
