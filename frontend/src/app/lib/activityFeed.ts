@@ -135,8 +135,11 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return clauseDecision(event, after);
         case "agent.started":
             return { verb: "começou a trabalhar neste contrato" };
-        case "agent.suggested":
-            return { verb: "fez uma sugestão", object: event.field ? `sobre ${event.field}` : undefined, sources };
+        case "agent.suggested": {
+            // The field it suggested ("risco alto", "Duda como responsável"), else a plain sentence.
+            const what = event.field?.trim() || text(after.suggestion) || text(after.value);
+            return what ? { verb: "sugeriu", object: what, sources } : { verb: "fez uma sugestão", sources };
+        }
         case "agent.failed":
             return { verb: "não conseguiu terminar o trabalho" };
         case "document.version_added":

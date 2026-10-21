@@ -105,11 +105,15 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "x.y" })).verb).toBe("registrou uma atualização");
         expect(describeEvent(event({ action: "agent.started" })).verb).toBe("começou a trabalhar neste contrato");
         expect(describeEvent(event({ action: "agent.suggested", field: "risco", after: { sources: 2 } }))).toEqual({
-            verb: "fez uma sugestão",
-            object: "sobre risco",
+            verb: "sugeriu",
+            object: "risco",
             sources: 2,
         });
-        expect(describeEvent(event({ action: "agent.suggested" })).object).toBeUndefined();
+        expect(describeEvent(event({ action: "agent.suggested", after: { suggestion: "risco alto" } })).object).toBe(
+            "risco alto",
+        );
+        expect(describeEvent(event({ action: "agent.suggested", after: { value: "NDA" } })).object).toBe("NDA");
+        expect(describeEvent(event({ action: "agent.suggested" }))).toEqual({ verb: "fez uma sugestão", sources: undefined });
         expect(describeEvent(event({ action: "agent.failed" })).verb).toBe("não conseguiu terminar o trabalho");
         expect(describeEvent(event({ action: "document.version_added", after: { document: "v2.docx" } })).object).toBe(
             "v2.docx",
