@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_HOME } from "@/app/lib/authRedirects";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthApiError, login, signup } from "@/app/lib/authApi";
@@ -207,7 +208,7 @@ export default function LoginPage() {
             // Session lives in the httpOnly cookie the auth routes set, so the
             // context has to re-read it before any gated route will let us in.
             await refreshSession();
-            router.push("/assistant");
+            router.push(DEFAULT_HOME);
         } catch (error: unknown) {
             setError(
                 describeError(error, {

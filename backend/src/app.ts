@@ -33,10 +33,13 @@ import {
 import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
 import {
   acervoRouter,
+  contractReviewsRouter,
+  homeRouter,
   integrationsRouter,
   obligationsRouter,
   pipelineRouter,
   projectContractRouter,
+  watchedFoldersRouter,
 } from "./modules/contracts/contracts.routes";
 import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
@@ -366,6 +369,9 @@ app.use("/obligations", obligationsRouter);
 app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
 app.use("/requests", requestsRouter);
+app.use("/home", homeRouter);
+app.use("/watched-folders", watchedFoldersRouter);
+app.use("/contract-reviews", contractReviewsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

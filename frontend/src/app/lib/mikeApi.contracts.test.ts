@@ -18,6 +18,7 @@ import {
     fetchAuthedObjectUrl,
     getContractTerms,
     getDocumentPreview,
+    createWatchedFolder,
     getCardActivity,
     assignRequest,
     createRequest,
@@ -29,6 +30,11 @@ import {
     listRequests,
     postRequestMessage,
     revokeRequestParticipant,
+    getHomeSummary,
+    listWatchedFolders,
+    requestContractReview,
+    updateContractReview,
+    watchProject,
     getDossier,
     getIntegrationStatus,
     getObligations,
@@ -111,6 +117,44 @@ describe("acervo and contract analysis", () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
         await getCardActivity("p1", 5);
         expect(lastFetchCall().url).toMatch(/limit=5$/);
+    });
+
+    it("reads the home screen and the watched folders", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ reviews: [] }));
+        await getHomeSummary();
+        expect(lastFetchCall().url).toMatch(/\/home$/);
+        fetchMock.mockResolvedValue(jsonResponse({ reviews: [] }));
+        await getHomeSummary("org 1");
+        expect(lastFetchCall().url).toMatch(/\/home\?workspace=org%201$/);
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        await listWatchedFolders();
+        expect(lastFetchCall().url).toMatch(/\/watched-folders$/);
+    });
+
+    it("creates a watched folder and puts a card in it", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "f1" }));
+        await createWatchedFolder({ name: "Fornecedores", playbook_id: "pb1" });
+        const created = lastFetchCall();
+        expect(created.url).toMatch(/\/watched-folders$/);
+        expect(created.init?.method).toBe("POST");
+        expect(JSON.parse(String(created.init?.body))).toEqual({ name: "Fornecedores", playbook_id: "pb1" });
+
+        fetchMock.mockResolvedValue(jsonResponse({ project_id: "p1" }));
+        await watchProject("f1", "p1");
+        expect(lastFetchCall().url).toMatch(/\/watched-folders\/f1\/projects\/p1$/);
+        expect(lastFetchCall().init?.method).toBe("PUT");
+    });
+
+    it("queues a review and decides one", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ review_id: "r1", queued: true }));
+        await expect(requestContractReview("p1")).resolves.toEqual({ review_id: "r1", queued: true });
+        expect(lastFetchCall().url).toMatch(/\/projects\/p1\/review$/);
+        expect(lastFetchCall().init?.method).toBe("POST");
+
+        fetchMock.mockResolvedValue(jsonResponse({ id: "r1", status: "done" }));
+        await updateContractReview("r1", { status: "done" });
+        expect(lastFetchCall().url).toMatch(/\/contract-reviews\/r1$/);
+        expect(JSON.parse(String(lastFetchCall().init?.body))).toEqual({ status: "done" });
     });
 
     it("reads a project's dossier", async () => {
