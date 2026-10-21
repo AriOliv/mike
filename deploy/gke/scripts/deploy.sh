@@ -6,6 +6,8 @@
 # mike-gke context (DNS endpoint: `gcloud container clusters get-credentials
 # mike-gke --region southamerica-east1 --dns-endpoint`).
 set -euo pipefail
+# kubectl always targets mike-gke (see kube.sh)
+. "$(dirname "${BASH_SOURCE[0]}")/kube.sh"
 ENV="${1:?environment overlay (staging)}"
 ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
 P="${PROJECT:-ari-teste-492120}"; REGION=southamerica-east1

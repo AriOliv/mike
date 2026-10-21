@@ -1,7 +1,7 @@
 # Mike no GKE (staging e prévia de integração)
 
 Cluster `mike-gke` (Autopilot, southamerica-east1, nós privados, kubectl só pelo
-DNS endpoint). Produção continua na VM `mike-clm`.
+DNS endpoint). Os scripts sempre fixam o contexto `gke_ari-teste-492120_southamerica-east1_mike-gke` (`scripts/kube.sh`, sobrescrevível com `KUBE_CONTEXT`), qualquer que seja o contexto ativo do shell. À mão, use sempre `kubectl --context …mike-gke -n <ns>`, e nunca `kubectl config use-context`, que muda o contexto das outras sessões desta máquina. Produção continua na VM `mike-clm`.
 
 - **staging** recebe os **contratos reais** da Avenia (decisão de 21/10/2026). Não tem seed. Os discos têm snapshot diário com 14 dias de retenção (`mike-staging-daily`). **Nunca** aponte script de captura ou e2e para ele.
 - **preview** é 100% fictícia. É o único lugar de capturas e e2e.
