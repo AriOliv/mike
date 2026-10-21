@@ -126,7 +126,7 @@ describe("AgentSuggestion", () => {
             decision: { kind: "rejeitado", by: "Duda", at: "2026-10-20T21:02:00.000Z", reason: "fora do escopo" },
         });
         const line = screen.getByRole("button", { name: "Reabrir: Rejeitado" });
-        expect(line).toHaveTextContent("Rejeitado por Duda");
+        expect(line).toHaveTextContent("Rejeitado por Duda · 18:02");
         expect(screen.getByText("“fora do escopo”")).toBeInTheDocument();
         fireEvent.click(line);
         expect(onReopen).toHaveBeenCalled();

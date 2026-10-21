@@ -50,9 +50,9 @@ test.describe("unauthenticated", () => {
         ).toBeVisible({ timeout: 10_000 });
     });
 
-    /* ── Test 2: valid credentials redirect to /assistant ─────────────────── */
+    /* ── Test 2: valid credentials land on the home screen (/inicio) ──────── */
 
-    test("login with valid credentials redirects to /assistant", async ({
+    test("login with valid credentials redirects to the home screen", async ({
         page,
         e2eAccount,
         workerStorageState,
@@ -64,7 +64,7 @@ test.describe("unauthenticated", () => {
            describe overrides `storageState`. Without that dependency, a run
            on worker 1+ could log in as a user another worker has not
            onboarded yet and land on /onboarding/profile instead of
-           /assistant. */
+           /inicio. */
         void workerStorageState;
         const { email, password } = e2eAccount;
 
@@ -75,9 +75,9 @@ test.describe("unauthenticated", () => {
         await page.fill("#password", password);
         await page.click('button[type="submit"]');
 
-        /* REGRESSION: fails if `router.push("/assistant")` is removed from
+        /* REGRESSION: fails if `router.push(DEFAULT_HOME)` is removed from
            the handleLogin success branch in frontend/src/app/login/page.tsx. */
-        await expect(page).toHaveURL(/\/assistant/, { timeout: 15_000 });
+        await expect(page).toHaveURL(/\/inicio/, { timeout: 15_000 });
     });
 
     /* ── Test 4: all protected routes redirect to /login ─────────────────── */
@@ -137,7 +137,7 @@ test.describe("logout (isolated user)", () => {
         await page.click('button[type="submit"]');
 
         await completeOnboardingIfRequired(page);
-        await page.waitForURL(/\/assistant/, { timeout: 15_000 });
+        await page.waitForURL(/\/inicio/, { timeout: 15_000 });
         /* The sidebar's own expect() below is the real settle-wait — it
            retries on the element this test goes on to click. networkidle
            never fires against an app with SSE and polling in flight. */

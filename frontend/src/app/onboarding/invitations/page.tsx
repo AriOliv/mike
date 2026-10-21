@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_HOME } from "@/app/lib/authRedirects";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { OnboardingInvitations } from "@/app/components/auth/OnboardingInvitations";
@@ -39,7 +40,7 @@ function InvitationStep({ userId }: { userId: string }) {
         setError(false);
         const saved = await completeOnboarding();
         if (saved) {
-            router.replace("/assistant");
+            router.replace(DEFAULT_HOME);
         } else {
             setError(true);
             setSubmitting(false);

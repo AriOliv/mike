@@ -33,13 +33,17 @@ import {
 import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
 import {
   acervoRouter,
+  contractReviewsRouter,
+  homeRouter,
   integrationsRouter,
   obligationsRouter,
   pipelineRouter,
   projectContractRouter,
+  watchedFoldersRouter,
 } from "./modules/contracts/contracts.routes";
 import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
+import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
@@ -368,6 +372,10 @@ app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
 app.use("/regulatory", regulatoryRouter);
 app.use("/dashboard", dashboardRouter);
+app.use("/requests", requestsRouter);
+app.use("/home", homeRouter);
+app.use("/watched-folders", watchedFoldersRouter);
+app.use("/contract-reviews", contractReviewsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

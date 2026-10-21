@@ -93,6 +93,7 @@ describe("AppSidebar account dropdown", () => {
     expect(mais.compareDocumentPosition(playbooks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Pipeline" })).toBeNull();
     expect(screen.queryByRole("button", { name: "IDE" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Contratos" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Radar regulatório" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Painel do Legal" })).toBeVisible();
   });
