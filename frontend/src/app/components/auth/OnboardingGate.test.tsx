@@ -113,7 +113,7 @@ describe("OnboardingGate", () => {
 
         expect(screen.queryByText("Practice step")).not.toBeInTheDocument();
         await waitFor(() =>
-            expect(state.replace).toHaveBeenCalledWith("/assistant"),
+            expect(state.replace).toHaveBeenCalledWith("/inicio"),
         );
     });
 });

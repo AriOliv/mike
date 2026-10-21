@@ -60,13 +60,15 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
+import { DEFAULT_HOME } from "@/app/lib/authRedirects";
 import {
-    NAV_MAIN,
-    NAV_MORE,
     isNavItemActive,
+    navForRole,
     type NavIconKey,
     type NavItem,
+    type NavRole,
 } from "@/app/lib/navItems";
+import { loadNavRole } from "@/app/lib/navRole";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -81,7 +83,7 @@ import {
 } from "@/app/components/ui/liquid-surface";
 
 /** Where a workspace opens: the page the logo leads to. */
-const WORKSPACE_HOME = "/assistant";
+const WORKSPACE_HOME = DEFAULT_HOME;
 
 const NAV_ICONS: Record<NavIconKey, (props: { className?: string }) => ReactElement> = {
     chat: ChatSkeuoIcon,
@@ -463,6 +465,20 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         setCurrentChatId(routeChatId);
     }, [routeChatId, setCurrentChatId]);
 
+    // Whoever only asks the Legal team for things gets a shorter menu. The
+    // role is per account, so it is asked again only when the account changes.
+    const [navRole, setNavRole] = useState<NavRole | null>(null);
+    useEffect(() => {
+        setNavRole(null);
+        if (!userId) return;
+        const controller = new AbortController();
+        void loadNavRole(controller.signal).then((role) => {
+            if (!controller.signal.aborted) setNavRole(role);
+        });
+        return () => controller.abort();
+    }, [userId]);
+    const nav = navForRole(navRole);
+
 
     const getDisplayName = () => {
         if (!profile) return "";
@@ -511,7 +527,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     {isOpen && (
                         <div className="min-w-0 flex-1 px-1.5">
                             <Link
-                                href="/assistant"
+                                href={WORKSPACE_HOME}
                                 className="flex min-w-0 items-center gap-1.5 hover:opacity-80 transition-opacity"
                             >
                                 <span className="flex shrink-0 px-px">
@@ -576,7 +592,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
                     {/* Nav items */}
                     <div className="pt-1.5">
-                        {NAV_MAIN.map((item) => (
+                        {nav.main.map((item) => (
                             <NavButton
                                 key={item.href}
                                 item={item}
@@ -586,7 +602,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 onNavigate={() => router.push(item.href)}
                             />
                         ))}
-                        {isOpen ? (
+                        {nav.more.length === 0 ? null : isOpen ? (
                             <p
                                 className={`mt-3 mb-1 px-3.5 text-xs font-semibold text-gray-500 ${
                                     shouldAnimate ? "sidebar-fade-in" : ""
@@ -597,7 +613,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         ) : (
                             <div aria-hidden="true" className="mx-3 my-2 hidden border-t border-gray-200 md:block" />
                         )}
-                        {NAV_MORE.map((item) => (
+                        {nav.more.map((item) => (
                             <NavButton
                                 key={item.href}
                                 item={item}
@@ -609,7 +625,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         ))}
                     </div>
 
-                    {isOpen && (
+                    {isOpen && nav.workLists && (
                         <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
                             {/* Recent Projects */}
                             <div>

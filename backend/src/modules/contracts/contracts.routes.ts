@@ -6,8 +6,16 @@ import { requireAuth } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
+import { resolveWorkspaceFilter, sendWorkspaceFailure } from "../../lib/workspace";
 import {
     askAcervo,
+    createWatchedFolder,
+    getHomeSummary,
+    getLatestReview,
+    listWatchedFolders,
+    requestReview,
+    updateContractReview,
+    watchProject,
     createObligation,
     deleteObligation,
     extractContractTerms,
@@ -108,7 +116,7 @@ obligationsRouter.delete(
 
 obligationsRouter.use(routerErrorHandler("[obligations]"));
 
-// ── /projects/:projectId/{dossier,preview,terms,activity} ─────────────────────────────
+// ── /projects/:projectId/{dossier,preview,terms,activity,review} ─────────────────────────────
 export const projectContractRouter = Router({ mergeParams: true });
 
 projectContractRouter.get(
@@ -182,7 +190,88 @@ projectContractRouter.get(
     }),
 );
 
+projectContractRouter.get(
+    "/review",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await getLatestReview(createServerSupabase(), caller(res), req.params.projectId));
+    }),
+);
+
+// Review the card's latest document now ("Revisar de novo", or right after a
+// batch upload) instead of waiting for the next folder scan.
+projectContractRouter.post(
+    "/review",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await requestReview(createServerSupabase(), caller(res), req.params.projectId), 202);
+    }),
+);
+
 projectContractRouter.use(routerErrorHandler("[contracts]"));
+
+// ── /home ────────────────────────────────────────────────────────────────────
+export const homeRouter = Router();
+
+homeRouter.get(
+    "/",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const db = createServerSupabase();
+        const workspace = await resolveWorkspaceFilter(db, res.locals.userId as string, req.query.workspace);
+        if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+        send(res, await getHomeSummary(db, caller(res), new Date(), workspace.workspace));
+    }),
+);
+
+homeRouter.use(routerErrorHandler("[home]"));
+
+// ── /watched-folders and /contract-reviews ──────────────────────────────────
+export const watchedFoldersRouter = Router();
+
+watchedFoldersRouter.get(
+    "/",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await listWatchedFolders(createServerSupabase(), caller(res)));
+    }),
+);
+
+watchedFoldersRouter.post(
+    "/",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await createWatchedFolder(createServerSupabase(), caller(res), body(req)), 201);
+    }),
+);
+
+watchedFoldersRouter.put(
+    "/:folderId/projects/:projectId",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(
+            res,
+            await watchProject(createServerSupabase(), caller(res), req.params.folderId, req.params.projectId),
+        );
+    }),
+);
+
+watchedFoldersRouter.use(routerErrorHandler("[watched-folders]"));
+
+export const contractReviewsRouter = Router();
+
+contractReviewsRouter.patch(
+    "/:reviewId",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(
+            res,
+            await updateContractReview(createServerSupabase(), caller(res), req.params.reviewId, body(req)),
+        );
+    }),
+);
+
+contractReviewsRouter.use(routerErrorHandler("[contract-reviews]"));
 
 // ── /acervo ──────────────────────────────────────────────────────────────────
 export const acervoRouter = Router();

@@ -1,4 +1,8 @@
+/** Where a signed-in person lands: the legal team's home screen. */
+export const DEFAULT_HOME = "/inicio";
+
 const AUTH_REDIRECT_PATHS = new Set([
+    DEFAULT_HOME,
     "/assistant",
     "/login",
     "/reset-password",
@@ -10,7 +14,7 @@ const AUTH_REDIRECT_PATHS = new Set([
 
 export function safeAuthNext(
     candidate: string | null | undefined,
-    fallback = "/assistant",
+    fallback = DEFAULT_HOME,
 ): string {
     if (
         !candidate ||

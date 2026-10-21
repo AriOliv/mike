@@ -46,7 +46,7 @@ export const test = base.extend<object, WorkerFixtures>({
                 await page.click('button[type="submit"]');
                 /* A new account must finish onboarding before its session
                    lands on the app; an onboarded one goes straight to
-                   /assistant. */
+                   the home screen (/inicio). */
                 await completeOnboardingIfRequired(page);
                 await page.context().storageState({ path: file });
                 await page.close();

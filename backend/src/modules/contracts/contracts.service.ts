@@ -1,8 +1,9 @@
 // Facade for the contracts module: the CLM surface on top of projects — the
 // pipeline board, the deadline radar, the AI analysis (dossier), commercial
 // terms, the corpus Q&A (acervo), the contract preview, the activity log
-// shared by people and agents (card_events), and the Notion / Drive /
-// Calendar mirrors.
+// shared by people and agents (card_events), the automatic review of
+// watched folders and the home screen, and the Notion / Drive / Calendar
+// mirrors.
 
 export {
     LANES,
@@ -35,6 +36,7 @@ export {
     type TermsSyncSummary,
 } from "./contracts.terms";
 export { askAcervo, type AcervoAnswer } from "./contracts.acervo";
+export { contractCorpus, type ContractCorpusEntry } from "./contracts.corpus";
 export {
     integrationStatus,
     syncPipelineToNotion,
@@ -56,4 +58,25 @@ export {
     type AgentRunInput,
     type AgentRunOutcome,
 } from "./contracts.events";
+export {
+    AUTO_REVIEW_JOB,
+    listWatchedFolders,
+    createWatchedFolder,
+    watchProject,
+    scanWatchedFolders,
+    requestReview,
+    handleAutoReview,
+    markAutoReviewFailed,
+    updateContractReview,
+    getLatestReview,
+    type WatchedFolder,
+} from "./contracts.autoReview";
+export {
+    getHomeSummary,
+    countAgentReviews,
+    REVIEW_AGENTS,
+    type HomeSummary,
+    type HomeReview,
+    type HomeDeadline,
+} from "./contracts.home";
 export type { Caller } from "./contracts.shared";

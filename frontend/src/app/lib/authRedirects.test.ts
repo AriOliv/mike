@@ -13,6 +13,7 @@ describe("safeAuthNext", () => {
         expect(safeAuthNext("/settings?emailChange=processed")).toBe(
             "/settings?emailChange=processed",
         );
+        expect(safeAuthNext("/inicio")).toBe("/inicio");
         expect(safeAuthNext("/reset-password")).toBe("/reset-password");
         expect(safeAuthNext("/onboarding/profile")).toBe("/onboarding/profile");
         expect(safeAuthNext("/onboarding/invitations")).toBe("/onboarding/invitations");
@@ -26,7 +27,7 @@ describe("safeAuthNext", () => {
         "/settings\\evil",
         "/settings\n/assistant",
     ])("rejects unsafe destination %s", (candidate) => {
-        expect(safeAuthNext(candidate)).toBe("/assistant");
+        expect(safeAuthNext(candidate)).toBe("/inicio");
     });
 
     it("uses a caller-provided fallback when no destination is supplied", () => {
