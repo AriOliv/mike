@@ -8,7 +8,7 @@
       "widths": [1280, 390],
       "themes": ["light", "dark"],
       "steps": [
-        { "waitFor": "section[aria-label='Resumo'] >> text=Revisei" },
+        { "waitFor": "section[aria-label='Resumo'] button[aria-expanded]" },
         { "waitFor": "[role=list][aria-label='Revisões'] [role=listitem]", "wait": 400 }
       ]
     },
@@ -20,7 +20,7 @@
       "themes": ["light", "dark"],
       "steps": [
         { "waitFor": "aside[aria-label='Detalhes'] >> text=Aceitar revisão" },
-        { "waitFor": "aside[aria-label='Detalhes'] >> text=verificados" },
+        { "waitFor": "aside[aria-label='Detalhes'] >> text=Ficha" },
         { "waitFor": "aside[aria-label='Detalhes'] >> text=Agente de revisão", "wait": 400 }
       ]
     },
@@ -44,7 +44,7 @@
       "themes": ["light"],
       "steps": [
         { "waitFor": "section[aria-label='Resumo']" },
-        { "click": "button:has-text('Enviar contratos')" },
+        { "click": "button:has-text('Enviar contratos'):visible" },
         { "waitFor": "text=PDF ou DOCX", "wait": 300 }
       ]
     },
