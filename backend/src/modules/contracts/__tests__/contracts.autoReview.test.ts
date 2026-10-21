@@ -115,9 +115,12 @@ describe("tallyFindings and termsSummary", () => {
 });
 
 describe("watched folders", () => {
-    it("validates a new folder", async () => {
+    it("validates a new folder, in words the person can act on", async () => {
         const fake = scriptedDb([]);
-        expect(await createWatchedFolder(fake.db, caller, {})).toMatchObject({ kind: "validation" });
+        expect(await createWatchedFolder(fake.db, caller, {})).toMatchObject({
+            kind: "validation",
+            detail: "Dê um nome à pasta.",
+        });
         expect(await createWatchedFolder(fake.db, caller, { name: "x".repeat(201) })).toMatchObject({
             kind: "validation",
         });
@@ -601,7 +604,10 @@ describe("updateContractReview", () => {
         ]);
         expect(await updateContractReview(fake.db, caller, "r1", {})).toMatchObject({ kind: "not_found" });
         expect(await updateContractReview(fake.db, caller, "r1", {})).toMatchObject({ kind: "error" });
-        expect(await updateContractReview(fake.db, caller, "r1", { status: "done" })).toMatchObject({ kind: "conflict" });
+        expect(await updateContractReview(fake.db, caller, "r1", { status: "done" })).toMatchObject({
+            kind: "conflict",
+            detail: "Só dá para aceitar uma revisão que já está pronta.",
+        });
         expect(await updateContractReview(fake.db, caller, "r1", { status: "x" })).toMatchObject({ kind: "validation" });
         expect(await updateContractReview(fake.db, caller, "r1", { assignee_email: "no" })).toMatchObject({
             kind: "validation",
@@ -615,6 +621,7 @@ describe("updateContractReview", () => {
         const viewer = scriptedDb([{ table: "contract_reviews", data: row }]);
         expect(await updateContractReview(viewer.db, caller, "r1", { status: "done" })).toMatchObject({
             kind: "forbidden",
+            detail: "Você pode ver este contrato, mas não alterá-lo.",
         });
         viewer.done();
     });
@@ -633,6 +640,9 @@ describe("getLatestReview", () => {
         expect(await getLatestReview(fake.db, caller, "p1")).toMatchObject({ kind: "error" });
         fake.done();
         access.checkProjectAccess.mockResolvedValue({ ok: false });
-        expect(await getLatestReview(scriptedDb([]).db, caller, "p1")).toMatchObject({ kind: "not_found" });
+        expect(await getLatestReview(scriptedDb([]).db, caller, "p1")).toMatchObject({
+            kind: "not_found",
+            detail: "Não encontrei este contrato.",
+        });
     });
 });

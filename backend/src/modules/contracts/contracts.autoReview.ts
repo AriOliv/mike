@@ -124,15 +124,15 @@ export async function createWatchedFolder(
     body: Record<string, unknown>,
 ): Promise<ServiceResult<WatchedFolder>> {
     const name = normalizeString(body.name);
-    if (!name) return failure("validation", "name is required");
-    if (name.length > 200) return failure("validation", "name must be at most 200 characters");
+    if (!name) return failure("validation", "Dê um nome à pasta.");
+    if (name.length > 200) return failure("validation", "Use um nome de pasta com até 200 caracteres.");
     const source = body.source ?? "upload";
     if (source !== "upload" && source !== "drive") {
-        return failure("validation", "source must be upload or drive");
+        return failure("validation", "A pasta precisa vir de um envio ou do Google Drive.");
     }
     const assignee = normalizeString(body.default_assignee_email)?.toLowerCase() ?? null;
     if (assignee && !EMAIL.test(assignee)) {
-        return failure("validation", "default_assignee_email must be a valid email");
+        return failure("validation", "O responsável padrão precisa ser um e-mail válido.");
     }
     const { data, error } = await db
         .from("watched_folders")
@@ -171,7 +171,7 @@ export async function watchProject(
         .eq("active", true)
         .maybeSingle();
     if (folderError) return internalFailure(folderError);
-    if (!folder) return failure("not_found", "Watched folder not found");
+    if (!folder) return failure("not_found", "Não encontrei esta pasta monitorada.");
 
     const { error } = await db
         .from("projects")
@@ -350,7 +350,7 @@ export async function requestReview(
         .limit(1);
     if (docsError) return internalFailure(docsError);
     const doc = ((docs ?? []) as { id: string; current_version_id: string; org_id: string | null }[])[0];
-    if (!doc) return failure("validation", "The card has no document to review", "no_document");
+    if (!doc) return failure("validation", "Este contrato ainda não tem documento para revisar.", "no_document");
 
     const { data: card, error: cardError } = await db
         .from("projects")
@@ -621,7 +621,7 @@ export async function updateContractReview(
         status: string;
         assignee_email: string | null;
     } | null;
-    if (!review) return failure("not_found", "Review not found");
+    if (!review) return failure("not_found", "Não encontrei esta revisão.");
     const access = await requireProjectEdit(db, caller, review.project_id);
     if (!access.ok) return access;
 
@@ -637,7 +637,7 @@ export async function updateContractReview(
     if ("assignee_email" in body) {
         const email = normalizeString(body.assignee_email)?.toLowerCase() ?? null;
         if (email && !EMAIL.test(email)) {
-            return failure("validation", "assignee_email must be a valid email or null");
+            return failure("validation", "Escolha uma pessoa válida como responsável.");
         }
         patch.assignee_email = email;
         if (email !== review.assignee_email) {
@@ -647,7 +647,7 @@ export async function updateContractReview(
     if ("status" in body) {
         if (body.status === "done") {
             if (review.status !== "ready") {
-                return failure("conflict", "Only a review that is ready can be accepted");
+                return failure("conflict", "Só dá para aceitar uma revisão que já está pronta.");
             }
             patch.status = "done";
             patch.decided_by = caller.userId;
@@ -659,10 +659,10 @@ export async function updateContractReview(
             patch.decided_by = null;
             patch.decided_at = null;
         } else {
-            return failure("validation", "status must be done, or ready to undo");
+            return failure("validation", "Esta mudança de status não é permitida.");
         }
     }
-    if (Object.keys(patch).length === 0) return failure("validation", "Nothing to update");
+    if (Object.keys(patch).length === 0) return failure("validation", "Nada para alterar.");
     patch.updated_at = new Date().toISOString();
 
     const { data: updated, error: updateError } = await db

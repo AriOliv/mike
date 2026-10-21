@@ -119,7 +119,7 @@ export async function extractContractTerms(
     if (!selected.ok) return selected;
     try {
         const terms = await extractTerms(db, caller.userId, projectId, selected);
-        if (!terms) return failure("validation", "Could not read the contract", "contract_unreadable");
+        if (!terms) return failure("validation", "Não consegui ler este contrato.", "contract_unreadable");
         return ok(terms);
     } catch (error) {
         return internalFailure(error);
