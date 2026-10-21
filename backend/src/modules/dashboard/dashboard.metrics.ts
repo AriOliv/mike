@@ -118,9 +118,10 @@ export function computeDashboard(
     const closedCards = input.cards.filter(
         (c) => c.status === "concluido" || c.lane === "arquivado",
     );
-    const closed = closedCards.filter((c) =>
-        inPeriod(String(c.completed_at ?? c.lane_updated_at ?? "")),
-    );
+    // One definition of "concluído" and one date for it, shared by the volume
+    // tile, the weekly chart, the cycle-time median and the SLA.
+    const closedAt = (c: PipelineCard) => String(c.completed_at ?? c.lane_updated_at ?? "");
+    const closed = closedCards.filter((c) => inPeriod(closedAt(c)));
     const open = input.cards.filter((c) => c.lane !== "arquivado" && c.status !== "concluido");
 
     // weekly intake vs. closed, for the trend chart
@@ -134,7 +135,7 @@ export function computeDashboard(
         if (w) w.opened++;
     }
     for (const c of closed) {
-        const w = weeks.get(weekOf(String(c.completed_at ?? c.lane_updated_at)));
+        const w = weeks.get(weekOf(closedAt(c)));
         if (w) w.closed++;
     }
 
@@ -151,9 +152,12 @@ export function computeDashboard(
     }
 
     // ── cycle time ──────────────────────────────────────────────────────────
+    // completed_at is a date: a request opened and closed the same day is 0 d,
+    // not dropped. Only a close date before the opening day is unmeasurable.
     const cycleDays = closed
-        .map((c) => daysBetween(String(c.created_at), String(c.completed_at ?? c.lane_updated_at)))
-        .filter((d) => Number.isFinite(d) && d >= 0);
+        .filter((c) => closedAt(c).slice(0, 10) >= String(c.created_at ?? "").slice(0, 10))
+        .map((c) => Math.max(0, daysBetween(String(c.created_at), closedAt(c))))
+        .filter((d) => Number.isFinite(d));
     // Age in the current stage: what is stuck where, today.
     const stageAge = LANES.filter((l) => l !== "arquivado").map((lane) => {
         const here = open.filter((c) => c.lane === lane);
@@ -187,7 +191,7 @@ export function computeDashboard(
 
     // ── SLA (the card's deadline) ───────────────────────────────────────────
     const withDeadline = closed.filter((c) => typeof c.deadline === "string");
-    const onTime = withDeadline.filter((c) => String(c.completed_at ?? c.lane_updated_at).slice(0, 10) <= String(c.deadline));
+    const onTime = withDeadline.filter((c) => closedAt(c).slice(0, 10) <= String(c.deadline));
     const overdueOpen = open.filter((c) => typeof c.deadline === "string" && String(c.deadline) < today);
 
     // ── notice deadlines (aviso prévio) — our first-class citizen ───────────

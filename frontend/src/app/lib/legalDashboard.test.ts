@@ -96,11 +96,21 @@ describe("headline tiles", () => {
         expect(weak[3].tone).toBe("atencao");
         const none = headlineTiles({
             ...base,
+            volume: { ...base.volume, closed: 0 },
             cycle: { ...base.cycle, median_days_to_close: null, closed_measured: 0 },
-            sla: { ...base.sla, rate: null },
+            sla: { ...base.sla, rate: null, on_time: 0, closed_with_deadline: 0, open_overdue: 0 },
         });
         expect(none[1]).toMatchObject({ value: "—", hint: "nenhum pedido concluído no período" });
-        expect(none[2].value).toBe("—");
+        expect(none[2]).toMatchObject({ value: "—", hint: "nenhum pedido concluído no período" });
+        // Closed requests never read as "none closed" in the next tiles.
+        const closedNoDates = headlineTiles({
+            ...base,
+            volume: { ...base.volume, closed: 3 },
+            cycle: { ...base.cycle, median_days_to_close: null, closed_measured: 0 },
+            sla: { ...base.sla, rate: null, on_time: 0, closed_with_deadline: 0, open_overdue: 0 },
+        });
+        expect(closedNoDates[1].hint).toBe("3 concluídos, sem data para medir");
+        expect(closedNoDates[2].hint).toBe("nenhum concluído tinha prazo");
     });
 });
 

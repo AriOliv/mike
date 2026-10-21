@@ -171,6 +171,26 @@ describe("computeDashboard", () => {
         });
     });
 
+    it("counts the same closed requests in the volume, the weekly chart, the cycle time and the SLA", () => {
+        const sameDay = computeDashboard(
+            {
+                ...inputs,
+                cards: [
+                    // closed the day it was opened: 0 d, not dropped
+                    card({ id: "s", lane: "arquivado", status: "concluido", created_at: "2026-10-12T15:00:00Z", completed_at: "2026-10-12", deadline: "2026-10-13" }),
+                    // no completed_at: the lane move is the close date
+                    card({ id: "m", lane: "arquivado", status: "concluido", created_at: "2026-10-02T00:00:00Z", lane_updated_at: "2026-10-06T00:00:00Z" }),
+                ] as never,
+            },
+            { now: NOW, periodDays: 90, assumptions: DEFAULT_ASSUMPTIONS },
+        );
+        expect(sameDay.volume.closed).toBe(2);
+        expect(sameDay.volume.weekly.reduce((n, w) => n + w.closed, 0)).toBe(2);
+        expect(sameDay.cycle.closed_measured).toBe(2);
+        expect(sameDay.cycle.median_days_to_close).toBe(2);
+        expect(sameDay.sla).toMatchObject({ closed_with_deadline: 1, on_time: 1 });
+    });
+
     it("handles an empty base", () => {
         const empty = computeDashboard(
             { cards: [], dossiers: [], terms: [], runs: [], changes: [], laneEvents: [], agentRuns: [], fichas: null, agentReviews: 0, requestArea: new Map(), documentProject: new Map() },

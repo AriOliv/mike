@@ -57,7 +57,9 @@ export function headlineTiles(d: LegalDashboard): Tile[] {
             label: "Tempo até concluir (mediana)",
             hint: d.cycle.closed_measured
                 ? plural(d.cycle.closed_measured, "pedido medido", "pedidos medidos")
-                : "nenhum pedido concluído no período",
+                : d.volume.closed
+                  ? `${plural(d.volume.closed, "concluído", "concluídos")}, sem data para medir`
+                  : "nenhum pedido concluído no período",
         },
         {
             id: "sla",
@@ -65,7 +67,11 @@ export function headlineTiles(d: LegalDashboard): Tile[] {
             label: "Prazo cumprido",
             hint: late
                 ? `${plural(late, "em aberto já passou", "em aberto já passaram")} do prazo`
-                : `${d.sla.on_time} de ${d.sla.closed_with_deadline} no prazo`,
+                : d.sla.closed_with_deadline
+                  ? `${d.sla.on_time} de ${d.sla.closed_with_deadline} no prazo`
+                  : d.volume.closed
+                    ? "nenhum concluído tinha prazo"
+                    : "nenhum pedido concluído no período",
             tone: late > 0 ? "critico" : d.sla.rate !== null && d.sla.rate < 80 ? "atencao" : "default",
         },
         {

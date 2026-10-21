@@ -296,7 +296,7 @@ export function HorizontalBars({
                     {rows.map((r) => {
                         const share = r.value && max ? r.value / max : 0;
                         return (
-                            <li key={r.label} className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3 text-xs">
+                            <li key={r.label} className="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-3 text-xs">
                                 <span className="truncate text-gray-600">{r.label}</span>
                                 <span
                                     className="flex items-center gap-2"

@@ -56,7 +56,8 @@ import { cn } from "@/app/lib/utils";
 import { ChangePanel } from "./ChangePanel";
 
 const COLUMNS = {
-    change: "w-[22rem] min-w-[22rem] pl-3",
+    // Narrower on a phone so the impact chip shows beside the title.
+    change: "w-[13rem] min-w-[13rem] pl-3 sm:w-[22rem] sm:min-w-[22rem]",
     impact: "w-36",
     affected: "w-44",
     effective: "w-24",
