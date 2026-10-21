@@ -38,19 +38,25 @@ export IAP_TOKEN=$(deploy/gke/scripts/iap-token.sh $URL)   # JWT assinado pela S
 curl -s -o /dev/null -w '%{http_code}\n' -H "Proxy-Authorization: Bearer $IAP_TOKEN" $URL/login   # 200
 ```
 
-Use **`Proxy-Authorization`**, não `Authorization`. O IAP aceita os dois, mas
-consome o `Proxy-Authorization` e não o repassa. Assim o `Authorization` fica
-livre para a sessão do Mike. O token só vale para o host do `aud`: um token do
-preview não abre o staging.
+Os dois headers funcionam: o IAP valida e **remove** tanto `Proxy-Authorization`
+quanto `Authorization`, então o backend do Mike nunca vê o token, e a sessão
+continua no cookie. Use:
+- `Proxy-Authorization` no curl e em clientes HTTP;
+- `Authorization` no browser, porque o Chrome bloqueia `Proxy-Authorization`.
 
-Playwright (`playwright.config.ts`):
+O token só vale para o host do `aud`: um token do preview não abre o staging.
+
+Playwright (`playwright.config.ts`). O header vai só para o host do Mike, nunca para terceiros:
 
 ```ts
-export default defineConfig({
-  use: {
-    baseURL: process.env.MIKE_URL ?? "https://preview.34-120-191-197.nip.io",
-    extraHTTPHeaders: { "Proxy-Authorization": `Bearer ${process.env.IAP_TOKEN}` },
-  },
+const BASE = process.env.MIKE_URL ?? "https://preview.34-120-191-197.nip.io";
+export default defineConfig({ use: { baseURL: BASE } });
+
+// em um fixture/beforeEach:
+await context.route("**/*", (route) => {
+  const req = route.request();
+  if (new URL(req.url()).host !== new URL(BASE).host) return route.continue();
+  return route.continue({ headers: { ...req.headers(), authorization: `Bearer ${process.env.IAP_TOKEN}` } });
 });
 ```
 

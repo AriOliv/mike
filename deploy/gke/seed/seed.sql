@@ -9,6 +9,16 @@
 
 begin;
 
+-- Contas demo com o onboarding concluído: sem isto o OnboardingGate manda para
+-- /onboarding/profile e quem testa (pessoa ou Playwright) nunca chega às telas.
+insert into public.user_profiles (user_id, email, display_name, organisation, onboarding_version)
+select u.id, u.email, case u.role when 'legal' then 'Legal Demo' else 'Solicitante Demo' end, 'Avenia (demo)', 1
+from public._seed_users u
+on conflict (user_id) do update
+set display_name = coalesce(public.user_profiles.display_name, excluded.display_name),
+    organisation = coalesce(public.user_profiles.organisation, excluded.organisation),
+    onboarding_version = coalesce(public.user_profiles.onboarding_version, 1);
+
 with legal as (select id as uid from public._seed_users where role = 'legal'),
 cards(id, name, counterparty, lane, status, priority, risk, ctype, requester, deadline_days) as (
   values
