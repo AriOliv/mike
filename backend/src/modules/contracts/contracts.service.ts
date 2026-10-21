@@ -70,5 +70,12 @@ export {
     getLatestReview,
     type WatchedFolder,
 } from "./contracts.autoReview";
-export { getHomeSummary, type HomeSummary, type HomeReview, type HomeDeadline } from "./contracts.home";
+export {
+    getHomeSummary,
+    countAgentReviews,
+    REVIEW_AGENTS,
+    type HomeSummary,
+    type HomeReview,
+    type HomeDeadline,
+} from "./contracts.home";
 export type { Caller } from "./contracts.shared";

@@ -4593,10 +4593,14 @@ export interface HomeReview {
     notice_deadline: string | null;
     notice_days: number | null;
     term_end: string | null;
-    /** How many of the Ficha's tracked terms were found in the contract. */
-    ficha: { filled: number; total: number } | null;
+    /** The Ficha's headline: fields a person checked out of those that apply. */
+    ficha: { verified: number; total: number } | null;
     /** The assignment agent's pick while nobody owns the review. */
     suggested_assignee: string | null;
+    /** The owner's profile name, when they have one. */
+    assignee_name: string | null;
+    /** The request this contract came from (LEG-0142), for the link. */
+    request: { id: string; code: string } | null;
     updated_at: string;
 }
 

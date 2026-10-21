@@ -93,7 +93,7 @@ export function HomeReviewTable({
                       : reviews.map((review) => {
                             const chip = reviewChip(review);
                             const selected = review.id === selectedId;
-                            const owner = personName(review.assignee_email);
+                            const owner = review.assignee_name ?? personName(review.assignee_email);
                             return (
                                 <TableRow
                                     key={review.id}
@@ -164,7 +164,7 @@ export function HomeReviewTable({
                                     <TableCell className={cn("flex items-center gap-1.5", COLUMNS.owner)}>
                                         {owner ? (
                                             <>
-                                                <UserAvatar size="sm" email={review.assignee_email} />
+                                                <UserAvatar size="sm" email={review.assignee_email} name={review.assignee_name} />
                                                 <span className="truncate text-gray-700">{owner}</span>
                                             </>
                                         ) : review.suggested_assignee ? (

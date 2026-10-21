@@ -70,8 +70,10 @@ function review(overrides: Partial<HomeReview>): HomeReview {
         notice_deadline: "2026-11-01",
         notice_days: 61,
         term_end: "2027-01-01",
-        ficha: { filled: 7, total: 10 },
+        ficha: { verified: 14, total: 24 },
         suggested_assignee: null,
+        assignee_name: null,
+        request: { id: "req-1", code: "LEG-0142" },
         updated_at: new Date().toISOString(),
         ...overrides,
     };
@@ -128,7 +130,7 @@ describe("HomeView", () => {
     it("greets with what the agents did, the counters and the queue, opening on my reviews", async () => {
         api.getHomeSummary.mockResolvedValue(
             summary([
-                review({ assignee_email: "Duda@Avenia.io" }),
+                review({ assignee_email: "Duda@Avenia.io", assignee_name: "Duda Lima" }),
                 review({ id: "r2", project_id: "p2", filename: "MSA.pdf", counterparty: null, assignee_email: null, status: "running", step: "playbook" }),
                 review({ id: "r3", project_id: "p3", filename: "Nimbus.pdf", assignee_email: null, suggested_assignee: "Ana" }),
             ]),
@@ -142,6 +144,8 @@ describe("HomeView", () => {
         expect(screen.getByRole("button", { name: "Minhas revisões (1)" })).toHaveAttribute("aria-pressed", "true");
         const list = screen.getByRole("list", { name: "Revisões" });
         expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+        // The owner by profile name, not the local part of the e-mail.
+        expect(within(list).getByText("Duda Lima")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "Todas (3)" }));
         // The running row shows its step in the status and in the summary column.
         expect(within(list).getAllByText("Comparando com o playbook…")).toHaveLength(2);
@@ -192,7 +196,9 @@ describe("HomeView", () => {
         const panel = await screen.findByRole("complementary", { name: "Detalhes" });
         expect(within(panel).getByText(/Vigência perpétua sem direito de rescisão/)).toBeInTheDocument();
         expect(within(panel).getByRole("button", { name: "Ver a cláusula 9 na revisão" })).toBeInTheDocument();
-        expect(within(panel).getByRole("link", { name: "7 de 10 campos preenchidos" })).toHaveAttribute("href", "/projects/p1");
+        expect(within(panel).getByRole("link", { name: "14/24 verificados" })).toHaveAttribute("href", "/projects/p1");
+        expect(within(panel).getByRole("link", { name: "LEG-0142" })).toHaveAttribute("href", "/pedidos?pedido=req-1");
+        expect(within(panel).getByText("de Ana")).toBeInTheDocument();
         expect(within(panel).getByText("Revisão")).toBeInTheDocument();
         fireEvent.click(within(panel).getByRole("button", { name: "3 divergem: filtrar" }));
         expect(nav.push).toHaveBeenLastCalledWith("/projects/p1/review?run=run1&veredito=diverge");

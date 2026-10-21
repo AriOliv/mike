@@ -173,7 +173,24 @@ export function ReviewPanel({
                         </span>
                     ),
                 },
-                { label: "Pedido", value: review.requester_name ? `de ${review.requester_name}` : "Sem pedido de origem" },
+                {
+                    label: "Pedido",
+                    value: review.request ? (
+                        <span className="flex flex-wrap items-center gap-1.5">
+                            <Link
+                                href={`/pedidos?pedido=${review.request.id}`}
+                                className="font-medium underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                {review.request.code}
+                            </Link>
+                            {review.requester_name ? <span className="text-gray-500">de {review.requester_name}</span> : null}
+                        </span>
+                    ) : review.requester_name ? (
+                        `de ${review.requester_name}`
+                    ) : (
+                        "Sem pedido de origem"
+                    ),
+                },
                 { label: "Prazo", value: review.deadline ? brDate(review.deadline) : "Sem prazo" },
                 {
                     label: "Aviso prévio",
@@ -196,7 +213,7 @@ export function ReviewPanel({
                             href={`/projects/${review.project_id}`}
                             className="underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                         >
-                            {review.ficha.filled} de {review.ficha.total} campos preenchidos
+                            {review.ficha.verified}/{review.ficha.total} verificados
                         </Link>
                     ) : (
                         "Ainda não preenchida"

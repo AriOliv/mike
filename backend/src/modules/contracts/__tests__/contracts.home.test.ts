@@ -8,7 +8,7 @@ const access = vi.hoisted(() => ({
 vi.mock("../../../lib/access", () => access);
 
 import { getHomeSummary } from "../contracts.service";
-import { saoPauloDate } from "../contracts.home";
+import { countAgentReviews, fichaHeadline, requestCode, saoPauloDate } from "../contracts.home";
 
 const caller = { userId: "u", userEmail: "Duda@Example.com" };
 const NOW = new Date("2026-10-20T12:00:00Z");
@@ -65,6 +65,22 @@ describe("getHomeSummary", () => {
                 ],
             },
             {
+                table: "contract_fichas",
+                data: [
+                    {
+                        project_id: "p1",
+                        ficha: {
+                            a: { status: "encontrado", review: { state: "confirmado" } },
+                            b: { status: "encontrado", review: { state: "pendente" } },
+                            c: { status: "nao_aplicavel", review: { state: "pendente" } },
+                            d: null,
+                        },
+                    },
+                ],
+            },
+            { table: "legal_requests", data: [{ id: "req-1", number: 142, project_id: "p1" }] },
+            { table: "user_profiles", data: [{ user_id: "u", email: "duda@example.com", display_name: "Duda Lima" }] },
+            {
                 table: "card_events",
                 data: [
                     { project_id: "p2", after: { name: "Duda" } },
@@ -74,6 +90,8 @@ describe("getHomeSummary", () => {
                 ],
             },
             { table: "watched_folders", data: null },
+            { table: "agent_runs", data: [{ project_id: "p1" }] },
+            { table: "contract_reviews", data: [{ project_id: "p1" }, { project_id: "p2" }] },
             {
                 table: "card_events",
                 data: [
@@ -101,11 +119,20 @@ describe("getHomeSummary", () => {
             filename: null,
             notice_deadline: "2026-09-01",
             suggested_assignee: "Duda",
-            ficha: { filled: 1, total: 10 },
+            ficha: null,
+            assignee_name: null,
+            request: null,
         });
-        // Someone already owns r1, so the agent's pick is not shown.
-        expect(home.reviews[1]).toMatchObject({ suggested_assignee: null, ficha: { filled: 4, total: 10 } });
-        expect(home.greeting).toEqual({ reviewed: 1, failed: 1, notices_closing: 1, ready: 1 });
+        // Someone already owns r1, so the agent's pick is not shown; the owner shows by name.
+        expect(home.reviews[1]).toMatchObject({
+            suggested_assignee: null,
+            assignee_name: "Duda Lima",
+            ficha: { verified: 1, total: 2 },
+            request: { id: "req-1", code: "LEG-0142" },
+        });
+        expect(home.greeting).toEqual({ reviewed: 2, failed: 1, notices_closing: 1, ready: 1 });
+        // The count reads the shared source, since the last visit.
+        expect(fake.calls[11].filters).toContainEqual(["gte", "finished_at", "2026-10-19T09:00:00Z"]);
         expect(home.counters).toEqual({ ready: 1, mine: 1, notices_30d: 1, folders: 1 });
         // A deadline already past is not "closing".
         expect(home.deadlines).toEqual([
@@ -125,14 +152,84 @@ describe("getHomeSummary", () => {
             { table: "contract_reviews", data: [review("r2", "p2", {})] },
             { table: "document_versions", data: [] },
             { table: "contract_terms", data: [] },
+            { table: "contract_fichas", error: { code: "42P01" } },
+            { table: "legal_requests", error: { code: "PGRST205" } },
             { table: "card_events", data: [] },
             { table: "watched_folders", data: null },
+            { table: "agent_runs", data: [] },
+            { table: "contract_reviews", data: [] },
             { table: "card_events", data: [] },
         ]);
         const result = await getHomeSummary(fake.db, caller, NOW, "o1");
         expect(result).toMatchObject({ ok: true, data: { reviews: [{ id: "r2", ficha: null }] } });
         expect(fake.calls[2].filters).toContainEqual(["in", "project_id", ["p2"]]);
         fake.done();
+    });
+
+    it("counts contracts reviewed by agents from runs or finished reviews, once each", async () => {
+        const ids = Array.from({ length: 201 }, (_, i) => `p${i}`);
+        const fake = scriptedDb([
+            { table: "agent_runs", data: [{ project_id: "p0" }, { project_id: "p0" }] },
+            { table: "contract_reviews", data: [{ project_id: "p0" }, { project_id: "p1" }] },
+            { table: "agent_runs", data: null },
+            { table: "contract_reviews", data: [{ project_id: "p200" }] },
+        ]);
+        expect(await countAgentReviews(fake.db, ids, null)).toBe(3);
+        expect(fake.calls[0].filters).toEqual([
+            ["in", "project_id", ids.slice(0, 200)],
+            ["in", "agent", ["revisor"]],
+            ["eq", "status", "succeeded"],
+        ]);
+        expect(fake.calls[1].filters).toEqual([
+            ["in", "project_id", ids.slice(0, 200)],
+            ["in", "status", ["ready", "done"]],
+        ]);
+        fake.done();
+        const period = scriptedDb([
+            { table: "agent_runs", data: [] },
+            { table: "contract_reviews", data: [{ project_id: "p1" }] },
+        ]);
+        expect(await countAgentReviews(period.db, ["p1"], "2026-10-01", "2026-10-15")).toBe(1);
+        for (const call of period.calls) {
+            expect(call.filters).toContainEqual(["gte", "finished_at", "2026-10-01"]);
+            expect(call.filters).toContainEqual(["lt", "finished_at", "2026-10-15"]);
+        }
+        period.done();
+        const failing = scriptedDb([{ table: "agent_runs", error: { message: "down" } }]);
+        await expect(countAgentReviews(failing.db, ["p1"], "2026-10-19")).rejects.toMatchObject({ message: "down" });
+    });
+
+    it("reads the Ficha's headline by its own rule, and the request code", () => {
+        expect(fichaHeadline(null)).toBeNull();
+        expect(fichaHeadline({})).toBeNull();
+        expect(fichaHeadline({ a: { status: "encontrado" }, b: { review: { state: "corrigido" } } })).toEqual({
+            verified: 1,
+            total: 2,
+        });
+        expect(requestCode(7)).toBe("LEG-0007");
+        expect(requestCode(12345)).toBe("LEG-12345");
+    });
+
+    it("rethrows a Ficha or request read failure that is not a missing table", async () => {
+        access.listAccessibleProjectIds.mockResolvedValue(["p1"]);
+        const base = [
+            { table: "home_visits", data: { previous_seen_at: null, last_seen_at: "2026-10-20T11:30:00Z" } },
+            { table: "projects", data: projects },
+            { table: "contract_reviews", data: [] },
+            { table: "document_versions", data: [] },
+            { table: "contract_terms", data: [] },
+        ];
+        expect(
+            await getHomeSummary(scriptedDb([...base, { table: "contract_fichas", error: { message: "x" } }]).db, caller, NOW),
+        ).toMatchObject({ kind: "error" });
+        expect(
+            await getHomeSummary(
+                scriptedDb([...base, { table: "contract_fichas", data: [] }, { table: "legal_requests", error: { code: "500" } }])
+                    .db,
+                caller,
+                NOW,
+            ),
+        ).toMatchObject({ kind: "error" });
     });
 
     it("dates deadlines in São Paulo, not UTC", () => {

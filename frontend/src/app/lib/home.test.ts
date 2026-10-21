@@ -43,6 +43,8 @@ function review(overrides: Partial<HomeReview>): HomeReview {
         term_end: null,
         ficha: null,
         suggested_assignee: null,
+        assignee_name: null,
+        request: null,
         updated_at: "2026-10-20T10:00:00Z",
         ...overrides,
     };

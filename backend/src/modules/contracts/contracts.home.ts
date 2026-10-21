@@ -7,6 +7,7 @@ import type { Db } from "../../lib/supabase";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { workspaceMatches, type WorkspaceFilter } from "../../lib/workspace";
+import { loadProfileUsersByEmail } from "../../lib/userLookup";
 import type { Caller } from "./contracts.shared";
 import type { CardEvent } from "./contracts.events";
 
@@ -39,10 +40,14 @@ export type HomeReview = {
     notice_deadline: string | null;
     notice_days: number | null;
     term_end: string | null;
-    /** How many of the Ficha's tracked terms the agent found in the contract. */
-    ficha: { filled: number; total: number } | null;
+    /** The Ficha's headline: fields a person checked out of those that apply. */
+    ficha: { verified: number; total: number } | null;
     /** The assignment agent's pick when nobody owns the review yet. */
     suggested_assignee: string | null;
+    /** The owner's profile name, when they have one. */
+    assignee_name: string | null;
+    /** The request this contract came from: LEG-0142 and its id, for the link. */
+    request: { id: string; code: string } | null;
     updated_at: string;
 };
 
@@ -95,20 +100,34 @@ type ProjectRow = {
     watched_folder_id: string | null;
 };
 
-// The terms the Ficha tracks today (contract_terms). The full Ficha v1 grows
-// this list; the count stays honest about what was found, not verified.
-const FICHA_FIELDS = [
-    "auto_renewal",
-    "term_end",
-    "notice_days",
-    "notice_deadline",
-    "penalty_value",
-    "penalty_recurrence",
-    "liability_cap",
-    "unilateral_amendment",
-    "amendment_notes",
-    "price_regulatory_impact",
-] as const;
+type FichaField = { status?: string; review?: { state?: string } } | null;
+
+/**
+ * "14/24 verificados", by the Ficha's own rule (contract-review module):
+ * fields that do not apply are left out, and a field counts once a person
+ * confirmed or corrected it.
+ */
+export function fichaHeadline(ficha: Record<string, FichaField> | null): { verified: number; total: number } | null {
+    if (!ficha || Object.keys(ficha).length === 0) return null;
+    const fields = Object.values(ficha).filter(
+        (field): field is NonNullable<FichaField> => !!field && field.status !== "nao_aplicavel",
+    );
+    return {
+        verified: fields.filter((field) => (field.review?.state ?? "pendente") !== "pendente").length,
+        total: fields.length,
+    };
+}
+
+/** "LEG-0142": the request number as people say it. */
+export function requestCode(number: number): string {
+    return `LEG-${String(number).padStart(4, "0")}`;
+}
+
+/** Postgres / PostgREST "no such table": the Ficha ships in another module's migration. */
+function isMissingTable(error: unknown): boolean {
+    const code = (error as { code?: string } | null)?.code;
+    return code === "42P01" || code === "PGRST205";
+}
 
 /** Today's date where the legal team works, so a deadline "today" is not "past" after 21h. */
 export function saoPauloDate(now: Date): string {
@@ -137,6 +156,49 @@ async function inChunks<T>(
         out.push(...((data ?? []) as T[]));
     }
     return out;
+}
+
+/** The agents whose succeeded runs count as reviewing a contract. */
+export const REVIEW_AGENTS = ["revisor"] as const;
+
+/**
+ * How many distinct contracts the agents reviewed among the given cards,
+ * finished in [since, until) (either end open when null): a finished automatic review
+ * (contract_reviews ready or done) or a succeeded run of a review agent
+ * (agent_runs). The one source for "Revisei N contratos" here and for the
+ * reviewed-by-agents tile on the legal dashboard, so they never disagree.
+ */
+export async function countAgentReviews(
+    db: Db,
+    projectIds: string[],
+    since: string | null,
+    until: string | null = null,
+): Promise<number> {
+    const reviewed = new Set<string>();
+    for (let i = 0; i < projectIds.length; i += ID_CHUNK) {
+        const slice = projectIds.slice(i, i + ID_CHUNK);
+        let runs = db
+            .from("agent_runs")
+            .select("project_id")
+            .in("project_id", slice)
+            .in("agent", [...REVIEW_AGENTS])
+            .eq("status", "succeeded");
+        if (since) runs = runs.gte("finished_at", since);
+        if (until) runs = runs.lt("finished_at", until);
+        let reviews = db
+            .from("contract_reviews")
+            .select("project_id")
+            .in("project_id", slice)
+            .in("status", ["ready", "done"]);
+        if (since) reviews = reviews.gte("finished_at", since);
+        if (until) reviews = reviews.lt("finished_at", until);
+        for (const query of [runs, reviews]) {
+            const { data, error } = await query;
+            if (error) throw error;
+            for (const row of (data ?? []) as { project_id: string }[]) reviewed.add(row.project_id);
+        }
+    }
+    return reviewed.size;
 }
 
 /**
@@ -191,13 +253,43 @@ export async function getHomeSummary(
             notice_days: number | null;
             term_end: string | null;
             auto_renewal: boolean | null;
-        } & Record<(typeof FICHA_FIELDS)[number], unknown>>(visible, (slice) =>
+        }>(visible, (slice) =>
             db
                 .from("contract_terms")
-                .select(`project_id, ${FICHA_FIELDS.join(", ")}`)
+                .select("project_id, notice_deadline, notice_days, term_end, auto_renewal")
                 .in("project_id", slice),
         );
         const termsOf = new Map(terms.map((t) => [t.project_id, t]));
+
+        // The Ficha lives in the contract-review module's table; a database
+        // without it yet shows "not filled" instead of failing the screen.
+        const fichaOf = new Map<string, Record<string, FichaField> | null>();
+        try {
+            const fichas = await inChunks<{ project_id: string; ficha: Record<string, FichaField> | null }>(
+                visible,
+                (slice) => db.from("contract_fichas").select("project_id, ficha").in("project_id", slice),
+            );
+            for (const row of fichas) fichaOf.set(row.project_id, row.ficha);
+        } catch (error) {
+            if (!isMissingTable(error)) throw error;
+        }
+
+        // The request each contract came from (requests module), same fallback.
+        const requestOf = new Map<string, { id: string; code: string }>();
+        try {
+            const requests = await inChunks<{ id: string; number: number; project_id: string }>(visible, (slice) =>
+                db.from("legal_requests").select("id, number, project_id").in("project_id", slice),
+            );
+            for (const row of requests) requestOf.set(row.project_id, { id: row.id, code: requestCode(row.number) });
+        } catch (error) {
+            if (!isMissingTable(error)) throw error;
+        }
+
+        // Owners by name, not by the local part of their e-mail.
+        const owners = [...new Set(reviewRows.map((r) => r.assignee_email?.toLowerCase()).filter((e): e is string => !!e))];
+        const userByEmail = owners.length
+            ? (await loadProfileUsersByEmail(db, { userIds: [], emails: owners })).userByEmail
+            : new Map<string, { display_name: string | null }>();
 
         // The assignment agent suggests, a person confirms: its latest pick per card.
         const suggestionRows = await inChunks<{ project_id: string; after: unknown }>(visible, (slice) =>
@@ -243,10 +335,12 @@ export async function getHomeSummary(
                 notice_deadline: t?.notice_deadline ?? null,
                 notice_days: t?.notice_days ?? null,
                 term_end: t?.term_end ?? null,
-                ficha: t
-                    ? { filled: FICHA_FIELDS.filter((f) => t[f] !== null && t[f] !== undefined).length, total: FICHA_FIELDS.length }
-                    : null,
+                ficha: fichaHeadline(fichaOf.get(r.project_id) ?? null),
                 suggested_assignee: r.assignee_email ? null : (suggestions.get(r.project_id) ?? null),
+                assignee_name: r.assignee_email
+                    ? (userByEmail.get(r.assignee_email.toLowerCase())?.display_name ?? null)
+                    : null,
+                request: requestOf.get(r.project_id) ?? null,
                 updated_at: r.updated_at,
             };
         });
@@ -281,7 +375,7 @@ export async function getHomeSummary(
 
         const sinceMs = since ? Date.parse(since) : 0;
         const newSince = (iso: string | null) => !!iso && Date.parse(iso) > sinceMs;
-        const reviewed = reviewRows.filter((r) => r.status !== "failed" && newSince(r.finished_at)).length;
+        const reviewed = await countAgentReviews(db, visible, since);
         const failed = reviewRows.filter((r) => r.status === "failed" && newSince(r.updated_at)).length;
 
         const activityRows = await inChunks<CardEvent>(visible, (slice) =>
