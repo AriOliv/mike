@@ -26,7 +26,6 @@ import {
     pendingAligned,
     plural,
     relativeTime,
-    reviewActivity,
     stepFocus,
     verdictCounts,
     visibleClauses,
@@ -41,6 +40,7 @@ import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { VerdictCountsUI } from "@/shared/ui/VerdictUI";
 import { StatusChip } from "@/app/components/ui/status-chip";
 import { ActivityFeed } from "@/app/components/shared/ActivityFeed";
+import { toActivityItems } from "@/app/lib/activityFeed";
 import {
     Dropdown,
     DropdownContent,
@@ -796,7 +796,7 @@ export function ContractReviewWorkspace({
                             reviewBody
                         ) : tab === "atividade" ? (
                             <ActivityFeed
-                                items={reviewActivity(activity ?? [])}
+                                items={toActivityItems(activity ?? [])}
                                 loading={activity === null}
                                 emptyText="Nada aconteceu neste contrato ainda. Quando alguém revisar ou decidir uma sugestão, aparece aqui."
                             />

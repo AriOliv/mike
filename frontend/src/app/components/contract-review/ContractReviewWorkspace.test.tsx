@@ -369,11 +369,11 @@ describe("ContractReviewWorkspace", () => {
 
     it("shows the contract's activity, decisions included", async () => {
         api.getCardActivity.mockResolvedValue([
-            { id: 1, project_id: "p1", at: new Date().toISOString(), actor_type: "user", actor_id: "u", actor_name: "Duda", action: "review.clause_aceito", field: "Cessão do contrato" },
+            { id: 1, project_id: "p1", at: new Date().toISOString(), actor_type: "user", actor_id: "u", actor_name: "Duda", action: "review.clause_aceito", field: "Cessão do contrato", after: { run: "run-1", clause: "Cessão do contrato", reason: null } },
         ]);
         render(<ContractReviewWorkspace {...props()} />);
         fireEvent.click(await screen.findByRole("tab", { name: "Atividade" }));
-        expect(await screen.findByText(/aceitou a sugestão em/)).toBeInTheDocument();
+        expect(await screen.findByText(/aceitou a edição/)).toBeInTheDocument();
         expect(api.getCardActivity).toHaveBeenCalledWith("p1");
     });
 

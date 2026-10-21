@@ -11,7 +11,6 @@ import {
     verdictFromParam,
     plural,
     clockTime,
-    reviewActivity,
     relativeTime,
     sourceCount,
     stepFocus,
@@ -149,19 +148,3 @@ describe("review URL", () => {
         expect(reviewSearch("run=x", null, null)).toBe("");
     });
 });
-
-describe("review activity", () => {
-    it("words clause decisions and leaves the rest to the shared feed", () => {
-        const items = reviewActivity([
-            { id: 2, project_id: "p", at: "2026-10-20T12:05:00Z", actor_type: "user", actor_id: "u", actor_name: "Duda", action: "review.clause_rejeitado", field: "Lei aplicável e foro" },
-            { id: 1, project_id: "p", at: "2026-10-20T12:00:00Z", actor_type: "agent", actor_id: "agent:revisor@1", actor_name: "Agente de revisão", action: "review.started", after: { document: "MSA.docx" } },
-            { id: 3, project_id: "p", at: "2026-10-20T11:00:00Z", actor_type: "user", actor_id: "u", actor_name: "Duda", action: "review.clause_aceito" },
-        ]);
-        expect(items.map((i) => [i.verb, i.object])).toEqual([
-            ["rejeitou a sugestão em", "Lei aplicável e foro"],
-            ["começou a revisar", "MSA.docx"],
-            ["aceitou a sugestão em", undefined],
-        ]);
-    });
-});
-

@@ -3,7 +3,6 @@
 // as decidable, the precedent sentence) are tested on their own.
 
 import type { ContractReview, ReviewClause, ReviewVerdict } from "./mikeApi";
-import { toActivityItems, type ActivityItem, type CardEventRow } from "./activityFeed";
 
 export type VerdictFilter = Exclude<ReviewVerdict, "nao_aplica"> | null;
 
@@ -140,25 +139,3 @@ export function clockTime(iso: string): string {
         ? ""
         : date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: SAO_PAULO });
 }
-
-const CLAUSE_VERBS: Record<string, string> = {
-    "review.clause_aceito": "aceitou a sugestão em",
-    "review.clause_editado": "editou a sugestão em",
-    "review.clause_rejeitado": "rejeitou a sugestão em",
-};
-
-/**
- * The contract's activity feed. Clause decisions are this module's own
- * events, so they are worded here ("aceitou a sugestão em Cessão") and the
- * rest is left to the shared feed.
- */
-export function reviewActivity(events: CardEventRow[]): ActivityItem[] {
-    const items = toActivityItems(events);
-    const byId = new Map(events.map((event) => [String(event.id), event]));
-    return items.map((item) => {
-        const event = byId.get(item.id);
-        const verb = event && CLAUSE_VERBS[event.action];
-        return verb ? { ...item, verb, object: event.field ?? undefined } : item;
-    });
-}
-
