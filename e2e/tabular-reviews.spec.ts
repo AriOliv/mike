@@ -5,13 +5,11 @@
  *   3. Review detail page — table structure and toolbar controls render
  *   4. Add a document — upload via AddDocumentsModal, row appears in table
  *
- * Prerequisite: auth.setup.ts has already saved the session to e2e/.auth/user.json
- * Test user: e2e@mike.local / E2eTestPass1! (storageState inherited from playwright.config.ts)
+ * Auth: runs signed in as this worker's account (the storageState fixture in
+ * e2e/fixtures.ts; e2e@mike.local on worker 0).
  */
-import { test, expect } from "@playwright/test";
-import path from "path";
-
-const PDF_FIXTURE = path.join(__dirname, "fixtures/test.pdf");
+import { test, expect } from "./fixtures";
+import { PDF_FIXTURE } from "./helpers";
 
 // Run these tests sequentially in a single worker: they share the one test
 // user's review list, so concurrent create/detail runs would race each other.
@@ -86,10 +84,25 @@ async function createReview(
     if (onFirstOpen) await onFirstOpen();
     await titleInput.fill(reviewName);
 
-    // NewTRModal is a two-step wizard ("Details" → "Add Documents"); the
-    // "Create" submit button only exists on the second step, and "Next" only
-    // enables once the review has a name.
+    // A model is required before the review can advance. The clean E2E
+    // profile does not have a saved tabular-review model, so choose the first
+    // model exposed by the configured providers for this environment.
+    await page.getByRole("button", { name: "Choose model" }).click();
+    const modelMenu = page.getByRole("menu");
+    const firstModel = modelMenu
+        .locator('[role="menuitem"]:not([aria-expanded])')
+        .first();
+    await expect(firstModel).toBeVisible();
+    await firstModel.click();
+
+    // NewTRModal is a three-step wizard (Details -> Access -> Add Documents).
+    // "Next" only enables once the review has a name and model.
     await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Access" })).toBeVisible();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(
+        page.getByRole("dialog", { name: "Add Documents" }),
+    ).toBeVisible();
 
     const respP = page.waitForResponse(isCreateReviewPost, {
         timeout: 30_000,
@@ -161,7 +174,9 @@ test("creates a new tabular review and is redirected to the detail page", async 
     });
 
     // The new review's title appears in the page breadcrumb header
-    await expect(page.getByText(reviewName)).toBeVisible({ timeout: 10_000 });
+    await expect(
+        page.getByText(reviewName, { exact: true }).filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 10_000 });
 });
 
 /* ─── Test 3: review detail page table structure ─────────────────────────── */
@@ -176,17 +191,29 @@ test("review detail page renders the table structure and toolbar controls", asyn
     const reviewName = await createReview(page, "E2E Table Review");
 
     // The breadcrumb header shows the review title via RenameableTitle
-    await expect(page.getByText(reviewName)).toBeVisible({ timeout: 10_000 });
-
-    // The breadcrumb also contains a "Tabular Reviews" back-nav button. Scope to
-    // the <main> landmark: the left sidebar nav also has a "Tabular Reviews"
-    // button, so an unscoped role query is a strict-mode violation. exact:true
-    // avoids also matching the mobile-only "Back to Tabular Reviews" control.
     await expect(
-        page
-            .getByRole("main")
-            .getByRole("button", { name: "Tabular Reviews", exact: true }),
-    ).toBeVisible({ timeout: 5_000 });
+        page.getByText(reviewName, { exact: true }).filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    // Depending on the width available to the header actions, the parent
+    // breadcrumb is either visible or placed in the overflow menu.
+    const parentBreadcrumb = page
+        .getByRole("button", { name: "Tabular Reviews", exact: true })
+        .filter({ visible: true })
+        .first();
+    const collapsedBreadcrumbs = page.getByRole("button", {
+        name: "Show collapsed breadcrumbs",
+    });
+    await expect(async () => {
+        if (await parentBreadcrumb.isVisible()) return;
+
+        await expect(collapsedBreadcrumbs).toBeVisible();
+        await collapsedBreadcrumbs.click();
+        await expect(
+            page.getByRole("menuitem", { name: "Tabular Reviews", exact: true }),
+        ).toBeVisible();
+        await page.keyboard.press("Escape");
+    }).toPass({ timeout: 10_000 });
 
     // TRTable always renders a "Document" column header, even when the review
     // is empty. This is visible in both the empty-state and populated states.
@@ -230,7 +257,9 @@ test("adds a document to a tabular review and the row appears in the table", asy
 
     // The footer's "Upload" button programmatically clicks a hidden
     // <input type="file"> — Playwright intercepts it as a file-chooser event.
-    const uploadBtn = page.getByRole("button", { name: "Upload" });
+    const uploadBtn = page
+        .getByRole("dialog", { name: "Add Documents" })
+        .getByRole("button", { name: "Upload", exact: true });
     await expect(uploadBtn).toBeVisible({ timeout: 5_000 });
     const fileChooserPromise = page.waitForEvent("filechooser");
     await uploadBtn.click();

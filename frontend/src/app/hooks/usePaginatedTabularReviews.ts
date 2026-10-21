@@ -8,31 +8,27 @@ import {
 } from "react";
 import type { TabularReview } from "@/app/components/shared/types";
 import { listTabularReviewIds, listTabularReviews } from "@/app/lib/mikeApi";
+import { appendUniqueRows, paginationError, splitOverfetchedPage } from "@/app/lib/paginatedRows";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 
-export type TabularReviewSortKey = "name" | "columns" | "documents" | "created";
+export type TabularReviewSortKey = "name" | "columns" | "documents" | "created" | "updated";
 export type TabularReviewSortDirection = "asc" | "desc";
 export type TabularReviewScope = "all" | "in-project" | "standalone";
 
 const PAGE_SIZE = 30;
 
-function pageRows(rows: TabularReview[]) {
-    return {
-        hasMore: rows.length > PAGE_SIZE,
-        rows: rows.slice(0, PAGE_SIZE),
-    };
-}
-
-function asError(value: unknown) {
-    return value instanceof Error
-        ? value
-        : new Error("Unable to load tabular reviews");
-}
-
 export function usePaginatedTabularReviews(options: {
     projectId?: string;
+    /** Overview project filters must still stay within the active workspace. */
+    scopeToWorkspace?: boolean;
     search?: string;
     selectionKey?: string;
     scope?: TabularReviewScope;
+    includeStatus?: boolean;
+    /** Keep loaded pages visible when refreshing the same query. */
+    retainOnRefresh?: boolean;
+    /** Only reviews this user created. */
+    ownerUserId?: string | null;
     sort?: {
         key: TabularReviewSortKey;
         direction: TabularReviewSortDirection;
@@ -47,10 +43,24 @@ export function usePaginatedTabularReviews(options: {
     const [selectingAllRequest, setSelectingAllRequest] = useState(false);
     const [retryVersion, setRetryVersion] = useState(0);
     const requestVersionRef = useRef(0);
+    // Select-all owns its own counter. requestVersionRef tracks the list
+    // query, and a search/scope/sort change bumps it while an ids request is
+    // still in flight — gating the "done" flag on that version left the
+    // header checkbox disabled until the next full reload.
+    const selectAllRequestRef = useRef(0);
     const loadingMoreRef = useRef(false);
     const loadMoreControllerRef = useRef<AbortController | null>(null);
+    const loadedQueryRef = useRef<string | null>(null);
+    const loadedPagesRef = useRef(1);
+    const refreshingRef = useRef(false);
 
-    const { projectId, search, selectionKey, scope = "all", sort } = options;
+    const { projectId, search, selectionKey, scope = "all", sort, includeStatus, retainOnRefresh = false } = options;
+    const ownerUserId = options.ownerUserId ?? undefined;
+    // A project's own review list is already scoped by the project, which may
+    // sit in a different workspace from the active one when it is opened by
+    // link. Only the cross-project list follows the active workspace.
+    const activeWorkspace = useWorkspaceParam();
+    const workspace = (options.scopeToWorkspace ?? !projectId) ? activeWorkspace : undefined;
     const sortKey = sort?.key;
     const sortDirection = sort?.direction;
     const selectionQueryPending =
@@ -59,9 +69,11 @@ export function usePaginatedTabularReviews(options: {
         projectId ?? null,
         selectionKey ?? null,
         search ?? null,
+        workspace ?? null,
         scope,
         sortKey ?? null,
         sortDirection ?? null,
+        ownerUserId ?? null,
     ]);
     const [selection, setSelection] = useState<{
         queryKey: string;
@@ -69,14 +81,11 @@ export function usePaginatedTabularReviews(options: {
     }>({ queryKey, ids: [] });
     const selectedReviewIds =
         selection.queryKey === queryKey ? selection.ids : [];
-    const setSelectedReviewIds: Dispatch<SetStateAction<string[]>> =
-        useCallback(
+  const setSelectedReviewIds: Dispatch<SetStateAction<string[]>> = useCallback(
             (value) => {
                 setSelection((current) => {
-                    const currentIds =
-                        current.queryKey === queryKey ? current.ids : [];
-                    const ids =
-                        typeof value === "function" ? value(currentIds) : value;
+        const currentIds = current.queryKey === queryKey ? current.ids : [];
+        const ids = typeof value === "function" ? value(currentIds) : value;
                     return { queryKey, ids };
                 });
             },
@@ -101,32 +110,59 @@ export function usePaginatedTabularReviews(options: {
     );
 
     useEffect(() => {
+        const requestKey = JSON.stringify([
+            projectId, search, workspace, scope, ownerUserId, sortKey, sortDirection, includeStatus,
+        ]);
+        const retainRows = retainOnRefresh && loadedQueryRef.current === requestKey;
+        const pageCount = retainRows ? loadedPagesRef.current : 1;
         const requestVersion = ++requestVersionRef.current;
+        refreshingRef.current = true;
         const controller = new AbortController();
         loadMoreControllerRef.current?.abort();
         loadMoreControllerRef.current = null;
         loadingMoreRef.current = false;
-        setReviews([]);
-        setHasMore(true);
+        if (!retainRows) {
+            loadedQueryRef.current = null;
+            loadedPagesRef.current = 1;
+            setReviews([]);
+            setHasMore(true);
+        }
         setLoadingMore(false);
         setError(null);
         setLoadMoreError(null);
-        setLoading(true);
+        setLoading(!retainRows);
 
-        void listTabularReviews(projectId, {
-            limit: PAGE_SIZE + 1,
-            search: search || undefined,
-            scope,
-            sortKey,
-            sortDirection,
-            signal: controller.signal,
-        })
-            .then((rows) => {
-                if (requestVersion !== requestVersionRef.current) return;
-                const firstPage = pageRows(rows);
-                setReviews(firstPage.rows);
-                setHasMore(firstPage.hasMore);
-            })
+        // Status/activity refreshes replace the loaded range atomically. Keep
+        // every loaded page so a completion cannot reset History's scroll range.
+        void (async () => {
+            let refreshed: TabularReview[] = [];
+            let more = false;
+            let pages = 0;
+            for (; pages < pageCount;) {
+                const rows = await listTabularReviews(projectId, {
+                    includeStatus,
+                    limit: PAGE_SIZE + 1,
+                    offset: pages ? pages * PAGE_SIZE : undefined,
+                    search: search || undefined,
+                    workspace,
+                    scope,
+                    ownerUserId,
+                    sortKey,
+                    sortDirection,
+                    signal: controller.signal,
+                });
+                if (controller.signal.aborted || requestVersion !== requestVersionRef.current) return;
+                const page = splitOverfetchedPage(rows, PAGE_SIZE);
+                refreshed = appendUniqueRows(refreshed, page.rows);
+                more = page.hasMore;
+                pages += 1;
+                if (!more) break;
+            }
+            loadedQueryRef.current = requestKey;
+            loadedPagesRef.current = pages;
+            setReviews(refreshed);
+            setHasMore(more);
+        })()
             .catch((error) => {
                 if (
                     controller.signal.aborted ||
@@ -134,24 +170,37 @@ export function usePaginatedTabularReviews(options: {
                 )
                     return;
                 console.error("[tabular reviews] failed to load", error);
-                setError(asError(error));
-                setHasMore(false);
+        setError(paginationError(error, "Unable to load tabular reviews"));
+                if (!retainRows) setHasMore(false);
             })
             .finally(() => {
                 if (
                     !controller.signal.aborted &&
                     requestVersion === requestVersionRef.current
-                )
+                ) {
+                    refreshingRef.current = false;
                     setLoading(false);
+                }
             });
         return () => {
             controller.abort();
             loadMoreControllerRef.current?.abort();
         };
-    }, [projectId, retryVersion, scope, search, sortDirection, sortKey]);
+    }, [
+        projectId,
+        retryVersion,
+        retainOnRefresh,
+        includeStatus,
+        ownerUserId,
+        scope,
+        search,
+        sortDirection,
+        sortKey,
+        workspace,
+    ]);
 
     const loadMore = useCallback(async () => {
-        if (loading || loadingMoreRef.current || !hasMore) return;
+        if (loading || refreshingRef.current || loadingMoreRef.current || !hasMore) return;
 
         const requestVersion = requestVersionRef.current;
         const offset = reviews.length;
@@ -164,26 +213,22 @@ export function usePaginatedTabularReviews(options: {
 
         try {
             const rows = await listTabularReviews(projectId, {
+                includeStatus,
                 limit: PAGE_SIZE + 1,
                 offset,
                 search: search || undefined,
+                workspace,
                 scope,
+                ownerUserId,
                 sortKey,
                 sortDirection,
                 signal: controller.signal,
             });
             if (requestVersion !== requestVersionRef.current) return;
 
-            const nextPage = pageRows(rows);
-            setReviews((current) => {
-                const existingIds = new Set(current.map((review) => review.id));
-                return [
-                    ...current,
-                    ...nextPage.rows.filter(
-                        (review) => !existingIds.has(review.id),
-                    ),
-                ];
-            });
+      const nextPage = splitOverfetchedPage(rows, PAGE_SIZE);
+      loadedPagesRef.current += 1;
+      setReviews((current) => appendUniqueRows(current, nextPage.rows));
             setHasMore(nextPage.hasMore);
         } catch (error) {
             if (
@@ -191,7 +236,9 @@ export function usePaginatedTabularReviews(options: {
                 requestVersion === requestVersionRef.current
             ) {
                 console.error("[tabular reviews] failed to load more", error);
-                setLoadMoreError(asError(error));
+        setLoadMoreError(
+          paginationError(error, "Unable to load tabular reviews"),
+        );
             }
         } finally {
             if (
@@ -205,11 +252,14 @@ export function usePaginatedTabularReviews(options: {
         }
     }, [
         hasMore,
+        includeStatus,
         loading,
+        ownerUserId,
         projectId,
         reviews.length,
         scope,
         search,
+        workspace,
         sortDirection,
         sortKey,
     ]);
@@ -230,31 +280,55 @@ export function usePaginatedTabularReviews(options: {
         }
 
         const requestVersion = requestVersionRef.current;
+        const selectAllRequest = ++selectAllRequestRef.current;
         setSelectingAllRequest(true);
         try {
             const rows = await listTabularReviewIds(projectId, {
                 search: search || undefined,
+                workspace,
                 scope,
+                ownerUserId,
             });
             if (requestVersion !== requestVersionRef.current) return;
 
             setSelectAllOwners({
                 queryKey,
-                ownerById: Object.fromEntries(
-                    rows.map((row) => [row.id, row.user_id]),
-                ),
+        ownerById: Object.fromEntries(rows.map((row) => [row.id, row.user_id])),
             });
             setSelectedReviewIds(rows.map((row) => row.id));
+        } catch (error) {
+            // Call sites fire this with `void`, so without a catch a failed
+            // id fetch is an unhandled rejection and the checkbox just
+            // silently does nothing. Surface it the way loadMore does.
+            if (requestVersion === requestVersionRef.current) {
+                console.error(
+                    "[tabular reviews] failed to select all matching",
+                    error,
+                );
+                setLoadMoreError(
+                    paginationError(
+                        error,
+                        "Unable to select all tabular reviews",
+                    ),
+                );
+            }
         } finally {
-            setSelectingAllRequest(false);
+            // Clear for the request that set the flag, whatever the list
+            // query has moved on to meanwhile. A newer select-all owns the
+            // flag instead.
+            if (selectAllRequest === selectAllRequestRef.current) {
+                setSelectingAllRequest(false);
+            }
         }
     }, [
         hasMore,
+        ownerUserId,
         projectId,
         queryKey,
         reviews,
         scope,
         search,
+        workspace,
         selectionQueryPending,
         setSelectedReviewIds,
     ]);

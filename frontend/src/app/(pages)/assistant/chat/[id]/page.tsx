@@ -1,71 +1,128 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { useAssistantChat } from "@/app/hooks/useAssistantChat";
+import { useWorkspaceIdentity } from "@/app/hooks/useWorkspaceIdentity";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { MessageExcerpt } from "@/shared/lib/messageExcerpts";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { ChatView } from "@/app/components/assistant/ChatView";
-import { getChat } from "@/app/lib/mikeApi";
+import { useChatRoute } from "@/app/hooks/useChatRoute";
+import { AssistantChatPane } from "@/app/components/assistant/AssistantChatPane";
+import {
+    AssistantChatDivider,
+    resizedSideChatShare,
+} from "@/app/components/assistant/AssistantChatDivider";
+import { AssistantDocumentPanelHost } from "@/app/components/assistant/AssistantDocumentPanelHost";
+import { useAssistantDocumentPanel } from "@/app/components/assistant/useAssistantDocumentPanel";
 
-export default function AssistantChatPage() {
-    const router = useRouter();
-    const params = useParams();
-    const id = params.id as string;
+// Serves `/assistant` (a new chat) as well as `/assistant/chat/:id`: the
+// first answer adopts its chat id in place, so it streams without a remount.
+// A second chat can sit beside the first (`?side=`); both open their
+// documents in the one side panel.
 
-    const { setCurrentChatId, newChatMessages, setNewChatMessages } =
+function AssistantChatPageForWorkspace() {
+    const {
+        chatId,
+        openChat,
+        adoptChat,
+        claimCreated,
+        sideChatId,
+        openSideChat,
+        adoptSideChat,
+        closeSideChat,
+    } = useChatRoute("/assistant/chat", "/assistant");
+    const documentPanel = useAssistantDocumentPanel();
+    // The sidebar treats a chat on screen as read, in either place.
+    const { setSideChatId, sideChatRequest, requestSideChat } =
         useChatHistoryContext();
-
-    const initialMessages = newChatMessages ?? [];
-    const { messages, isResponseLoading, handleChat, setMessages, cancel } =
-        useAssistantChat({ initialMessages, chatId: id });
-
-    const hasAutoSent = useRef(false);
-    const hasLoaded = useRef(false);
-
+    // "Open in side chat" on a sidebar row.
     useEffect(() => {
-        setCurrentChatId(id);
-    }, [id, setCurrentChatId]);
-
+        if (!sideChatRequest) return;
+        requestSideChat(null);
+        openSideChat(sideChatRequest);
+    }, [sideChatRequest, requestSideChat, openSideChat]);
     useEffect(() => {
-        if (initialMessages.length > 0) {
-            if (newChatMessages) setNewChatMessages(null);
-            return;
-        }
-        if (hasLoaded.current || messages.length > 0) return;
-        hasLoaded.current = true;
+        setSideChatId(sideChatId || null);
+        return () => setSideChatId(null);
+    }, [sideChatId, setSideChatId]);
+    // A passage the reader asked about in the side chat, held until that
+    // chat's composer is on the page (opening the side chat if need be).
+    const [sideChatExcerpt, setSideChatExcerpt] = useState<{
+        id: number;
+        excerpt: MessageExcerpt;
+    } | null>(null);
+    const clearSideChatExcerpt = useCallback(
+        () => setSideChatExcerpt(null),
+        [],
+    );
+    // Counted apart from the held passage: that is cleared once the side
+    // chat takes it, and an id that started over would look to that chat
+    // like the passage it already has.
+    const sideChatExcerptCount = useRef(0);
+    function askInSideChat(excerpt: MessageExcerpt) {
+        if (sideChatId === null) openSideChat("");
+        sideChatExcerptCount.current += 1;
+        setSideChatExcerpt({ id: sideChatExcerptCount.current, excerpt });
+    }
+    const chatsRef = useRef<HTMLDivElement>(null);
+    const [sideChatShare, setSideChatShare] = useState(0.5);
+    const hasSideChat = sideChatId !== null;
 
-        getChat(id)
-            .then(({ messages: loaded }) => {
-                if (loaded.length > 0) {
-                    setMessages(loaded);
-                } else {
-                    router.replace("/assistant");
-                }
-            })
-            .catch(() => router.replace("/assistant"));
-    }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        if (
-            newChatMessages &&
-            newChatMessages.length === 1 &&
-            newChatMessages[0].role === "user" &&
-            !hasAutoSent.current &&
-            !isResponseLoading &&
-            messages.length === 1
-        ) {
-            hasAutoSent.current = true;
-            void handleChat(newChatMessages[0]);
-        }
-    }, [newChatMessages, messages.length, isResponseLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+    function resizeChats(dx: number) {
+        const pane = (id: string) =>
+            chatsRef.current?.querySelector<HTMLElement>(
+                `[data-chat-pane="${id}"]`,
+            );
+        const primary = pane("primary");
+        const side = pane("side");
+        if (!primary || !side) return;
+        setSideChatShare(
+            resizedSideChatShare(primary.offsetWidth, side.offsetWidth, dx),
+        );
+    }
 
     return (
-        <ChatView
-            chatId={id}
-            messages={messages}
-            isResponseLoading={isResponseLoading}
-            handleChat={handleChat}
-            cancel={cancel}
-        />
+        // The side panel slides in from past the right edge. Clipped here, that
+        // overhang is not something the page can be scrolled to: focusing or
+        // revealing anything in the panel mid-slide would otherwise drag the
+        // chats sideways, under the app sidebar.
+        <div
+            ref={chatsRef}
+            className="relative flex h-full w-full overflow-x-clip"
+        >
+            <AssistantChatPane
+                widthShare={hasSideChat ? 1 - sideChatShare : undefined}
+                chatId={chatId}
+                openChat={openChat}
+                adoptChat={adoptChat}
+                claimCreated={claimCreated}
+                documentPanel={documentPanel}
+                otherChatId={sideChatId}
+                onAskInSideChat={askInSideChat}
+                onOpenSideChat={
+                    sideChatId === null ? () => openSideChat("") : undefined
+                }
+                onCloseSideChat={hasSideChat ? closeSideChat : undefined}
+            />
+            {hasSideChat && <AssistantChatDivider onResize={resizeChats} />}
+            {sideChatId !== null && (
+                <AssistantChatPane
+                    widthShare={sideChatShare}
+                    chatId={sideChatId}
+                    openChat={openSideChat}
+                    adoptChat={adoptSideChat}
+                    claimCreated={claimCreated}
+                    documentPanel={documentPanel}
+                    otherChatId={chatId}
+                    sideChat={{ onClose: closeSideChat }}
+                    incomingExcerpt={sideChatExcerpt}
+                    onIncomingExcerptAdded={clearSideChatExcerpt}
+                />
+            )}
+            <AssistantDocumentPanelHost panel={documentPanel} />
+        </div>
     );
+}
+
+export default function AssistantChatPage() {
+    const identity = useWorkspaceIdentity();
+    return <AssistantChatPageForWorkspace key={identity} />;
 }

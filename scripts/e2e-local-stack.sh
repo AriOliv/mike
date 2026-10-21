@@ -35,6 +35,12 @@ if ! docker info >/dev/null 2>&1; then
     exit 1
 fi
 
+# Sweep stacks left behind by earlier runs, worktrees, and reviews before
+# adding another one (see scripts/stack.sh; MIKE_GC=0 skips it).
+if [ "${MIKE_GC:-1}" != 0 ]; then
+    bash "$ROOT/scripts/stack.sh" gc
+fi
+
 cd "$BACKEND"
 
 if [ ! -f supabase/config.toml ]; then
@@ -87,6 +93,7 @@ set_kv() {
 [ -f .env ] || cp .env.example .env
 [ -f .env.hosted.bak ] || cp .env .env.hosted.bak
 set_kv .env SUPABASE_URL "$API_URL"
+set_kv .env SUPABASE_PUBLISHABLE_KEY "$ANON_KEY"
 set_kv .env SUPABASE_SECRET_KEY "$SERVICE_KEY"
 # The suite fires well over the backend's default 300-requests/15-min general
 # cap in one run; once tripped every call 429s and profile/list waits time out.
@@ -94,15 +101,15 @@ set_kv .env SUPABASE_SECRET_KEY "$SERVICE_KEY"
 set_kv .env RATE_LIMIT_GENERAL_MAX 100000
 set_kv .env RATE_LIMIT_CHAT_MAX 100000
 set_kv .env RATE_LIMIT_CHAT_CREATE_MAX 100000
-set_kv .env RATE_LIMIT_UPLOAD_MAX 100000
 set_kv .env RATE_LIMIT_EXPORT_MAX 100000
 set_kv .env RATE_LIMIT_DATA_DELETE_MAX 100000
+set_kv .env RATE_LIMIT_UPLOAD_SESSION_MUTATION_MAX 100000
+set_kv .env RATE_LIMIT_UPLOAD_SESSION_POLL_MAX 100000
+set_kv .env RATE_LIMIT_UPLOAD_SESSION_CREATE_MAX_PER_HOUR 100000
 
 touch "$FRONTEND/.env.local"
 [ -f "$FRONTEND/.env.local.hosted.bak" ] || cp "$FRONTEND/.env.local" "$FRONTEND/.env.local.hosted.bak"
-set_kv "$FRONTEND/.env.local" NEXT_PUBLIC_SUPABASE_URL "$API_URL"
-set_kv "$FRONTEND/.env.local" NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY "$ANON_KEY"
-set_kv "$FRONTEND/.env.local" NEXT_PUBLIC_API_BASE_URL "http://localhost:3001"
+set_kv "$FRONTEND/.env.local" API_BASE_URL "http://localhost:3001"
 
 echo "Local stack ready: $API_URL (db: ${DB_URL%%\?*})"
 

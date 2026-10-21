@@ -1,13 +1,27 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+// The RPCs return `any`; naming the row shape is what lets tsc check the id
+// reads below instead of silently widening them.
+type IdRow = { id: string };
+
 const url = process.env.SUPABASE_TEST_URL;
 const serviceKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
 const maybeDescribe = url && serviceKey ? describe : describe.skip;
 
+/* supabase-js types an rpc() result's `data` as `any`, so the `.map()` /
+   `.every()` callbacks below get no inferred parameter type (and, under
+   noImplicitAny, no type check at all). Name the handful of overview columns
+   these assertions actually read. */
+type OverviewRow = {
+    id: string;
+    project_id: string | null;
+    columns_config: unknown[] | null;
+};
+
 maybeDescribe("Supabase tabular-review pagination", () => {
-    const ownerId = crypto.randomUUID();
-    const ownerEmail = `pagination-${ownerId}@test.local`;
+    let ownerId = "";
+    let ownerEmail = "";
     const projectId = crypto.randomUUID();
     const projectReviewIds = Array.from({ length: 25 }, () =>
         crypto.randomUUID(),
@@ -22,6 +36,17 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         admin = createClient(url!, serviceKey!, {
             auth: { persistSession: false, autoRefreshToken: false },
         });
+
+        ownerEmail = `pagination-${Date.now()}@test.local`;
+        const owner = await admin.auth.admin.createUser({
+            email: ownerEmail,
+            password: "StackTest1!",
+            email_confirm: true,
+        });
+        if (owner.error || !owner.data.user) {
+            throw owner.error ?? new Error("Could not create pagination owner");
+        }
+        ownerId = owner.data.user.id;
 
         const project = await admin.from("projects").insert({
             id: projectId,
@@ -72,6 +97,7 @@ maybeDescribe("Supabase tabular-review pagination", () => {
             .delete()
             .in("id", standaloneReviewIds);
         await admin.from("projects").delete().eq("id", projectId);
+        if (ownerId) await admin.auth.admin.deleteUser(ownerId);
     });
 
     it("paginates tied rows deterministically without duplicates", async () => {
@@ -100,8 +126,8 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         expect(firstPage.data).toHaveLength(20);
         expect(secondPage.data).toHaveLength(5);
 
-        const firstIds = (firstPage.data ?? []).map((row) => row.id);
-        const secondIds = (secondPage.data ?? []).map((row) => row.id);
+        const firstIds = (firstPage.data ?? []).map((row: OverviewRow) => row.id);
+        const secondIds = (secondPage.data ?? []).map((row: OverviewRow) => row.id);
         expect(new Set([...firstIds, ...secondIds]).size).toBe(25);
         expect([...firstIds, ...secondIds]).toEqual(
             [...projectReviewIds].sort(),
@@ -140,10 +166,10 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         expect(standalone.error).toBeNull();
 
         const inProjectIds = new Set(
-            (inProject.data ?? []).map((row) => row.id as string),
+            (inProject.data ?? []).map((row: OverviewRow) => row.id as string),
         );
         const standaloneIds = new Set(
-            (standalone.data ?? []).map((row) => row.id as string),
+            (standalone.data ?? []).map((row: OverviewRow) => row.id as string),
         );
 
         for (const id of projectReviewIds) expect(inProjectIds.has(id)).toBe(true);
@@ -156,10 +182,10 @@ maybeDescribe("Supabase tabular-review pagination", () => {
             expect(standaloneIds.has(id)).toBe(false);
 
         expect(
-            (inProject.data ?? []).every((row) => row.project_id !== null),
+            (inProject.data ?? []).every((row: OverviewRow) => row.project_id !== null),
         ).toBe(true);
         expect(
-            (standalone.data ?? []).every((row) => row.project_id === null),
+            (standalone.data ?? []).every((row: OverviewRow) => row.project_id === null),
         ).toBe(true);
     });
 
@@ -179,7 +205,7 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         expect(result.error).toBeNull();
         expect(result.data).toHaveLength(5);
         expect(
-            (result.data ?? []).every((row) => row.project_id === null),
+            (result.data ?? []).every((row: OverviewRow) => row.project_id === null),
         ).toBe(true);
     });
 
@@ -229,7 +255,7 @@ maybeDescribe("Supabase tabular-review pagination", () => {
 
         expect(result.error).toBeNull();
         const columnCounts = (result.data ?? []).map(
-            (row) =>
+            (row: OverviewRow) =>
                 (row.columns_config as unknown[] | null | undefined)?.length ??
                 0,
         );
@@ -252,7 +278,7 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         expect(result.error).toBeNull();
         const rows = (result.data ?? []) as { id: string; user_id: string }[];
         expect(rows).toHaveLength(projectReviewIds.length);
-        expect(new Set(rows.map((row) => row.id))).toEqual(
+        expect(new Set(rows.map((row: IdRow) => row.id))).toEqual(
             new Set(projectReviewIds),
         );
         expect(rows.every((row) => row.user_id === ownerId)).toBe(true);
@@ -275,7 +301,7 @@ maybeDescribe("Supabase tabular-review pagination", () => {
                 p_offset: offset,
             });
             expect(page.error).toBeNull();
-            collected.push(...(page.data ?? []).map((row) => row.id as string));
+            collected.push(...(page.data ?? []).map((row: OverviewRow) => row.id as string));
         }
 
         expect(new Set(collected).size).toBe(projectReviewIds.length);
@@ -291,9 +317,188 @@ maybeDescribe("Supabase tabular-review pagination", () => {
 
         expect(result.error).toBeNull();
         const returnedIds = new Set(
-            (result.data ?? []).map((row) => row.id as string),
+            (result.data ?? []).map((row: OverviewRow) => row.id as string),
         );
         for (const id of [...projectReviewIds, ...standaloneReviewIds])
             expect(returnedIds.has(id)).toBe(true);
+    });
+});
+
+maybeDescribe("Supabase tabular-review org visibility", () => {
+    // Org membership is the third visibility branch (alongside row ownership
+    // and direct grants). These tests act as a plain member — neither the
+    // row owner nor a direct grantee — so only the org branch can
+    // make the colleague's reviews visible. org_members.user_id is a uuid FK
+    // to auth.users, so real auth users are required here (random UUIDs in
+    // user_id columns, as the pagination suite uses, would violate the FK).
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const projectId = crypto.randomUUID();
+    const inProjectReviewId = crypto.randomUUID();
+    const colleagueEmail = `org-vis-colleague-${suffix}@test.local`;
+    const memberEmail = `org-vis-member-${suffix}@test.local`;
+    let admin: SupabaseClient;
+    let colleagueId = "";
+    let memberId = "";
+    let orgId = "";
+
+    beforeAll(async () => {
+        admin = createClient(url!, serviceKey!, {
+            auth: { persistSession: false, autoRefreshToken: false },
+        });
+
+        const colleague = await admin.auth.admin.createUser({
+            email: colleagueEmail,
+            password: `pw-${suffix}-A1!`,
+            email_confirm: true,
+        });
+        if (colleague.error || !colleague.data.user)
+            throw colleague.error ?? new Error("no colleague user");
+        colleagueId = colleague.data.user.id;
+
+        const member = await admin.auth.admin.createUser({
+            email: memberEmail,
+            password: `pw-${suffix}-B1!`,
+            email_confirm: true,
+        });
+        if (member.error || !member.data.user)
+            throw member.error ?? new Error("no member user");
+        memberId = member.data.user.id;
+
+        // A separately created organization is a team workspace; signup also
+        // provisions each account's independent personal workspace.
+        const org = await admin
+            .from("organizations")
+            .insert({ name: `org-vis-${suffix}` })
+            .select("id")
+            .single();
+        if (org.error || !org.data) throw org.error ?? new Error("no org");
+        orgId = org.data.id;
+
+        // A plain member sees a colleague's explicitly public project
+        // through organization membership, without an individual grant.
+        const members = await admin.from("org_members").insert([
+            { org_id: orgId, user_id: colleagueId, role: "admin" },
+            { org_id: orgId, user_id: memberId, role: "member" },
+        ]);
+        if (members.error) throw members.error;
+
+        const project = await admin.from("projects").insert({
+            id: projectId,
+            user_id: colleagueId,
+            name: `org-vis-project-${suffix}`,
+            org_id: orgId,
+            visibility: "organization",
+        });
+        if (project.error) throw project.error;
+
+        // This review inherits its public project's access. Standalone
+        // organization reviews remain private unless explicitly shared.
+        const reviews = await admin.from("tabular_reviews").insert({
+            id: inProjectReviewId,
+            project_id: projectId,
+            user_id: colleagueId,
+            title: "Org Colleague In-Project",
+            columns_config: [],
+            document_ids: [],
+            org_id: orgId,
+        });
+        if (reviews.error) throw reviews.error;
+    });
+
+    afterAll(async () => {
+        if (!admin) return;
+        await admin
+            .from("tabular_reviews")
+            .delete()
+            .eq("id", inProjectReviewId);
+        await admin.from("projects").delete().eq("id", projectId);
+        if (orgId) await admin.from("organizations").delete().eq("id", orgId);
+        // Deleting the users also removes their personal organizations.
+        if (colleagueId) await admin.auth.admin.deleteUser(colleagueId);
+        if (memberId) await admin.auth.admin.deleteUser(memberId);
+    });
+
+    it("shows a colleague's org reviews to a plain member via the paginated overview RPC", async () => {
+        // This is the overload GET /tabular-review actually resolves: all
+        // nine named arguments (see lib/tabularReviewsOverview.ts). The
+        // member is neither owner nor directly granted, so the row is visible
+        // only through the org-membership branch.
+        const result = await admin.rpc("get_tabular_reviews_overview", {
+            p_user_id: memberId,
+            p_user_email: memberEmail,
+            p_project_id: null,
+            p_scope: "all",
+            p_limit: 100,
+            p_offset: 0,
+            p_search_term: "org colleague",
+            p_sort_key: "created",
+            p_sort_direction: "desc",
+        });
+
+        expect(result.error).toBeNull();
+        const rows = (result.data ?? []) as {
+            id: string;
+            is_owner: boolean;
+        }[];
+        const ids = new Set(rows.map((row: IdRow) => row.id));
+        expect(ids.has(inProjectReviewId)).toBe(true);
+        // Org membership grants visibility, not ownership.
+        expect(rows.every((row) => row.is_owner === false)).toBe(true);
+    });
+
+    it("shows a colleague's org reviews to a plain member via the ids overview RPC", async () => {
+        // Backs GET /tabular-review/ids ("select all matching"). Its
+        // visibility predicate is a duplicated copy of the overview's, so
+        // this guards against the two drifting apart: if the org branch were
+        // missing here, bulk selection would silently omit rows the member
+        // can see in the list.
+        const result = await admin.rpc("get_tabular_review_ids_overview", {
+            p_user_id: memberId,
+            p_user_email: memberEmail,
+            p_project_id: null,
+            p_scope: "all",
+            p_search_term: "org colleague",
+            p_limit: 1000,
+            p_offset: 0,
+        });
+
+        expect(result.error).toBeNull();
+        const rows = (result.data ?? []) as { id: string; user_id: string }[];
+        const ids = new Set(rows.map((row: IdRow) => row.id));
+        expect(ids.has(inProjectReviewId)).toBe(true);
+        expect(rows.every((row) => row.user_id === colleagueId)).toBe(true);
+    });
+
+    it("keeps the paginated overview and the ids overview in visibility lockstep", async () => {
+        // The drift the two RPCs are prone to, asserted directly: everything
+        // the member sees in the list must also be bulk-selectable.
+        const overview = await admin.rpc("get_tabular_reviews_overview", {
+            p_user_id: memberId,
+            p_user_email: memberEmail,
+            p_project_id: null,
+            p_scope: "all",
+            p_limit: 1000,
+            p_offset: 0,
+            p_search_term: "org colleague",
+            p_sort_key: "created",
+            p_sort_direction: "desc",
+        });
+        const ids = await admin.rpc("get_tabular_review_ids_overview", {
+            p_user_id: memberId,
+            p_user_email: memberEmail,
+            p_project_id: null,
+            p_scope: "all",
+            p_search_term: "org colleague",
+            p_limit: 1000,
+            p_offset: 0,
+        });
+
+        expect(overview.error).toBeNull();
+        expect(ids.error).toBeNull();
+        const overviewIds = new Set(
+            (overview.data ?? []).map((row: IdRow) => row.id as string),
+        );
+        const idsIds = new Set((ids.data ?? []).map((row: IdRow) => row.id as string));
+        expect(idsIds).toEqual(overviewIds);
     });
 });

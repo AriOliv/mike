@@ -1,25 +1,43 @@
 "use client";
 
-import { useState } from "react";
-import type { KeyboardEvent } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { Loader2, UserPlus } from "lucide-react";
 import {
     lookupUserByEmail,
     type UserLookupResult,
 } from "@/app/lib/mikeApi";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { cn } from "@/app/lib/utils";
+import { userFacingApiError } from "@/app/lib/userFacingError";
+import { LIQUID_GLASS_SUBTLE_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface AddUserInputProps {
-    onAdd: (user: UserLookupResult) => Promise<void> | void;
+    /**
+     * Return `false` to signal the add did NOT happen (skipped or failed) —
+     * the email stays in the input for another try. Any other result
+     * (including void) counts as success and clears the field.
+     */
+    onAdd: (user: UserLookupResult) => Promise<void | boolean> | void | boolean;
     validateEmail?: (email: string) => Promise<string | null> | string | null;
     busy?: boolean;
     placeholder?: string;
     autoFocus?: boolean;
     submitLabel?: string;
+    submitVariant?: "pill" | "attached";
+    /** Rendered between the input and attached submit action. */
+    inputEndControl?: ReactNode;
     className?: string;
+    /**
+     * Refuse addresses that don't already belong to a Mike account.
+     *
+     * True is right where the address must resolve to a user immediately.
+     * Organization invitations are the exceptional flow: they are intended
+     * for people who may not have signed up yet, so that caller passes false
+     * and validates the format only.
+     */
+    requireExistingUser?: boolean;
 }
 
 export function AddUserInput({
@@ -29,7 +47,10 @@ export function AddUserInput({
     placeholder = "Add by email...",
     autoFocus = false,
     submitLabel = "Add user",
+    submitVariant = "pill",
+    inputEndControl,
     className,
+    requireExistingUser = true,
 }: AddUserInputProps) {
     const [input, setInput] = useState("");
     const [checking, setChecking] = useState(false);
@@ -37,6 +58,7 @@ export function AddUserInput({
 
     const trimmedEmail = input.trim().toLowerCase();
     const showAddButton = trimmedEmail.length > 0;
+    const attachedSubmit = submitVariant === "attached";
 
     async function commitUser() {
         const email = trimmedEmail;
@@ -55,19 +77,22 @@ export function AddUserInput({
                 return;
             }
 
-            const user = await lookupUserByEmail(email);
-            if (!user.exists) {
+            const user = requireExistingUser
+                ? await lookupUserByEmail(email)
+                : { exists: false, email, display_name: null };
+            if (requireExistingUser && !user.exists) {
                 setError(`${email} does not belong to a Mike user.`);
                 return;
             }
 
-            await onAdd(user);
-            setInput("");
+            const result = await onAdd(user);
+            if (result !== false) setInput("");
         } catch (err) {
             setError(
-                err instanceof Error
-                    ? err.message
-                    : "Could not add this user. Try again.",
+                userFacingApiError(
+                    err,
+                    "Could not add this user. Try again.",
+                ),
             );
         } finally {
             setChecking(false);
@@ -84,12 +109,25 @@ export function AddUserInput({
     return (
         <div>
             <div
+                data-slot={
+                    attachedSubmit
+                        ? "add-user-input-group"
+                        : "add-user-input"
+                }
                 className={cn(
-                    "flex min-h-10 items-center gap-2 rounded-xl border border-white/70 bg-white/55 px-3 py-1.5 shadow-[0_3px_9px_rgba(15,23,42,0.04),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-colors focus-within:bg-white/70",
+                    `flex min-h-10 items-center rounded-xl ${LIQUID_GLASS_SUBTLE_CLASS} transition-colors focus-within:ring-2 focus-within:ring-blue-500/40 focus-within:ring-offset-2`,
+                    attachedSubmit
+                        ? "gap-0 overflow-hidden pl-3"
+                        : "gap-2 px-3 py-1.5",
                     className,
                 )}
             >
-                <UserPlus className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                <UserPlus
+                    className={cn(
+                        "h-3.5 w-3.5 shrink-0 text-gray-400",
+                        attachedSubmit && "mr-2",
+                    )}
+                />
                 <input
                     type="email"
                     value={input}
@@ -99,26 +137,42 @@ export function AddUserInput({
                     }}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
-                    className="min-w-0 flex-1 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400"
+                    className={cn(
+                        "min-w-0 flex-1 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400",
+                        attachedSubmit && "h-10 py-2",
+                    )}
                     autoFocus={autoFocus}
                 />
-                {showAddButton && (
-                    <PillButton
-                        tone="blue"
-                        size="sm"
+                {attachedSubmit ? inputEndControl : null}
+                {attachedSubmit ? (
+                    <button
                         type="button"
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => void commitUser()}
-                        disabled={busy || checking}
+                        disabled={!showAddButton || busy || checking}
                         title={submitLabel}
-                        className="h-6 shrink-0 px-2.5 text-[11px] leading-none"
+                        className="flex h-10 shrink-0 items-center justify-center gap-1.5 self-stretch pl-3 pr-4 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:bg-transparent disabled:text-gray-300"
                     >
                         {(busy || checking) && (
                             <Loader2 className="h-3 w-3 animate-spin" />
                         )}
                         Add
-                    </PillButton>
-                )}
+                    </button>
+                ) : showAddButton ? (
+                    <PillButtonUI
+                        tone="blue"
+                        size="xs"
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void commitUser()}
+                        disabled={busy || checking}
+                        loading={busy || checking}
+                        title={submitLabel}
+                        className="shrink-0"
+                    >
+                        Add
+                    </PillButtonUI>
+                ) : null}
             </div>
             {error && <p className="mt-1.5 text-xs text-red-500">{error}</p>}
         </div>

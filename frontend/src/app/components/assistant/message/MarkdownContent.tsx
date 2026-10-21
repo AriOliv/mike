@@ -4,34 +4,53 @@ import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import type { AssistantEvent, Citation } from "../../shared/types";
-import { RESPONSE_GLASS_ANNOTATION, withoutMarkdownNode } from "./messageStyles";
+import type {
+    AssistantEvent,
+    Citation,
+    PanelDocument,
+} from "../../shared/types";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { withoutMarkdownNode } from "./messageStyles";
 import { citationTooltip } from "./CitationSources";
 import {
     citationVerificationAriaLabel,
     citationVerificationPillClassName,
 } from "./citationVerification";
 import { internalCaseHref } from "./citationUtils";
+import { EXCERPT_SOURCE_PROPS } from "@/shared/ui/ResponseSelectionMenuUI";
+
+function isSameOrigin(url: string): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        return (
+            new URL(url, window.location.href).origin === window.location.origin
+        );
+    } catch {
+        return false;
+    }
+}
 
 export function MarkdownContent({
     text,
     inlineCitationTargets,
     caseCitations,
-    caseOpinions,
+    caseDocuments,
+    activeCitation,
     onCitationClick,
     onCaseClick,
     divRef,
+    excerptSource = false,
 }: {
+    /** Lets a reader highlight this text to quote it in the composer. */
+    excerptSource?: boolean;
     text: string;
     inlineCitationTargets: Citation[];
     caseCitations: Map<
         string,
         Extract<AssistantEvent, { type: "case_citation" }>
     >;
-    caseOpinions: Map<
-        number,
-        Extract<AssistantEvent, { type: "case_opinions" }>["case"]
-    >;
+    caseDocuments: Map<number, PanelDocument>;
+    activeCitation?: Citation | null;
     onCitationClick?: (c: Citation) => void;
     onCaseClick?: (
         c: Extract<AssistantEvent, { type: "case_citation" }>,
@@ -45,6 +64,7 @@ export function MarkdownContent({
     return (
         <div
             ref={divRef}
+            {...(excerptSource ? EXCERPT_SOURCE_PROPS : {})}
             className="text-gray-900 mb-4 text-base prose prose-sm max-w-none font-serif"
         >
             <ReactMarkdown
@@ -57,6 +77,12 @@ export function MarkdownContent({
                     /^us-case-\d+$/.test(url) ? url : defaultUrlTransform(url)
                 }
                 components={{
+                    pre: (props) => (
+                        <pre
+                            className="max-w-full overflow-x-auto"
+                            {...withoutMarkdownNode(props)}
+                        />
+                    ),
                     table: (props) => (
                         <div className="overflow-x-auto my-4 rounded-lg">
                             <table
@@ -167,7 +193,10 @@ export function MarkdownContent({
                         />
                     ),
                     em: (props) => (
-                        <em className="italic" {...withoutMarkdownNode(props)} />
+                        <em
+                            className="italic"
+                            {...withoutMarkdownNode(props)}
+                        />
                     ),
                     code: (props) => {
                         const { children, ...codeProps } =
@@ -180,21 +209,20 @@ export function MarkdownContent({
                             if (annotation) {
                                 const tooltipText = citationTooltip(annotation);
                                 return (
-                                    <button
+                                    <CitationPillUI
+                                        active={activeCitation === annotation}
                                         onClick={() =>
                                             onCitationClick?.(annotation)
                                         }
                                         data-citation-ref={annotation.ref}
-                                        className={`${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)} mx-0.5 align-super`}
-                                        aria-label={
-                                            citationVerificationAriaLabel(
-                                                annotation,
-                                            )
-                                        }
+                                        className={`${citationVerificationPillClassName(annotation)} mx-0.5 align-super`}
+                                        aria-label={citationVerificationAriaLabel(
+                                            annotation,
+                                        )}
                                         title={tooltipText}
                                     >
                                         {annotation.ref}
-                                    </button>
+                                    </CitationPillUI>
                                 );
                             }
                         }
@@ -226,12 +254,13 @@ export function MarkdownContent({
                                         onClick={() =>
                                             onCaseClick({
                                                 ...citation,
-                                                case:
+                                                document:
                                                     citation.cluster_id !== null
-                                                        ? caseOpinions.get(
+                                                        ? (caseDocuments.get(
                                                               citation.cluster_id,
-                                                          )
-                                                        : undefined,
+                                                          ) ??
+                                                          citation.document)
+                                                        : citation.document,
                                             })
                                         }
                                         className="text-left text-blue-600 hover:text-blue-700 underline"
@@ -281,6 +310,29 @@ export function MarkdownContent({
                             >
                                 {children}
                             </a>
+                        );
+                    },
+                    img: (props) => {
+                        const { src, alt, ...imageProps } =
+                            withoutMarkdownNode(props);
+                        if (typeof src !== "string" || !src) return null;
+                        // Another site's image would load with no click, so
+                        // injected text could leak data in its URL.
+                        if (!isSameOrigin(src)) {
+                            return (
+                                <a
+                                    href={src}
+                                    className="text-blue-600 hover:text-blue-700 underline [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                >
+                                    {alt?.trim() || src}
+                                </a>
+                            );
+                        }
+                        return (
+                            // eslint-disable-next-line @next/next/no-img-element -- markdown content, not an optimizable page asset
+                            <img src={src} alt={alt ?? ""} {...imageProps} />
                         );
                     },
                     hr: (props) => (

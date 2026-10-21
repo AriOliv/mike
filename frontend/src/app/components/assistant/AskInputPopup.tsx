@@ -2,33 +2,52 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { PillButton } from "@/app/components/ui/pill-button";
-import { TabPillButton } from "@/app/components/ui/tab-pill-button";
-import type { AssistantEvent, Document } from "../shared/types";
+import { CloseButton } from "@/shared/ui/CloseButton";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
+import type { AssistantEvent, Document, MessageFile } from "../shared/types";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
+import { ConnectorActionCard } from "../shared/ConnectorActionCard";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
+import {
+    LIQUID_GLASS_SUBTLE_CLASS,
+    LIQUID_GLASS_TRANSLUCENT_CLASS,
+} from "@/app/components/ui/liquid-surface";
 
 type AskInputsEvent = Extract<AssistantEvent, { type: "ask_inputs" }>;
 type AskInputItem = AskInputsEvent["items"][number];
+type OptionAskInputItem = Extract<
+    AskInputItem,
+    { kind: "choice" | "multi_choice" }
+>;
 type AskInputsResponse = Extract<
     AssistantEvent,
     { type: "ask_inputs_response" }
 >;
+type ApprovalDecision = "approve" | "reject";
+/** A decision made by the handler that is about to submit, before its state lands. */
+type PendingDecision = { id: string; decision: ApprovalDecision };
+
+const OPEN_TEXT_MAX_LENGTH = 5_000;
+const MAX_CHOICE_LENGTH = 1_000;
 
 export function AskInputPopup({
     event,
+    assistantMessageId,
     onSubmit,
     onDismiss,
 }: {
     event: AskInputsEvent;
+    assistantMessageId: string;
     onSubmit?: (
         response: AskInputsResponse,
         content: string,
-        files: { filename: string; document_id: string }[],
-    ) => void;
+        files: MessageFile[],
+    ) => void | string | null | Promise<void | string | null>;
     onDismiss?: () => void;
 }) {
-    const [choiceAnswers, setChoiceAnswers] = useState<Record<string, string>>(
+    const [answers, setAnswers] = useState<Record<string, string>>({});
+    const [multiAnswers, setMultiAnswers] = useState<Record<string, string[]>>(
         {},
     );
     const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});
@@ -39,6 +58,8 @@ export function AskInputPopup({
     const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
     const [confirmed, setConfirmed] = useState<Set<string>>(() => new Set());
     const [submitted, setSubmitted] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submitFailed, setSubmitFailed] = useState(false);
     const [dismissed, setDismissed] = useState(false);
     const [docSelectorTarget, setDocSelectorTarget] = useState<{
         inputId: string;
@@ -62,18 +83,38 @@ export function AskInputPopup({
         [docsByInput],
     );
 
+    const clearConfirmation = (id: string) => {
+        setConfirmed((prev) => {
+            if (!prev.has(id)) return prev;
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+        });
+    };
+
     const itemAnswered = useCallback(
         (item: AskInputItem) => {
-            if (item.kind === "choice") return !!choiceAnswers[item.id]?.trim();
+            if (item.kind === "approval") return !!answers[item.id];
+            if (item.kind === "multi_choice") {
+                return (
+                    (multiAnswers[item.id]?.length ?? 0) > 0 ||
+                    (!!otherOpen[item.id] &&
+                        !!otherValues[item.id]?.trim())
+                );
+            }
+            if (item.kind !== "documents") {
+                return !!answers[item.id]?.trim();
+            }
             return docsForItem(item.id).length > 0;
         },
-        [choiceAnswers, docsForItem],
+        [answers, docsForItem, multiAnswers, otherOpen, otherValues],
     );
 
     const itemResolved = useCallback(
         (item: AskInputItem) =>
-            skipped.has(item.id) || confirmed.has(item.id),
-        [confirmed, skipped],
+            skipped.has(item.id) ||
+            (confirmed.has(item.id) && itemAnswered(item)),
+        [confirmed, itemAnswered, skipped],
     );
 
     const firstUnresolvedId = useCallback(
@@ -94,13 +135,18 @@ export function AskInputPopup({
     );
 
     const setSkippedFor = (id: string, shouldSkip = true) => {
+        if (shouldSkip) clearConfirmation(id);
         setSkipped((prev) => {
             const next = new Set(prev);
             if (shouldSkip) next.add(id);
             else next.delete(id);
             return next;
         });
-        if (shouldSkip) goToNextUnresolved(id);
+        if (!shouldSkip) return;
+        goToNextUnresolved(id);
+        // Skipping can be what clears the last outstanding item. `skipped`
+        // hasn't re-rendered yet, so hand the id to submit() explicitly.
+        if (!firstUnresolvedId(id)) submit(id);
     };
 
     const confirmItem = (id: string) => {
@@ -110,6 +156,7 @@ export function AskInputPopup({
             return next;
         });
         goToNextUnresolved(id);
+        if (!firstUnresolvedId(id)) submit();
     };
 
     const addDocs = (
@@ -118,6 +165,7 @@ export function AskInputPopup({
         selected: Document[],
     ) => {
         if (selected.length === 0) return;
+        clearConfirmation(inputId);
         setSkippedFor(inputId, false);
         setDocsByInput((prev) => {
             const byType = prev[inputId] ?? {};
@@ -137,6 +185,7 @@ export function AskInputPopup({
     };
 
     const removeDoc = (inputId: string, typeIndex: number, docId: string) => {
+        clearConfirmation(inputId);
         setDocsByInput((prev) => {
             const byType = prev[inputId] ?? {};
             return {
@@ -157,38 +206,90 @@ export function AskInputPopup({
     ) => {
         const trimmed = answer.trim();
         if (!trimmed || submitted) return;
+        clearConfirmation(item.id);
         setSkippedFor(item.id, false);
-        setChoiceAnswers((prev) => ({ ...prev, [item.id]: trimmed }));
+        setAnswers((prev) => ({ ...prev, [item.id]: trimmed }));
         setOtherOpen((prev) => ({ ...prev, [item.id]: false }));
     };
 
-    const allResolved =
-        event.items.length > 0 && event.items.every(itemResolved);
-    const canSubmit = !submitted && allResolved && !!onSubmit;
+    const toggleMultiAnswer = (
+        item: Extract<AskInputItem, { kind: "multi_choice" }>,
+        answer: string,
+    ) => {
+        const trimmed = answer.trim();
+        if (!trimmed || submitted) return;
+        clearConfirmation(item.id);
+        setSkippedFor(item.id, false);
+        setMultiAnswers((prev) => {
+            const current = prev[item.id] ?? [];
+            return {
+                ...prev,
+                [item.id]: current.includes(trimmed)
+                    ? current.filter((value) => value !== trimmed)
+                    : [...current, trimmed],
+            };
+        });
+    };
 
-    const buildResponse = (): AskInputsResponse => {
+    // `pendingSkipId` covers the item being skipped by the very handler that
+    // triggers the submit — its `skipped` state update hasn't landed yet.
+    const buildResponse = (
+        pendingSkipId?: string,
+        pendingDecision?: PendingDecision,
+    ): AskInputsResponse => {
         const responses = event.items.map((item) => {
-            if (skipped.has(item.id)) {
-                return item.kind === "choice"
-                    ? {
-                          id: item.id,
-                          kind: "choice" as const,
-                          question: item.question,
-                          skipped: true,
-                      }
-                    : {
-                          id: item.id,
-                          kind: "documents" as const,
-                          filenames: [],
-                          skipped: true,
-                      };
-            }
-            if (item.kind === "choice") {
+            if (item.kind === "approval") {
+                const decision =
+                    pendingDecision?.id === item.id
+                        ? pendingDecision.decision
+                        : answers[item.id];
+                // Only an explicit approval runs the action.
                 return {
                     id: item.id,
-                    kind: "choice" as const,
+                    kind: "approval" as const,
+                    decision:
+                        decision === "approve"
+                            ? ("approve" as const)
+                            : ("reject" as const),
+                };
+            }
+            if (skipped.has(item.id) || item.id === pendingSkipId) {
+                if (item.kind === "documents") {
+                    return {
+                        id: item.id,
+                        kind: "documents" as const,
+                        filenames: [],
+                        skipped: true,
+                    };
+                }
+                return {
+                    id: item.id,
+                    kind: item.kind,
                     question: item.question,
-                    answer: choiceAnswers[item.id]?.trim() ?? "",
+                    skipped: true,
+                };
+            }
+            if (item.kind === "multi_choice") {
+                const selected = multiAnswers[item.id] ?? [];
+                const other = otherOpen[item.id]
+                    ? otherValues[item.id]?.trim()
+                    : "";
+                return {
+                    id: item.id,
+                    kind: "multi_choice" as const,
+                    question: item.question,
+                    answers:
+                        other && !selected.includes(other)
+                            ? [...selected, other]
+                            : selected,
+                };
+            }
+            if (item.kind !== "documents") {
+                return {
+                    id: item.id,
+                    kind: item.kind,
+                    question: item.question,
+                    answer: answers[item.id]?.trim() ?? "",
                 };
             }
             return {
@@ -197,11 +298,18 @@ export function AskInputPopup({
                 filenames: docsForItem(item.id).map((doc) => doc.filename),
             };
         });
-        return { type: "ask_inputs_response", responses };
+        return {
+            type: "ask_inputs_response",
+            assistant_message_id: assistantMessageId,
+            ask_event_id: event.event_id,
+            responses,
+        };
     };
 
     const responseFiles = (response: AskInputsResponse) => {
-        const responseById = new Map(response.responses.map((item) => [item.id, item]));
+        const responseById = new Map(
+            response.responses.map((item) => [item.id, item]),
+        );
         const docs = event.items.flatMap((item) => {
             const responseItem = responseById.get(item.id);
             if (
@@ -217,13 +325,38 @@ export function AskInputPopup({
         return docs.flatMap((doc) => {
             if (seen.has(doc.id)) return [];
             seen.add(doc.id);
-            return [{ filename: doc.filename, document_id: doc.id }];
+            return [
+                {
+                    filename: doc.filename,
+                    document_id: doc.id,
+                    ...(doc.current_version_id
+                        ? { version_id: doc.current_version_id }
+                        : {}),
+                    ...(doc.active_version_number != null
+                        ? { version_number: doc.active_version_number }
+                        : {}),
+                },
+            ];
         });
     };
 
     const buildContent = (response: AskInputsResponse) => {
+        const itemsById = new Map(event.items.map((item) => [item.id, item]));
         const lines = response.responses.map((item, index) => {
-            if (item.kind === "choice") {
+            if (item.kind === "approval") {
+                const asked = itemsById.get(item.id);
+                const action =
+                    asked?.kind === "approval"
+                        ? `${asked.title} (${asked.connector_name})`
+                        : "Connector action";
+                return `${index + 1}. ${item.decision === "approve" ? "Approved" : "Rejected"}: ${action}`;
+            }
+            if (item.kind === "multi_choice") {
+                if (item.skipped)
+                    return `${index + 1}. Skipped: ${item.question}`;
+                return `${index + 1}. ${item.question}\n${item.answers?.join(", ") ?? ""}`;
+            }
+            if (item.kind !== "documents") {
                 if (item.skipped)
                     return `${index + 1}. Skipped: ${item.question}`;
                 return `${index + 1}. ${item.question}\n${item.answer ?? ""}`;
@@ -231,20 +364,48 @@ export function AskInputPopup({
             if (item.skipped) return `${index + 1}. Skipped document request.`;
             return `${index + 1}. Documents attached: ${item.filenames.join(", ")}`;
         });
-        return `Responses to Mike's questions:\n${lines.join("\n\n")}`;
+        const onlyApprovals = response.responses.every(
+            (item) => item.kind === "approval",
+        );
+        return `${onlyApprovals ? "Decisions on Mike's requested actions" : "Responses to Mike's questions"}:\n${lines.join("\n\n")}`;
     };
 
-    const submit = () => {
-        if (!canSubmit) return;
-        const response = buildResponse();
+    // Called straight from the handler that resolves the last outstanding
+    // item. It used to run from an effect with no dependency array, which
+    // re-ran after every render and double-fired under StrictMode.
+    const submit = (
+        pendingSkipId?: string,
+        pendingDecision?: PendingDecision,
+    ) => {
+        if (submitted || !onSubmit) return;
+        const response = buildResponse(pendingSkipId, pendingDecision);
         setSubmitted(true);
-        onSubmit?.(response, buildContent(response), responseFiles(response));
+        setIsSubmitting(true);
+        setSubmitFailed(false);
+        const restore = () => {
+            setSubmitted(false);
+            setConfirmed(new Set());
+            setSubmitFailed(true);
+        };
+        void (async () => {
+            try {
+                const result = await onSubmit(response, buildContent(response), responseFiles(response));
+                if (result === null) restore();
+            } catch {
+                restore();
+            } finally {
+                setIsSubmitting(false);
+            }
+        })();
     };
 
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- auto-submit when every question is answered; submit() sets state as part of the side effect
-        if (canSubmit) submit();
-    });
+    const decide = (id: string, decision: ApprovalDecision) => {
+        if (submitted) return;
+        setAnswers((prev) => ({ ...prev, [id]: decision }));
+        setConfirmed((prev) => new Set(prev).add(id));
+        goToNextUnresolved(id);
+        if (!firstUnresolvedId(id)) submit(undefined, { id, decision });
+    };
 
     const dismiss = useCallback(() => {
         if (submitted || dismissed) return;
@@ -268,12 +429,15 @@ export function AskInputPopup({
 
     return (
         <>
-            <div className="w-full overflow-hidden rounded-[18px] border border-white/65 bg-white/60 pb-3 font-serif shadow-[0_4px_10px_rgba(15,23,42,0.084),inset_0_1px_0_rgba(255,255,255,0.595),inset_0_-6px_14px_rgba(255,255,255,0.126)] backdrop-blur-2xl md:rounded-[22px]">
-                <div className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
+            {submitFailed && <p role="alert" className="px-3 py-2 text-sm text-red-600">Could not send these inputs. Please try again.</p>}
+            <div
+                className={`w-full overflow-hidden rounded-[18px] pb-3 font-serif md:rounded-[22px] ${LIQUID_GLASS_TRANSLUCENT_CLASS}`}
+            >
+                <div className="flex min-w-0 items-center justify-between gap-2 px-3 pt-3 pb-2">
                     <div className="flex min-w-0 items-center">
                         <div className="text-sm text-gray-500">
                             {submitted ? (
-                                "Inputs sent"
+                                isSubmitting ? "Sending inputs…" : "Inputs sent"
                             ) : (
                                 <div className="flex flex-wrap gap-x-1.5 gap-y-1">
                                     {event.items.map((item) => {
@@ -281,11 +445,13 @@ export function AskInputPopup({
                                             item.id === activeItem?.id;
                                         const isResolved = itemResolved(item);
                                         const label =
-                                            item.kind === "choice"
-                                                ? "Question"
-                                                : "Documents";
+                                            item.kind === "documents"
+                                                ? "Documents"
+                                                : item.kind === "approval"
+                                                  ? "Approval"
+                                                  : "Question";
                                         return (
-                                            <TabPillButton
+                                            <TabPillButtonUI
                                                 key={item.id}
                                                 active={isActive}
                                                 disabled={submitted}
@@ -300,7 +466,7 @@ export function AskInputPopup({
                                                     <span className="h-2.5 w-2.5 rounded-full border border-current opacity-70" />
                                                 )}
                                                 {label}
-                                            </TabPillButton>
+                                            </TabPillButtonUI>
                                         );
                                     })}
                                 </div>
@@ -308,14 +474,11 @@ export function AskInputPopup({
                         </div>
                     </div>
                     {!submitted && (
-                        <TabPillButton
-                            type="button"
+                        <CloseButton
                             onClick={dismiss}
-                            aria-label="Dismiss"
-                            className="h-6 w-6 shrink-0 px-0"
-                        >
-                            <X className="h-3 w-3" />
-                        </TabPillButton>
+                            label="Dismiss"
+                            size="md"
+                        />
                     )}
                 </div>
 
@@ -325,27 +488,43 @@ export function AskInputPopup({
                             <div>
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1">
-                                        {activeItem.kind === "choice" ? (
+                                        {activeItem.kind === "documents" ? (
+                                            <DocumentPrompt />
+                                        ) : activeItem.kind === "approval" ? (
+                                            <p className="text-sm text-gray-800">
+                                                Mike wants to run this action.
+                                                Approve it to run it now.
+                                            </p>
+                                        ) : (
                                             <p className="text-sm text-gray-800">
                                                 {activeItem.question}
                                             </p>
-                                        ) : (
-                                            <DocumentPrompt />
                                         )}
                                     </div>
                                 </div>
 
                                 <div className="pt-3">
-                                    {activeItem.kind === "choice" ? (
+                                    {activeItem.kind === "choice" ||
+                                    activeItem.kind === "multi_choice" ? (
                                         <OptionInput
                                             item={activeItem}
                                             disabled={
                                                 submitted ||
                                                 skipped.has(activeItem.id)
                                             }
-                                            selectedAnswer={
-                                                choiceAnswers[activeItem.id] ??
-                                                null
+                                            selectedAnswers={
+                                                activeItem.kind ===
+                                                "multi_choice"
+                                                    ? (multiAnswers[
+                                                          activeItem.id
+                                                      ] ?? [])
+                                                    : answers[activeItem.id]
+                                                      ? [
+                                                            answers[
+                                                                activeItem.id
+                                                            ],
+                                                        ]
+                                                      : []
                                             }
                                             otherOpen={
                                                 !!otherOpen[activeItem.id]
@@ -353,38 +532,101 @@ export function AskInputPopup({
                                             otherValue={
                                                 otherValues[activeItem.id] ?? ""
                                             }
-                                            onAnswer={(answer) =>
-                                                chooseAnswer(activeItem, answer)
-                                            }
+                                            onAnswer={(answer) => {
+                                                if (
+                                                    activeItem.kind ===
+                                                    "multi_choice"
+                                                ) {
+                                                    toggleMultiAnswer(
+                                                        activeItem,
+                                                        answer,
+                                                    );
+                                                } else {
+                                                    chooseAnswer(
+                                                        activeItem,
+                                                        answer,
+                                                    );
+                                                }
+                                            }}
                                             onOtherOpen={() => {
+                                                clearConfirmation(
+                                                    activeItem.id,
+                                                );
+                                                setSkippedFor(
+                                                    activeItem.id,
+                                                    false,
+                                                );
                                                 setOtherOpen((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]: true,
                                                 }));
-                                                setChoiceAnswers((prev) => ({
-                                                    ...prev,
-                                                    [activeItem.id]: (
-                                                        otherValues[
-                                                            activeItem.id
-                                                        ] ?? ""
-                                                    ).trim(),
-                                                }));
+                                                if (
+                                                    activeItem.kind ===
+                                                    "choice"
+                                                ) {
+                                                    setAnswers((prev) => ({
+                                                        ...prev,
+                                                        [activeItem.id]: (
+                                                            otherValues[
+                                                                activeItem.id
+                                                            ] ?? ""
+                                                        ).trim(),
+                                                    }));
+                                                }
                                             }}
                                             onOtherValue={(value) => {
+                                                clearConfirmation(
+                                                    activeItem.id,
+                                                );
                                                 setOtherValues((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]: value,
                                                 }));
-                                                setChoiceAnswers((prev) => ({
-                                                    ...prev,
-                                                    [activeItem.id]:
-                                                        value.trim(),
-                                                }));
+                                                if (
+                                                    activeItem.kind ===
+                                                    "choice"
+                                                ) {
+                                                    setAnswers((prev) => ({
+                                                        ...prev,
+                                                        [activeItem.id]:
+                                                            value.trim(),
+                                                    }));
+                                                }
                                                 if (value.trim())
                                                     setSkippedFor(
                                                         activeItem.id,
                                                         false,
                                                     );
+                                            }}
+                                        />
+                                    ) : activeItem.kind === "approval" ? (
+                                        <div className="mt-2 max-h-72 overflow-y-auto rounded-lg bg-gray-100/70 px-3 py-2">
+                                            <ConnectorActionCard
+                                                item={activeItem}
+                                            />
+                                        </div>
+                                    ) : activeItem.kind === "text" ? (
+                                        <OpenTextInput
+                                            item={activeItem}
+                                            value={answers[activeItem.id] ?? ""}
+                                            disabled={
+                                                submitted ||
+                                                skipped.has(activeItem.id)
+                                            }
+                                            onChange={(value) => {
+                                                clearConfirmation(
+                                                    activeItem.id,
+                                                );
+                                                setAnswers((prev) => ({
+                                                    ...prev,
+                                                    [activeItem.id]: value,
+                                                }));
+                                                if (value.trim()) {
+                                                    setSkippedFor(
+                                                        activeItem.id,
+                                                        false,
+                                                    );
+                                                }
                                             }}
                                         />
                                     ) : (
@@ -414,7 +656,47 @@ export function AskInputPopup({
                                     )}
                                 </div>
                             </div>
-                            {!submitted && (
+                            {!submitted && activeItem.kind === "approval" && (
+                                <div className="mt-auto flex items-center justify-end gap-2 pt-3">
+                                    <PillButtonUI
+                                        tone="white"
+                                        size="xs"
+                                        type="button"
+                                        aria-pressed={
+                                            answers[activeItem.id] === "reject"
+                                        }
+                                        onClick={() =>
+                                            decide(activeItem.id, "reject")
+                                        }
+                                        className="font-sans"
+                                    >
+                                        Reject
+                                    </PillButtonUI>
+                                    <PillButtonUI
+                                        tone="black"
+                                        size="xs"
+                                        type="button"
+                                        aria-pressed={
+                                            answers[activeItem.id] === "approve"
+                                        }
+                                        onClick={() =>
+                                            decide(activeItem.id, "approve")
+                                        }
+                                        className="font-sans"
+                                    >
+                                        {answers[activeItem.id] ===
+                                        "approve" ? (
+                                            <>
+                                                Approved
+                                                <Check className="h-3 w-3" />
+                                            </>
+                                        ) : (
+                                            "Approve"
+                                        )}
+                                    </PillButtonUI>
+                                </div>
+                            )}
+                            {!submitted && activeItem.kind !== "approval" && (
                                 <div className="mt-auto flex items-center justify-end gap-2 pt-3">
                                     <button
                                         type="button"
@@ -430,8 +712,9 @@ export function AskInputPopup({
                                             ? "Unskip"
                                             : "Skip"}
                                     </button>
-                                    <PillButton
+                                    <PillButtonUI
                                         tone="black"
+                                        size="xs"
                                         type="button"
                                         disabled={
                                             skipped.has(activeItem.id) ||
@@ -441,7 +724,7 @@ export function AskInputPopup({
                                         onClick={() =>
                                             confirmItem(activeItem.id)
                                         }
-                                        className="h-6 px-3 font-sans text-[10px]"
+                                        className="font-sans"
                                     >
                                         {confirmed.has(activeItem.id) ? (
                                             <>
@@ -451,7 +734,7 @@ export function AskInputPopup({
                                         ) : (
                                             "Confirm"
                                         )}
-                                    </PillButton>
+                                    </PillButtonUI>
                                 </div>
                             )}
                         </div>
@@ -480,6 +763,7 @@ export function AskInputPopup({
                     );
                 }}
                 breadcrumb={["Assistant", "Add Documents"]}
+                uploadStateId="assistant-ask-input"
                 initialSelectedDocuments={
                     docSelectorTarget
                         ? docsForItem(docSelectorTarget.inputId)
@@ -490,19 +774,57 @@ export function AskInputPopup({
     );
 }
 
+function OpenTextInput({
+    item,
+    value,
+    disabled,
+    onChange,
+}: {
+    item: Extract<AskInputItem, { kind: "text" }>;
+    value: string;
+    disabled?: boolean;
+    onChange: (value: string) => void;
+}) {
+    return (
+        <div className="mt-2">
+            <textarea
+                name={`answer-${item.id}`}
+                aria-label={item.question}
+                aria-describedby={`answer-${item.id}-limit`}
+                rows={5}
+                maxLength={OPEN_TEXT_MAX_LENGTH}
+                value={value}
+                disabled={disabled}
+                onChange={(event) =>
+                    onChange(event.target.value.slice(0, OPEN_TEXT_MAX_LENGTH))
+                }
+                placeholder="Type your answer..."
+                className="min-h-28 w-full resize-y rounded-lg bg-gray-100/70 px-3 py-2 text-sm leading-5 text-gray-700 outline-none transition-colors placeholder:text-gray-400 focus:bg-gray-200/70 disabled:cursor-default disabled:opacity-60"
+            />
+            <p
+                id={`answer-${item.id}-limit`}
+                className="mt-1 text-right font-sans text-[10px] text-gray-400"
+            >
+                {value.length.toLocaleString()} /{" "}
+                {OPEN_TEXT_MAX_LENGTH.toLocaleString()}
+            </p>
+        </div>
+    );
+}
+
 function OptionInput({
     item,
     disabled,
-    selectedAnswer,
+    selectedAnswers,
     otherOpen,
     otherValue,
     onAnswer,
     onOtherOpen,
     onOtherValue,
 }: {
-    item: Extract<AskInputItem, { kind: "choice" }>;
+    item: OptionAskInputItem;
     disabled?: boolean;
-    selectedAnswer: string | null;
+    selectedAnswers: string[];
     otherOpen: boolean;
     otherValue: string;
     onAnswer: (answer: string) => void;
@@ -513,12 +835,15 @@ function OptionInput({
         <div className="mt-2 grid gap-1.5">
             {item.options.map((option, idx) => {
                 const answer = option.value.trim();
-                const isSelected = !otherOpen && selectedAnswer === answer;
+                const isSelected =
+                    selectedAnswers.includes(answer) &&
+                    (item.kind === "multi_choice" || !otherOpen);
                 return (
                     <button
                         key={`${item.id}-${option.value}-${idx}`}
                         type="button"
                         disabled={disabled}
+                        aria-pressed={isSelected}
                         onClick={() => onAnswer(answer)}
                         className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${
                             isSelected
@@ -557,6 +882,9 @@ function OptionInput({
                             <span className="min-w-0 flex-1 flex items-start gap-2">
                                 <textarea
                                     name={`other-${item.id}`}
+                                    aria-label={item.other_label || "Other"}
+                                    aria-describedby={`other-${item.id}-limit`}
+                                    maxLength={MAX_CHOICE_LENGTH}
                                     rows={1}
                                     autoFocus
                                     value={otherValue}
@@ -568,13 +896,16 @@ function OptionInput({
                                         e.target.style.height = `${e.target.scrollHeight}px`;
                                     }}
                                     onChange={(e) => {
-                                        onOtherValue(e.target.value);
+                                        onOtherValue(e.target.value.slice(0, MAX_CHOICE_LENGTH));
                                         e.target.style.height = "auto";
                                         e.target.style.height = `${e.target.scrollHeight}px`;
                                     }}
                                     placeholder="Type your answer..."
                                     className="flex-1 resize-none overflow-hidden bg-transparent text-sm leading-5 text-gray-600 outline-none placeholder:text-gray-400"
                                 />
+                                <span id={`other-${item.id}-limit`} className="mt-0.5 shrink-0 font-sans text-[10px] text-gray-400">
+                                    {otherValue.length.toLocaleString()} / {MAX_CHOICE_LENGTH.toLocaleString()}
+                                </span>
                             </span>
                         ) : (
                             <span className="min-w-0 flex-1 text-sm text-gray-700">
@@ -660,7 +991,7 @@ function DocumentInput({
                                                 onClick={(e) =>
                                                     e.stopPropagation()
                                                 }
-                                                className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
+                                                className={`inline-flex items-center gap-1 rounded-[10px] py-0.5 pl-2 pr-1 text-xs text-gray-800 ${LIQUID_GLASS_SUBTLE_CLASS}`}
                                             >
                                                 <FileTypeIcon
                                                     fileType={doc.file_type}

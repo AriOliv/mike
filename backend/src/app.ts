@@ -1,42 +1,58 @@
 import "dotenv/config";
+import { rateLimitedBody } from "./lib/httpError";
+import { createHash, randomUUID } from "node:crypto";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
-import { chatRouter } from "./routes/chat";
-import { projectsRouter } from "./routes/projects";
-import { projectChatRouter } from "./routes/projectChat";
-import { documentsRouter } from "./routes/documents";
-import { libraryRouter } from "./routes/library";
-import { tabularRouter } from "./routes/tabular";
-import { workflowsRouter } from "./routes/workflows";
-import { userRouter } from "./routes/user";
-import { modelsRouter } from "./routes/models";
-import { downloadsRouter } from "./routes/downloads";
-import { caseLawRouter } from "./routes/caseLaw";
-import { pipelineRouter } from "./routes/pipeline";
-import { obligationsRouter } from "./routes/obligations";
-import { integrationsRouter } from "./routes/integrations";
-import { dossiersRouter } from "./routes/dossiers";
-import { previewRouter } from "./routes/preview";
-import { acervoRouter } from "./routes/acervo";
-import { termsRouter } from "./routes/terms";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { chatRouter } from "./modules/chat/chat.routes";
+import { wordChatRouter } from "./modules/word-chat/wordChat.routes";
+import { projectsRouter } from "./modules/projects/projects.routes";
+import { orgsRouter } from "./modules/orgs/orgs.routes";
+import { projectChatRouter } from "./modules/project-chat/projectChat.routes";
+import { documentsRouter } from "./modules/documents/documents.routes";
+import { libraryRouter } from "./modules/library/library.routes";
+import { tabularRouter } from "./modules/tabular/tabular.routes";
+import { workflowsRouter } from "./modules/workflows/workflows.routes";
+import { quickActionsRouter } from "./modules/quick-actions/quickActions.routes";
+import { workflowAddonsRouter } from "./modules/workflows/workflowAddons.routes";
+import { userRouter } from "./modules/user/user.routes";
+import { modelsRouter } from "./modules/models/models.routes";
+import {
+  blobUploadHandler,
+  downloadsRouter,
+} from "./modules/downloads/downloads.routes";
+import { sourceDocumentsRouter } from "./modules/source-documents/sourceDocuments.routes";
+import { auditRouter } from "./modules/audit/audit.routes";
+import { authRouter } from "./modules/auth/auth.routes";
+import { uploadSessionsRouter } from "./modules/uploads/uploads.routes";
+import {
+  projectMemoryRouter,
+  userMemoryRouter,
+} from "./modules/memory/memory.routes";
+import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
+import {
+  acervoRouter,
+  integrationsRouter,
+  obligationsRouter,
+  pipelineRouter,
+  projectContractRouter,
+} from "./modules/contracts/contracts.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
-import { safeErrorLog } from "./lib/safeError";
+import {
+  handleUnhandledError,
+  protectInternalErrorResponses,
+} from "./middleware/internalErrorResponse";
+import { configuredAllowedOrigins } from "./lib/origins";
+import { envInt } from "./lib/runtimeConfig";
+import { tagCurrentRequest } from "./lib/observability/sentry";
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 
-// Ceiling for JSON API requests. File uploads use multipart handling and
-// are governed by separate upload limits.
+// Ceiling for JSON API requests. File bytes upload directly to object storage;
+// only small upload-session manifests and control requests reach Express.
 const JSON_BODY_LIMIT = "50mb";
-
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function minutes(value: number): number {
   return value * 60 * 1000;
@@ -50,23 +66,65 @@ function makeLimiter(options: {
   windowMs: number;
   max: number;
   message?: string;
+  skip?: (req: express.Request) => boolean;
+  keyGenerator?: (req: express.Request) => string;
+  skipSuccessfulRequests?: boolean;
 }) {
   return rateLimit({
     windowMs: options.windowMs,
     max: options.max,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.method === "OPTIONS",
-    message: {
-      detail:
-        options.message ?? "Too many requests. Please try again later.",
-    },
+    skip: (req) => req.method === "OPTIONS" || options.skip?.(req) === true,
+    keyGenerator: options.keyGenerator,
+    skipSuccessfulRequests: options.skipSuccessfulRequests,
+    // A machine code lets clients classify the failure without parsing
+    // prose; the detail stays specific to the lane that was exhausted.
+    message: rateLimitedBody(
+      options.message ?? "Too many requests. Please try again later.",
+    ),
   });
 }
+
+// The Word tool-result return channel gets its own lane: an edit-heavy turn
+// makes one POST per forwarded tool call, and letting those drain the shared
+// 300-request budget (per office NAT egress IP) turns a 429 into a full
+// tool-deadline stall per call inside a held SSE stream.
+const TOOL_RESULT_PATH = "/word-chat/tool-result";
+
+// Path prefix of the filesystem driver's signed blob PUT, used both to give it
+// its own rate-limit lane and to keep it out of the shared one.
+const BLOB_UPLOAD_PREFIX = "/download/signed/";
 
 const generalLimiter = makeLimiter({
   windowMs: minutes(envInt("RATE_LIMIT_GENERAL_WINDOW_MINUTES", 15)),
   max: envInt("RATE_LIMIT_GENERAL_MAX", 300),
+  // Upload status polling has its own authenticated per-user limiter. Keep it
+  // and the dedicated Word tool-result lane out of the shared IP budget.
+  skip: (req) =>
+    req.path === TOOL_RESULT_PATH ||
+    req.path === "/upload-sessions" ||
+    req.path.startsWith("/upload-sessions/") ||
+    (req.method === "PUT" && req.path.startsWith(BLOB_UPLOAD_PREFIX)),
+});
+
+// The filesystem storage driver's signed PUT (see downloads.routes.ts) is the
+// local-mode stand-in for a direct browser upload to object storage — which,
+// on every other deployment, never reaches this process at all. Leaving it on
+// the shared 300-request budget would mean one 50-file drag-and-drop spending a
+// sixth of a user's whole quota, so it gets its own generous lane instead, the
+// same way the upload-session endpoints do. Still bounded: a stolen or replayed
+// token cannot be used to hammer the disk indefinitely.
+const blobUploadLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_BLOB_UPLOAD_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_BLOB_UPLOAD_MAX", 1000),
+  message: "Too many uploads. Please try again later.",
+});
+
+const toolResultLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_TOOL_RESULT_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_TOOL_RESULT_MAX", 2000),
+  message: "Too many tool results. Please try again later.",
 });
 
 const chatLimiter = makeLimiter({
@@ -80,16 +138,22 @@ const chatCreateLimiter = makeLimiter({
   max: envInt("RATE_LIMIT_CHAT_CREATE_MAX", 60),
 });
 
-const uploadLimiter = makeLimiter({
-  windowMs: hours(envInt("RATE_LIMIT_UPLOAD_WINDOW_HOURS", 1)),
-  max: envInt("RATE_LIMIT_UPLOAD_MAX", 50),
-  message: "Too many upload requests. Please try again later.",
-});
-
 const exportLimiter = makeLimiter({
   windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
   max: envInt("RATE_LIMIT_EXPORT_MAX", 10),
   message: "Too many export requests. Please try again later.",
+});
+
+const workflowImportLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_UPLOAD_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_UPLOAD_MAX", 50),
+  message: "Too many workflow imports. Please try again later.",
+});
+
+const playbookImportLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_UPLOAD_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_UPLOAD_MAX", 50),
+  message: "Too many playbook imports. Please try again later.",
 });
 
 const dataDeleteLimiter = makeLimiter({
@@ -98,8 +162,61 @@ const dataDeleteLimiter = makeLimiter({
   message: "Too many data deletion requests. Please try again later.",
 });
 
+const authLoginIpLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_LOGIN_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_LOGIN_MAX", 30),
+  message: "Too many login attempts. Please try again later.",
+  skipSuccessfulRequests: true,
+});
+
+const authLoginAccountLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_ACCOUNT_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_ACCOUNT_MAX", 10),
+  message: "Too many login attempts. Please try again later.",
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const email =
+      typeof req.body?.email === "string"
+        ? req.body.email.trim().toLowerCase()
+        : "";
+    if (!email) {
+      return `ip:${ipKeyGenerator(
+        req.ip ?? req.socket.remoteAddress ?? "unknown",
+      )}`;
+    }
+    return `email:${createHash("sha256").update(email).digest("hex")}`;
+  },
+});
+
+const authEmailLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_AUTH_EMAIL_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_AUTH_EMAIL_MAX", 10),
+  message: "Too many authentication requests. Please try again later.",
+});
+
+const authFlowLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_FLOW_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_FLOW_MAX", 30),
+  message: "Too many authentication requests. Please try again later.",
+});
+
+const authMfaLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_MFA_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_MFA_MAX", 20),
+  message: "Too many verification attempts. Please try again later.",
+});
+
 app.disable("x-powered-by");
 app.set("trust proxy", envInt("TRUST_PROXY_HOPS", 1));
+app.use((_req, res, next) => {
+  const requestId = randomUUID();
+  res.locals.requestId = requestId;
+  res.setHeader("X-Request-ID", requestId);
+  // Same id on the Sentry event, the response body, and the access log.
+  tagCurrentRequest(requestId);
+  next();
+});
+app.use(protectInternalErrorResponses);
 
 app.use(
   helmet({
@@ -121,9 +238,9 @@ app.use(
   }),
 );
 
-const allowedOrigins = new Set<string>([
-  process.env.FRONTEND_URL ?? "http://localhost:3000",
-]);
+export { configuredAllowedOrigins } from "./lib/origins";
+
+const allowedOrigins = configuredAllowedOrigins();
 
 app.use(
   cors({
@@ -140,57 +257,125 @@ app.use(
     credentials: true,
     allowedHeaders: ["Authorization", "Content-Type"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    // The request id is the correlation key between a user report, the
+    // access log, and the Sentry event. Browsers hide response headers from
+    // cross-origin scripts unless they are listed here, so a dev build or a
+    // self-hoster serving the API from another origin could not read it.
+    exposedHeaders: ["X-Request-ID"],
   }),
 );
 
 app.use(generalLimiter);
 
+app.post("/auth/login", authLoginIpLimiter);
+app.post(["/auth/signup", "/auth/password-reset"], authEmailLimiter);
+app.post(["/auth/oauth", "/auth/exchange", "/auth/handoff"], authFlowLimiter);
+app.post(
+  ["/auth/mfa/verify", "/auth/mfa/challenge-and-verify"],
+  authMfaLimiter,
+);
+
 app.post("/chat", chatLimiter);
+app.post("/word-chat", chatLimiter);
+// Own limiter lane plus a tight body cap: the largest legitimate payload is
+// one live document read, which the backend truncates at 200k characters
+// anyway — 2mb leaves headroom for UTF-8 and JSON escaping while keeping the
+// global 50mb ceiling out of reach of this endpoint. This parser runs before
+// the global one; body-parser skips a request whose body is already parsed,
+// so the smaller limit wins for this path.
+app.post(TOOL_RESULT_PATH, toolResultLimiter, express.json({ limit: "2mb" }));
 app.post("/projects/:projectId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/generate", chatLimiter);
+// A playbook review is one large model call (or a tool loop when the playbook
+// has supplementary documents), so it shares the chat lane's budget.
+app.post("/playbooks/:playbookId/review", chatLimiter);
 app.post("/chat/create", chatCreateLimiter);
-app.post("/chat/:chatId/generate-title", chatCreateLimiter);
-app.post("/single-documents", uploadLimiter);
-app.post("/library/:kind/documents", uploadLimiter);
-app.post("/single-documents/:documentId/versions", uploadLimiter);
+app.post("/workflow-addons/:addonId/import", workflowImportLimiter);
+app.post(
+  ["/playbooks/import", "/playbooks/import/upload-url"],
+  playbookImportLimiter,
+);
+const legacyUploadRemoved = (_req: express.Request, res: express.Response) => {
+  res.status(410).json({
+    code: "upload_session_required",
+    detail: "This upload endpoint has been replaced by /upload-sessions.",
+  });
+};
+
+// Reject the former multipart endpoints before any body parser or route-level
+// body-reading middleware can consume file bytes. Browser clients use the
+// direct object-storage upload-session protocol instead.
+app.post("/single-documents", legacyUploadRemoved);
+app.post("/library/:kind/documents", legacyUploadRemoved);
+app.post("/single-documents/:documentId/versions", legacyUploadRemoved);
 app.put(
   "/single-documents/:documentId/versions/:versionId/file",
-  uploadLimiter,
+  legacyUploadRemoved,
 );
-app.post("/projects/:projectId/documents", uploadLimiter);
+app.post("/projects/:projectId/documents", legacyUploadRemoved);
 app.get("/projects/:projectId/export", exportLimiter);
-app.get("/user/export", exportLimiter);
-app.get("/user/chats/export", exportLimiter);
-app.get("/user/tabular-reviews/export", exportLimiter);
+// Scheduling an async export costs what the synchronous project export above
+// costs — a whole-corpus walk, just on a worker — so it shares its budget.
+// Deliberately POST-only: the /user/exports/:id poll and its download
+// stay on the general limiter, because a client polls every couple of seconds
+// while an export builds and a 10/hour budget would lock the user out of an
+// export they legitimately scheduled.
+app.post("/user/exports", exportLimiter);
 app.delete("/user/account", dataDeleteLimiter);
 app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);
 app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
+// Registered ahead of the global JSON parser: the filesystem storage driver's
+// signed PUT streams its body straight to disk (see downloads.routes.ts), so
+// no body parser may consume it first — a .json upload otherwise would be.
+app.put("/download/signed/:token", blobUploadLimiter, blobUploadHandler);
+
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
+// Body-aware account throttling complements the per-IP login limiter. The key
+// is a one-way digest, so email addresses never enter the limiter store.
+app.post("/auth/login", authLoginAccountLimiter);
+
+app.use("/auth", authRouter);
 app.use("/chat", chatRouter);
+app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);
+app.use("/projects/:projectId/memory", projectMemoryRouter);
+app.use("/projects/:projectId", projectContractRouter);
 app.use("/projects", projectsRouter);
+app.use("/orgs", orgsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
 app.use("/library", libraryRouter);
 app.use("/tabular-review", tabularRouter);
 app.use("/workflows", workflowsRouter);
+app.use("/quick-actions", quickActionsRouter);
+app.use("/workflow-addons", workflowAddonsRouter);
+app.use("/user/memory", userMemoryRouter);
 app.use("/user", userRouter);
-app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
-app.use("/case-law", caseLawRouter);
+app.use("/documents", sourceDocumentsRouter);
+app.use("/audit", auditRouter);
+app.use("/playbooks", playbooksRouter);
+app.use("/upload-sessions", uploadSessionsRouter);
 app.use("/pipeline", pipelineRouter);
 app.use("/obligations", obligationsRouter);
 app.use("/integrations", integrationsRouter);
-app.use("/projects/:projectId/dossier", dossiersRouter);
-app.use("/projects/:projectId/preview", previewRouter);
 app.use("/acervo", acervoRouter);
-app.use("/projects/:projectId/terms", termsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Deliberate failure for verifying the error pipeline end to end (a real
+// thrown error through the real 500 path, so the Sentry event carries the
+// request id the caller sees). Opt-in per deployment: it is an unauthenticated
+// way to generate events, so leave it off once the DSN is confirmed working.
+if (process.env.SENTRY_ENABLE_TEST_ROUTE === "true") {
+  app.get("/observability/sentry-test", () => {
+    throw Object.assign(new Error("Sentry backend test error (SENTRY_ENABLE_TEST_ROUTE)"), { code: "sentry_test" });
+  });
+}
 
 // The Ed25519 public key this deployment signs project export manifests with,
 // or null when no key is configured. Deliberately open: whoever checks a
@@ -200,7 +385,17 @@ app.get("/manifest-signing-key", (_req, res) => {
   try {
     res.json(manifestPublicKey());
   } catch (err) {
-    console.error("[manifest-signing-key] failed", safeErrorLog(err));
-    res.status(500).json({ detail: "Manifest signing key is misconfigured" });
+    console.error("[manifest-signing-key] failed", err);
+    res.status(500).json({
+      detail: "Manifest signing key is misconfigured",
+    });
   }
 });
+
+// Terminal error handler. Routers mount routerErrorHandler("[tag]") so a
+// failure is attributed to its router in the log; the response is delegated
+// back here, so every router answers with the same body. Anything that escapes
+// a router lands here too, instead of Express's default handler, which would
+// leak the stack trace in a non-production environment. Must stay last: Express
+// only reaches an error handler registered after the middleware that failed.
+app.use(handleUnhandledError);

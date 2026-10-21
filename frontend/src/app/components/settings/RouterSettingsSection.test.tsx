@@ -1,0 +1,682 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+    getOpenRouterModels,
+    getOpenCodeGoModels,
+    getBedrockModels,
+    getXaiModels,
+    getCustomEndpointModels,
+    updateRouterModels,
+    openCodeGoConfigured,
+    bedrockConfigured,
+    newProvidersConfigured,
+} = vi.hoisted(() => ({
+    getXaiModels: vi.fn(),
+    getCustomEndpointModels: vi.fn(),
+    newProvidersConfigured: { value: false },
+    getOpenRouterModels: vi.fn(),
+    getOpenCodeGoModels: vi.fn(),
+    getBedrockModels: vi.fn(),
+    updateRouterModels: vi.fn(),
+    openCodeGoConfigured: { value: false },
+    bedrockConfigured: { value: false },
+}));
+
+vi.mock("@/app/lib/mikeApi", () => ({
+    getOpenRouterModels,
+    getVercelModels: vi.fn().mockResolvedValue([]),
+    getBedrockModels,
+    getOpenCodeGoModels,
+    getXaiModels,
+    getCustomEndpointModels,
+}));
+
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+    useUserProfile: () => ({
+        profile: {
+            apiKeys: {
+                openrouter: { configured: true, source: "user" },
+                vercel: { configured: false, source: null },
+                "opencode-go": {
+                    configured: openCodeGoConfigured.value,
+                    source: openCodeGoConfigured.value ? "user" : null,
+                },
+                bedrock: {
+                    configured: bedrockConfigured.value,
+                    source: bedrockConfigured.value ? "user" : null,
+                },
+                azure: { configured: false, source: null },
+                "azure-foundry": { configured: false, source: null },
+                vertex: { configured: newProvidersConfigured.value, source: null },
+                xai: { configured: newProvidersConfigured.value, source: null },
+                custom: { configured: newProvidersConfigured.value, source: null },
+            },
+            apiKeySettings: { custom: { baseUrl: "https://llm.example.com/v1" } },
+            openRouterModels: ["anthropic/claude-sonnet-4.5"],
+            vercelModels: [],
+            openCodeGoModels: [],
+            bedrockModels: [],
+            azureModels: [],
+            azureFoundryModels: [],
+            vertexModels: [],
+            xaiModels: [],
+            customModels: [],
+        },
+        updateRouterModels,
+    }),
+}));
+
+import { Modal } from "@/app/components/modals/Modal";
+import {
+    RouterSettingsSection,
+    normalizeTypedModelId,
+} from "./RouterSettingsSection";
+
+describe("RouterSettingsSection", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        openCodeGoConfigured.value = false;
+        getOpenCodeGoModels.mockResolvedValue([
+            { id: "glm-5", label: "GLM-5" },
+        ]);
+        getOpenRouterModels.mockResolvedValue([
+            {
+                id: "openai/gpt-5.4",
+                label: "GPT 5.4",
+                pricing: {
+                    input: "0.00000125",
+                    output: "0.00001",
+                },
+            },
+            {
+                id: "anthropic/claude-sonnet-4.5",
+                label: "Claude Sonnet 4.5",
+            },
+            {
+                id: "qwen/qwen-2.5-72b-instruct",
+                label: "Qwen 2.5 72B Instruct",
+            },
+        ]);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    it("shows matching catalog entries below a full-width typeahead", async () => {
+        render(<RouterSettingsSection />);
+        const input = screen.getByPlaceholderText(
+            "e.g. anthropic/claude-sonnet-5",
+        );
+
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+        fireEvent.change(input, { target: { value: "gpt" } });
+
+        await screen.findByText("GPT 5.4");
+        expect(
+            screen.getByText("$1.25/M input · $10/M output"),
+        ).toBeInTheDocument();
+        expect(screen.queryByText("Claude Sonnet 4.5")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+
+        // Below the field and in normal flow, so the provider modal's
+        // scroll container grows to show it instead of clipping it.
+        const dropdown = screen.getByTestId("openrouter-model-catalog");
+        expect(dropdown).toHaveClass("w-full");
+        expect(dropdown).not.toHaveClass("absolute");
+        expect(dropdown).not.toHaveClass("bottom-full");
+        expect(
+            input.compareDocumentPosition(dropdown) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+    });
+
+    it("opens and closes the catalog from the chevron", async () => {
+        render(<RouterSettingsSection />);
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        const chevron = screen.getByRole("button", {
+            name: "Choose OpenRouter model",
+        });
+        fireEvent.click(chevron);
+        expect(
+            screen.getByTestId("openrouter-model-catalog"),
+        ).toBeInTheDocument();
+
+        fireEvent.click(chevron);
+        expect(
+            screen.queryByTestId("openrouter-model-catalog"),
+        ).not.toBeInTheDocument();
+    });
+
+    it("closes only the catalog on Escape inside a provider modal", async () => {
+        const onClose = vi.fn();
+        render(
+            <Modal open onClose={onClose} breadcrumbs={["OpenRouter"]}>
+                <RouterSettingsSection />
+            </Modal>,
+        );
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.keyDown(input, { key: "ArrowDown" });
+        expect(
+            screen.getByTestId("openrouter-model-catalog"),
+        ).toBeInTheDocument();
+
+        fireEvent.keyDown(input, { key: "Escape" });
+        expect(
+            screen.queryByTestId("openrouter-model-catalog"),
+        ).not.toBeInTheDocument();
+        expect(onClose).not.toHaveBeenCalled();
+
+        // Focus elsewhere in the dialog (the chevron opened the list): the
+        // document-level dismiss path must claim Escape too.
+        fireEvent.click(
+            screen.getByRole("button", { name: "Choose OpenRouter model" }),
+        );
+        expect(
+            screen.getByTestId("openrouter-model-catalog"),
+        ).toBeInTheDocument();
+        fireEvent.keyDown(document.body, { key: "Escape" });
+        expect(
+            screen.queryByTestId("openrouter-model-catalog"),
+        ).not.toBeInTheDocument();
+        expect(onClose).not.toHaveBeenCalled();
+
+        // With the catalog closed, Escape closes the modal as usual.
+        fireEvent.keyDown(input, { key: "Escape" });
+        expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it("supports keyboard navigation and selection from the model field", async () => {
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.keyDown(input, { key: "ArrowDown" });
+        expect(input).toHaveAttribute("aria-expanded", "true");
+        expect(input).toHaveAttribute(
+            "aria-activedescendant",
+            "openrouter-model-catalog-option-0",
+        );
+
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("openrouter", [
+                "anthropic/claude-sonnet-4.5",
+                "openai/gpt-5.4",
+            ]),
+        );
+    });
+
+    it("adds the typed id verbatim even when it substring-matches a catalog row", async () => {
+        // Typing the full valid id "qwen/qwen-2" also matches the catalog's
+        // "qwen/qwen-2.5-72b-instruct". Enter must add what was typed, not
+        // the highlighted lookalike.
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen/qwen-2" } });
+        // Typing never claims a highlight …
+        expect(input).not.toHaveAttribute("aria-activedescendant");
+        // … and the add-verbatim hint shows although catalog rows match.
+        expect(screen.getByText("Qwen 2.5 72B Instruct")).toBeInTheDocument();
+        expect(
+            screen.getByText("Press Enter to add this model ID."),
+        ).toBeInTheDocument();
+
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("openrouter", [
+                "anthropic/claude-sonnet-4.5",
+                "qwen/qwen-2",
+            ]),
+        );
+    });
+
+    it("explains why Enter did nothing while the text is not id-shaped", async () => {
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(updateRouterModels).not.toHaveBeenCalled();
+        // The search text stays so the user can keep narrowing the catalog…
+        expect(input).toHaveValue("qwen");
+        // …but silence would read as a broken key. Say what is wrong.
+        expect(
+            screen.getByText(/is not a model ID/),
+        ).toBeInTheDocument();
+    });
+
+    it("rejects an over-long typed id client-side with a length message", async () => {
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, {
+            target: { value: `vendor/${"m".repeat(220)}` },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(updateRouterModels).not.toHaveBeenCalled();
+        expect(
+            screen.getByText("Model IDs are at most 200 characters."),
+        ).toBeInTheDocument();
+    });
+
+    it("keeps the add-verbatim hint outside the listbox", async () => {
+        // ARIA: a listbox may only contain option/group children. A stray div
+        // inside it makes the option count and index reported to assistive
+        // tech disagree with what aria-activedescendant points at.
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen/qwen-2" } });
+
+        const listbox = screen.getByRole("listbox", {
+            name: "OpenRouter model catalog",
+        });
+        const hint = screen.getByText("Press Enter to add this model ID.");
+        expect(listbox.contains(hint)).toBe(false);
+        for (const child of Array.from(listbox.children)) {
+            expect(child.getAttribute("role")).toBe("option");
+        }
+    });
+
+    it("adds a router-slug catalog id verbatim instead of rejecting it", async () => {
+        // OpenRouter's catalog contains "openrouter/auto". Stripping the
+        // router prefix before validating leaves "auto", which is not
+        // vendor/model shaped, so the add used to fail with an error.
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "openrouter/auto" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("openrouter", [
+                "anthropic/claude-sonnet-4.5",
+                "openrouter/auto",
+            ]),
+        );
+    });
+
+    it("renders saved models with the option pill primitive", () => {
+        render(<RouterSettingsSection />);
+
+        const pill = screen.getByRole("button", {
+            name: "Remove anthropic/claude-sonnet-4.5",
+        });
+        expect(pill).toHaveAttribute("data-slot", "option-pill");
+        expect(pill).toHaveClass("rounded-full", "text-xs", "liquid-glass-flat");
+        expect(pill).not.toHaveClass("liquid-glass-subtle");
+        expect(screen.getByText("Model Selections", { exact: true })).toBeVisible();
+    });
+});
+
+describe("RouterSettingsSection for an organization", () => {
+    const saveOrgModels = vi.fn();
+    const store = (overrides: Record<string, unknown> = {}) => ({
+        // The organization holds a Bedrock key; the caller's own OpenRouter
+        // key (in the profile above) is none of its business.
+        configured: (slug: string) => slug === "bedrock",
+        selections: {
+            openrouter: [],
+            vercel: [],
+            "opencode-go": [],
+            bedrock: ["us.anthropic.claude-opus-5-5"],
+            azure: [],
+            "azure-foundry": [],
+            vertex: [],
+            xai: [],
+            custom: [],
+        },
+        settings: { bedrock: { region: "eu-west-2" } },
+        save: saveOrgModels,
+        workspace: "org-1",
+        description: "Add the models this organization's key may run.",
+        ...overrides,
+    });
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        getBedrockModels.mockResolvedValue([
+            { id: "us.anthropic.claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+        ]);
+        saveOrgModels.mockResolvedValue(true);
+    });
+
+    it("shows the organization's providers and lists, not the caller's own", async () => {
+        render(<RouterSettingsSection store={store() as never} />);
+
+        expect(
+            screen.getByText("Add the models this organization's key may run."),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("combobox", { name: "Amazon Bedrock models" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText("us.anthropic.claude-opus-5-5"),
+        ).toBeInTheDocument();
+        // The caller's own OpenRouter key and saved model do not appear.
+        expect(
+            screen.queryByRole("combobox", { name: "OpenRouter models" }),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByText("anthropic/claude-sonnet-4.5"),
+        ).not.toBeInTheDocument();
+        await waitFor(() => expect(getBedrockModels).toHaveBeenCalled());
+    });
+
+    it("lists the catalog with the organization's key", async () => {
+        render(<RouterSettingsSection store={store() as never} />);
+        await waitFor(() =>
+            expect(getBedrockModels).toHaveBeenCalledWith("org-1"),
+        );
+        expect(getOpenRouterModels).not.toHaveBeenCalled();
+    });
+
+    it("saves to the organization and leaves the caller's own lists alone", async () => {
+        render(<RouterSettingsSection store={store() as never} />);
+        const input = screen.getByRole("combobox", {
+            name: "Amazon Bedrock models",
+        });
+        await waitFor(() => expect(getBedrockModels).toHaveBeenCalled());
+
+        fireEvent.change(input, {
+            target: { value: "us.anthropic.claude-sonnet-5-5" },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(saveOrgModels).toHaveBeenCalledWith("bedrock", [
+                "us.anthropic.claude-opus-5-5",
+                "us.anthropic.claude-sonnet-5-5",
+            ]),
+        );
+        expect(updateRouterModels).not.toHaveBeenCalled();
+    });
+
+    it("renders nothing when the organization has no key for the provider", () => {
+        const { container } = render(
+            <RouterSettingsSection
+                provider="openrouter"
+                store={store() as never}
+            />,
+        );
+        expect(container).toBeEmptyDOMElement();
+    });
+});
+
+describe("RouterSettingsSection catalogs for personal keys", () => {
+    it("lists with the caller's own key", async () => {
+        vi.clearAllMocks();
+        getOpenRouterModels.mockResolvedValue([]);
+        render(<RouterSettingsSection />);
+        await waitFor(() =>
+            expect(getOpenRouterModels).toHaveBeenCalledWith(undefined),
+        );
+    });
+});
+
+describe("normalizeTypedModelId", () => {
+    it("keeps router-slug catalog ids verbatim", () => {
+        expect(normalizeTypedModelId("openrouter/auto", "openrouter")).toBe(
+            "openrouter/auto",
+        );
+        expect(normalizeTypedModelId("vercel/v0-1.5-md", "vercel")).toBe(
+            "vercel/v0-1.5-md",
+        );
+    });
+
+    it("strips the router prefix only when the remainder is a full id", () => {
+        expect(
+            normalizeTypedModelId(
+                " openrouter/deepseek/deepseek-v3 ",
+                "openrouter",
+            ),
+        ).toBe("deepseek/deepseek-v3");
+        expect(normalizeTypedModelId("openai/gpt-5.4", "openrouter")).toBe(
+            "openai/gpt-5.4",
+        );
+    });
+
+    it("returns null for text that is not id-shaped", () => {
+        expect(normalizeTypedModelId("auto", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("two words/x", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("", "openrouter")).toBeNull();
+    });
+
+    it("rejects account model ids the backend refuses as path-unsafe", () => {
+        // Mirrors isSafeAccountModelId (backend lib/llm/models.ts; the shared
+        // cases in byokValidationCases.test.ts cover the grammar). Refusing
+        // the id here gives an inline message instead of a generic "could
+        // not be saved".
+        const traversal =
+            "claude/../../../../v1/projects/victim/endpoints/123:rawPredict?x=";
+        for (const provider of [
+            "bedrock",
+            "azure",
+            "azure-foundry",
+            "vertex",
+            "xai",
+            "custom",
+        ] as const) {
+            expect(normalizeTypedModelId(traversal, provider)).toBeNull();
+        }
+        expect(
+            normalizeTypedModelId("meta/llama-4-maverick-maas", "vertex"),
+        ).toBe("meta/llama-4-maverick-maas");
+    });
+
+    it("enforces the backend's 200-character model_id limit", () => {
+        // user_router_models CHECKs char_length(model_id) between 1 and 200,
+        // so anything longer is a guaranteed 400 — catch it where the user is
+        // still looking at the box they typed it into.
+        const at200 = `vendor/${"m".repeat(193)}`;
+        expect(at200).toHaveLength(200);
+        expect(normalizeTypedModelId(at200, "openrouter")).toBe(at200);
+        expect(
+            normalizeTypedModelId(`${at200}m`, "openrouter"),
+        ).toBeNull();
+    });
+});
+
+describe("RouterSettingsSection with OpenCode Go configured", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        openCodeGoConfigured.value = true;
+        getOpenRouterModels.mockResolvedValue([]);
+        getOpenCodeGoModels.mockResolvedValue([
+            { id: "glm-5", label: "GLM-5" },
+        ]);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        openCodeGoConfigured.value = false;
+    });
+
+    it("saves a typed bare model name, which the other routers reject", async () => {
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByPlaceholderText("e.g. glm-5");
+
+        await waitFor(() => expect(getOpenCodeGoModels).toHaveBeenCalled());
+        fireEvent.change(input, { target: { value: "opencode-go/kimi-k3" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("opencode-go", ["kimi-k3"]),
+        );
+        expect(updateRouterModels).toHaveBeenCalledTimes(1);
+    });
+
+    it("validates typed ids per router", () => {
+        expect(normalizeTypedModelId("glm-5", "opencode-go")).toBe("glm-5");
+        expect(normalizeTypedModelId("glm-5", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("not a model", "opencode-go")).toBeNull();
+    });
+});
+
+describe("RouterSettingsSection with Amazon Bedrock configured", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        bedrockConfigured.value = true;
+        getBedrockModels.mockResolvedValue([{ id: "us.test-chat", label: "Test Chat" }]);
+        getOpenRouterModels.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        bedrockConfigured.value = false;
+    });
+
+    it("keeps manual IDs available alongside the catalog", async () => {
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByPlaceholderText(
+            "e.g. us.anthropic.claude-opus-5-5",
+        );
+
+        expect(input).toHaveAttribute("role", "combobox");
+        await waitFor(() => expect(screen.getByRole("button", { name: "Choose Amazon Bedrock model" })).toBeEnabled());
+
+        fireEvent.change(input, {
+            target: {
+                value: "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("bedrock", [
+                "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            ]),
+        );
+    });
+
+    it("adds a discovered inference profile", async () => {
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const choose = screen.getByRole("button", { name: "Choose Amazon Bedrock model" });
+        await waitFor(() => expect(choose).toBeEnabled());
+        fireEvent.click(choose);
+        fireEvent.click(screen.getByRole("option", { name: /Test Chat/ }));
+        await waitFor(() => expect(updateRouterModels).toHaveBeenCalledWith("bedrock", ["us.test-chat"]));
+    });
+
+    it("keeps manual entry when discovery fails", async () => {
+        getBedrockModels.mockRejectedValue(new Error("provider failure"));
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        await screen.findByText(/Amazon Bedrock's model list could not be loaded/);
+        const input = screen.getByRole("combobox", { name: "Amazon Bedrock models" });
+        fireEvent.change(input, { target: { value: "custom-profile" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() => expect(updateRouterModels).toHaveBeenCalledWith("bedrock", ["custom-profile"]));
+    });
+
+    it("limits a provider modal to that provider's models and catalog", async () => {
+        render(<RouterSettingsSection provider="bedrock" />);
+        await waitFor(() => expect(getBedrockModels).toHaveBeenCalled());
+        expect(screen.queryByRole("combobox", { name: "OpenRouter models" })).not.toBeInTheDocument();
+        expect(getOpenRouterModels).not.toHaveBeenCalled();
+        expect(screen.getByRole("combobox", { name: "Amazon Bedrock models" })).toBeVisible();
+    });
+
+    it("validates Bedrock and Azure ids as space-free strings", () => {
+        expect(
+            normalizeTypedModelId("bedrock/us.anthropic.claude-opus-5-5", "bedrock"),
+        ).toBe("us.anthropic.claude-opus-5-5");
+        expect(normalizeTypedModelId("my-gpt-deployment", "azure")).toBe(
+            "my-gpt-deployment",
+        );
+        expect(normalizeTypedModelId("my deployment", "azure")).toBeNull();
+    });
+});
+
+describe("RouterSettingsSection with Vertex AI, xAI and a custom endpoint configured", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        newProvidersConfigured.value = true;
+        getOpenRouterModels.mockResolvedValue([]);
+        getXaiModels.mockResolvedValue([{ id: "grok-4.3", label: "grok-4.3" }]);
+        getCustomEndpointModels.mockRejectedValue(new Error("no /models"));
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        newProvidersConfigured.value = false;
+    });
+
+    it("adds an xAI model from the live catalog", async () => {
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection provider="xai" />);
+        const choose = screen.getByRole("button", { name: "Choose xAI model" });
+        await waitFor(() => expect(choose).toBeEnabled());
+        fireEvent.click(choose);
+        fireEvent.click(screen.getByRole("option", { name: /grok-4.3/ }));
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("xai", ["grok-4.3"]),
+        );
+    });
+
+    it("takes typed Vertex model IDs, which have no catalog", async () => {
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection provider="vertex" />);
+        const input = screen.getByPlaceholderText("e.g. gemini-3.1-pro-preview");
+        expect(input).not.toHaveAttribute("role", "combobox");
+        fireEvent.change(input, {
+            target: { value: "meta/llama-4-maverick-maas" },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("vertex", [
+                "meta/llama-4-maverick-maas",
+            ]),
+        );
+    });
+
+    it("still takes typed IDs when a custom endpoint has no model list", async () => {
+        updateRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection provider="custom" />);
+        expect(
+            await screen.findByText(
+                "OpenAI-compatible endpoint's model list could not be loaded. You can still type a model ID.",
+            ),
+        ).toBeVisible();
+        const input = screen.getByPlaceholderText("e.g. my-model");
+        fireEvent.change(input, { target: { value: "llama-4-70b" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(updateRouterModels).toHaveBeenCalledWith("custom", ["llama-4-70b"]),
+        );
+    });
+});

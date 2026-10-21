@@ -66,7 +66,9 @@ const FULL_VERSION = {
     file_type: "application/pdf",
     size_bytes: 1024,
     page_count: 12,
+    textless_page_count: 2,
     deleted_at: null,
+    content_sha256: "a".repeat(64),
 };
 
 // ---------------------------------------------------------------------------
@@ -89,6 +91,7 @@ describe("loadActiveVersion", () => {
             file_type: "application/pdf",
             size_bytes: 1024,
             page_count: 12,
+            textless_page_count: 2,
         });
     });
 
@@ -167,6 +170,7 @@ describe("loadActiveVersion", () => {
             file_type: null,
             size_bytes: null,
             page_count: null,
+            textless_page_count: null,
         });
     });
 });
@@ -189,11 +193,13 @@ describe("attachActiveVersionPaths", () => {
         ]);
         expect(doc).toMatchObject({
             filename: "Untitled document",
+            content_sha256: null,
             storage_path: null,
             pdf_storage_path: null,
             file_type: null,
             size_bytes: null,
             page_count: null,
+            textless_page_count: null,
         });
     });
 
@@ -220,10 +226,12 @@ describe("attachActiveVersionPaths", () => {
             storage_path: "documents/u/doc-1/source.pdf",
             pdf_storage_path: "documents/u/doc-1/converted.pdf",
             active_version_number: 3,
+            content_sha256: FULL_VERSION.content_sha256,
             filename: "contract.pdf",
             file_type: "application/pdf",
             size_bytes: 1024,
             page_count: 12,
+            textless_page_count: 2,
         });
         expect(docs[1]).toMatchObject({
             storage_path: "documents/u/doc-2/source.docx",
@@ -236,6 +244,20 @@ describe("attachActiveVersionPaths", () => {
             storage_path: null,
             filename: "Untitled document",
         });
+    });
+
+    it("reflects in-place byte updates without changing the version or document timestamp", async () => {
+        const version = { ...FULL_VERSION };
+        const db = makeDb({ document_versions: [version] });
+        const docs: TestDoc[] = [
+            { id: "doc-1", current_version_id: "ver-1", updated_at: "unchanged" },
+        ];
+        await attachActiveVersionPaths(db, docs);
+        expect(docs[0].content_sha256).toBe("a".repeat(64));
+        version.content_sha256 = "b".repeat(64);
+        await attachActiveVersionPaths(db, docs);
+        expect(docs[0].content_sha256).toBe("b".repeat(64));
+        expect(docs[0].updated_at).toBe("unchanged");
     });
 
     it("falls back to 'Untitled document' for blank filenames", async () => {
@@ -316,8 +338,8 @@ describe("attachLatestVersionNumbers", () => {
 });
 
 // Known SHA-256 vector for "abc" (FIPS 180-4). Call sites hand this helper a
-// mix of Buffers, raw ArrayBuffers, and views into larger buffers (multer's
-// file.buffer is one), so each of those has to produce the same digest.
+// mix of Buffers, raw ArrayBuffers, and views into larger buffers, so each of
+// those has to produce the same digest.
 const ABC_SHA256 =
     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 

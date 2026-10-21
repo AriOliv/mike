@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
-import { ModalTextInput } from "../modals/ModalTextInput";
-import { ToggleSwitch } from "@/app/components/ui/toggle-switch";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
+import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 import type { Project, TabularReview } from "../shared/types";
 
 interface TabularReviewDetailsModalProps {
@@ -116,7 +115,7 @@ export function TabularReviewDetailsModal({
             primaryAction={
                 canEdit
                     ? {
-                          label: saving ? "Saving..." : "Save changes",
+                          label: saving ? "Saving..." : "Save",
                           onClick: () => void handleSave(),
                           disabled:
                               saving ||
@@ -130,10 +129,10 @@ export function TabularReviewDetailsModal({
         >
             <div className="space-y-6">
                 <div>
-                    <ModalFieldLabel htmlFor="tabular-review-details-title">
+                    <FieldLabel htmlFor="tabular-review-details-title">
                         Review name
-                    </ModalFieldLabel>
-                    <ModalTextInput
+                    </FieldLabel>
+                    <FormTextInput
                         id="tabular-review-details-title"
                         type="text"
                         value={titleDraft}
@@ -152,8 +151,8 @@ export function TabularReviewDetailsModal({
 
                 {!lockProject && (
                     <div className="space-y-3">
-                        <ModalFieldLabel as="p">Project</ModalFieldLabel>
-                        <ToggleSwitch
+                        <FieldLabel as="p">Project</FieldLabel>
+                        <ToggleSwitchUI
                             checked={underProject}
                             disabled={!canEdit || saving}
                             onCheckedChange={(next) => {
@@ -164,7 +163,7 @@ export function TabularReviewDetailsModal({
                             }}
                         >
                             Move under a project
-                        </ToggleSwitch>
+                        </ToggleSwitchUI>
 
                         {underProject && (
                             <ModalSelect

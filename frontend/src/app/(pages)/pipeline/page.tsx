@@ -11,6 +11,8 @@ import {
     PIPELINE_LANES,
     type PipelineCard,
     type PipelineLane,
+    type TaskStatus,
+    type Priority,
 } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import { PageHeader } from "@/app/components/shared/PageHeader";
@@ -30,6 +32,28 @@ const RISK_STYLES: Record<string, string> = {
     atencao: "bg-amber-100 text-amber-700",
     ok: "bg-emerald-100 text-emerald-700",
 };
+
+// Status is the task axis (independent of the lane); Prioridade is task urgency.
+const STATUS_LABELS: Record<string, string> = {
+    a_fazer: "A fazer",
+    em_andamento: "Em andamento",
+    bloqueado: "Bloqueado",
+    concluido: "Concluído",
+};
+const STATUS_STYLES: Record<string, string> = {
+    a_fazer: "bg-gray-100 text-gray-600",
+    em_andamento: "bg-blue-100 text-blue-700",
+    bloqueado: "bg-red-100 text-red-700",
+    concluido: "bg-emerald-100 text-emerald-700",
+};
+const PRIORITY_LABELS: Record<string, string> = { baixa: "Baixa", media: "Média", alta: "Alta" };
+const PRIORITY_STYLES: Record<string, string> = {
+    baixa: "bg-gray-100 text-gray-600",
+    media: "bg-amber-100 text-amber-700",
+    alta: "bg-red-100 text-red-700",
+};
+const STATUSES: TaskStatus[] = ["a_fazer", "em_andamento", "bloqueado", "concluido"];
+const PRIORITIES: Priority[] = ["baixa", "media", "alta"];
 
 export default function PipelinePage() {
     const router = useRouter();
@@ -97,6 +121,23 @@ export default function PipelinePage() {
         } catch (e) {
             setCards(previous);
             setError(e instanceof Error ? e.message : "Could not move the card");
+        }
+    }
+
+    // Optimistic edit of a task field (status/priority/…); rolls back on failure.
+    async function patchCard(
+        cardId: string,
+        patch: Partial<
+            Pick<PipelineCard, "status" | "priority" | "assignee_email" | "deadline" | "completed_at">
+        >,
+    ) {
+        const previous = cards;
+        setCards((cs) => cs.map((c) => (c.id === cardId ? { ...c, ...patch } : c)));
+        try {
+            await updatePipelineCard(cardId, patch);
+        } catch (e) {
+            setCards(previous);
+            setError(e instanceof Error ? e.message : "Could not update the card");
         }
     }
 
@@ -226,7 +267,27 @@ export default function PipelinePage() {
                                                 {card.counterparty}
                                             </div>
                                         )}
-                                        <div className="mt-2 flex items-center gap-2">
+                                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                            {card.status && (
+                                                <span
+                                                    className={`rounded px-1.5 py-0.5 text-[10px] ${
+                                                        STATUS_STYLES[card.status] ??
+                                                        "bg-gray-100 text-gray-600"
+                                                    }`}
+                                                >
+                                                    {STATUS_LABELS[card.status] ?? card.status}
+                                                </span>
+                                            )}
+                                            {card.priority && (
+                                                <span
+                                                    className={`rounded px-1.5 py-0.5 text-[10px] ${
+                                                        PRIORITY_STYLES[card.priority] ??
+                                                        "bg-gray-100 text-gray-600"
+                                                    }`}
+                                                >
+                                                    {PRIORITY_LABELS[card.priority] ?? card.priority}
+                                                </span>
+                                            )}
                                             {card.risk_level && (
                                                 <span
                                                     className={`rounded px-1.5 py-0.5 text-[10px] uppercase ${
@@ -237,12 +298,26 @@ export default function PipelinePage() {
                                                     {card.risk_level}
                                                 </span>
                                             )}
-                                            {card.requester_name && (
-                                                <span className="truncate text-[10px] text-gray-400">
-                                                    {card.requester_name}
+                                            {card.contract_type && (
+                                                <span className="rounded bg-purple-50 px-1.5 py-0.5 text-[10px] text-purple-700">
+                                                    {card.contract_type}
                                                 </span>
                                             )}
                                         </div>
+                                        {(card.deadline ||
+                                            card.assignee_email ||
+                                            card.requester_name) && (
+                                            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] text-gray-400">
+                                                {card.deadline && (
+                                                    <span className="tabular-nums">
+                                                        Prazo {card.deadline}
+                                                    </span>
+                                                )}
+                                                <span className="truncate">
+                                                    {card.assignee_email ?? card.requester_name}
+                                                </span>
+                                            </div>
+                                        )}
 
                                         {/* Keyboard/touch path for moving a card — dragging
                                             alone would leave the board unusable on a tablet
@@ -263,6 +338,51 @@ export default function PipelinePage() {
                                                 </option>
                                             ))}
                                         </select>
+
+                                        {/* Status is the task axis, independent of the lane.
+                                            Both push to the Notion board. */}
+                                        <div className="mt-1.5 flex gap-1.5">
+                                            <select
+                                                aria-label="Status"
+                                                value={card.status ?? ""}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onChange={(e) => {
+                                                    e.stopPropagation();
+                                                    void patchCard(card.id, {
+                                                        status: (e.target.value ||
+                                                            null) as TaskStatus | null,
+                                                    });
+                                                }}
+                                                className="w-full cursor-pointer rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-[11px] text-gray-600"
+                                            >
+                                                <option value="">Status…</option>
+                                                {STATUSES.map((s) => (
+                                                    <option key={s} value={s}>
+                                                        {STATUS_LABELS[s]}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <select
+                                                aria-label="Prioridade"
+                                                value={card.priority ?? ""}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onChange={(e) => {
+                                                    e.stopPropagation();
+                                                    void patchCard(card.id, {
+                                                        priority: (e.target.value ||
+                                                            null) as Priority | null,
+                                                    });
+                                                }}
+                                                className="w-full cursor-pointer rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-[11px] text-gray-600"
+                                            >
+                                                <option value="">Prioridade…</option>
+                                                {PRIORITIES.map((p) => (
+                                                    <option key={p} value={p}>
+                                                        {PRIORITY_LABELS[p]}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
 
                                         {card.notion_url && (
                                             <a

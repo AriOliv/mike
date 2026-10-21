@@ -4,38 +4,49 @@ import {
     useState,
     useCallback,
     useEffect,
+    useLayoutEffect,
     useRef,
     forwardRef,
     useImperativeHandle,
+    useMemo,
+    type ForwardedRef,
 } from "react";
 import {
     ArrowRight,
-    Check,
-    Library,
+    ClipboardCheck,
     Loader2,
     Square,
     Waypoints,
     X,
 } from "lucide-react";
 import { AddDocButton } from "./AddDocButton";
+import { PlaybookPickerModal } from "../playbooks/PlaybookPickerModal";
 import { UploadOverlay } from "./UploadOverlay";
-import { FileTypeIcon } from "../shared/FileTypeIcon";
+import { COMPOSER_SEND_BUTTON_CLASS } from "@/shared/ui/ComposerSendButtonUI.styles";
+import { ExcerptModalUI } from "@/shared/ui/ExcerptModalUI";
+import { ExcerptPillUI } from "@/shared/ui/ExcerptPillUI";
+import { DocumentPill } from "../shared/DocumentPill";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
-import {
-    WORKFLOW_SLASH_MENU_ID,
-    WorkflowSlashMenu,
-} from "./WorkflowSlashMenu";
+import { WORKFLOW_SLASH_MENU_ID, WorkflowSlashMenu } from "./WorkflowSlashMenu";
 import {
     exactSlashWorkflow,
     matchingSlashWorkflows,
     slashCommandQuery,
+    withoutSlashCommand,
     workflowSlashCommand,
 } from "./workflowSlashCommands";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
-import { ModelToggle } from "./ModelToggle";
-import { useSelectedModel } from "@/app/hooks/useSelectedModel";
+import { ModelToggle, type ReasoningLevel } from "./ModelToggle";
+import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
+import { WarningPopup } from "../popups/WarningPopup";
+import {
+    useSelectedModel,
+    useSelectedReasoning,
+} from "@/app/hooks/useSelectedModel";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
+import { useModelRouterSelections } from "@/app/hooks/useModelRouterSelections";
 import {
     getModelProvider,
     isModelAvailable,
@@ -45,59 +56,190 @@ import type { Document, Message, Workflow } from "../shared/types";
 import type { DirectoryTab } from "../shared/useDirectoryData";
 import { cn } from "@/app/lib/utils";
 import {
-    listWorkflows,
-    uploadProjectDocument,
-    uploadStandaloneDocument,
-} from "@/app/lib/mikeApi";
+    LIQUID_GLASS_FLAT_CLASS,
+    LIQUID_GLASS_TRANSLUCENT_CLASS,
+} from "@/app/components/ui/liquid-surface";
 import {
+    UploadBatchError,
+    failedUploadMessage,
+    listWorkflows,
+    uploadProjectDocuments,
+    uploadStandaloneDocuments,
+    type UploadProgress,
+} from "@/app/lib/mikeApi";
+import { useWorkspaceIdentity } from "@/app/hooks/useWorkspaceIdentity";
+import { useDocumentWorkspace } from "@/app/contexts/WorkspaceContext";
+import {
+    SUPPORTED_DOCUMENT_ACCEPT,
     formatUnsupportedDocumentWarning,
     partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
+import { userFacingApiError } from "@/app/lib/userFacingError";
+import {
+    serializeExcerpts,
+    type MessageExcerpt,
+} from "@/shared/lib/messageExcerpts";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
+import {
+    type NoModelsReason,
+} from "@/shared/lib/modelCatalog";
 
 export interface ChatInputHandle {
     addDoc: (doc: Document) => void;
+    addFiles: (files: File[]) => void;
+    /** Quotes a passage of an assistant response above the next message. */
+    addExcerpt: (excerpt: MessageExcerpt) => void;
+    startWorkflow: (
+        workflow: { id: string; title: string },
+        prompt?: string,
+    ) => void;
     startWorkflowDocumentSelection: (
         workflow: { id: string; title: string },
         prompt?: string,
         options?: { initialDocumentTab?: DirectoryTab },
     ) => void;
+    /** Attaches a playbook to run on the documents, as the picker does. */
+    attachPlaybook: (playbook: { id: string; title: string }) => void;
 }
 
 interface Props {
     onSubmit: (message: Message) => void;
     onCancel: () => void;
     isLoading: boolean;
+    /**
+     * Whether the caller may write into this chat. False renders a read-only
+     * composer — sending, attaching, and drop-uploads stay off, matching
+     * what the server would refuse for a project viewer.
+     *
+     * `null` means the answer has not arrived. The composer is closed exactly
+     * as for `false`, but the placeholder stays neutral: telling an owner
+     * "Viewing only — sending needs edit access" for the length of a fetch,
+     * on every cold load, is a wrong statement about their access, not a
+     * loading state.
+     */
+    canSend?: boolean | null;
+    /**
+     * Whether this chat's history is still on its way. Kept apart from
+     * `canSend` on purpose: both close the composer, but only one of them is
+     * about permissions, and saying the wrong one is a lie to the reader.
+     * While an answer is still streaming into the thread `isLoading` is set
+     * too, and the composer says so.
+     */
+    chatLoading?: boolean;
     hideAddDocButton?: boolean;
     hideWorkflowButton?: boolean;
     projectName?: string;
     projectCmNumber?: string | null;
     projectId?: string;
+    /** Whether window-level file drops should be captured by this composer. */
+    enableGlobalFileDrop?: boolean;
+    /** Whether dropped files should be added to the project or only attached. */
+    dropUploadsToProject?: boolean;
     onDocumentsUploaded?: (documents: Document[]) => void;
+    onDocumentClick?: (document: Document) => void;
+    chatModel?: string | null;
+    chatReasoningLevel?: ReasoningLevel | null;
+    chatKey?: string | null;
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
+/**
+ * What the closed composer tells the reader.
+ *
+ * Order matters. A reader without edit access is told about the grant even
+ * while the thread loads, because that is the reason that will still be true
+ * afterwards. Otherwise a load in progress explains itself — and when a
+ * response is running (a turn started before the reader left keeps
+ * `isLoading` set when they come back) it says which one, instead of
+ * inventing a permission problem.
+ */
+function placeholderFor({
+    canSend,
+    chatLoading,
+    isLoading,
+}: {
+    canSend: boolean | null;
+    chatLoading: boolean;
+    isLoading: boolean;
+}): string {
+    if (canSend === null) return "Loading…";
+    if (!canSend) return "Viewing only — sending needs edit access";
+    if (!chatLoading) return "How can I help?";
+    return isLoading ? "A response is still arriving…" : "Loading this chat…";
+}
+
+function ChatInputForChatImpl(
     {
         onSubmit,
         onCancel,
         isLoading,
+        canSend = true,
+        chatLoading = false,
         hideAddDocButton,
         hideWorkflowButton,
         projectName,
         projectCmNumber,
         projectId,
+        enableGlobalFileDrop = true,
+        dropUploadsToProject = true,
         onDocumentsUploaded,
+        onDocumentClick,
+        chatModel,
+        chatReasoningLevel,
+        chatKey,
     }: Props,
-    ref,
+    ref: ForwardedRef<ChatInputHandle>,
 ) {
+    // A document attached to a chat outside a project belongs to the
+    // workspace it is uploaded in.
+    const workspace = useDocumentWorkspace();
+    // Sending needs both a grant and a loaded thread; the placeholder below
+    // names whichever one is missing.
+    const composerOpen = canSend === true && !chatLoading;
     const [value, setValue] = useState("");
     const [attachedDocs, setAttachedDocs] = useState<Document[]>([]);
+    const [excerpts, setExcerpts] = useState<MessageExcerpt[]>([]);
+    const [openExcerpt, setOpenExcerpt] = useState<MessageExcerpt | null>(
+        null,
+    );
     const [selectedWorkflow, setSelectedWorkflow] = useState<{
         id: string;
         title: string;
     } | null>(null);
-    const [model, setModel] = useSelectedModel();
-    const { profile } = useUserProfile();
-    const apiKeys = profile?.apiKeys;
+    const {
+        profile,
+        loading: profileLoading,
+        apiKeysDegraded,
+        persistChatModelSelection,
+        persistChatReasoningSelection,
+    } = useUserProfile();
+    // Unknown key state → availability is UNKNOWN; undefined makes every key
+    // gate (submit check + model toggle) fail open instead of treating "we
+    // couldn't ask" as "no keys configured". In an organization workspace
+    // these are the organization's keys, not the profile's.
+    const apiKeys = useModelApiKeys();
+    const configuredModels = useConfiguredModels();
+    const configuredModelIds = useMemo(
+        () => configuredModels.map((model) => model.id),
+        [configuredModels],
+    );
+    // A degraded profile is the local fallback, whose router lists are empty
+    // because the truth is UNKNOWN. Passing them on would let one dropped
+    // /user/profile request rewrite the saved composer selection to the
+    // default — permanently. null means "not loaded", which the hook leaves
+    // the stored selection alone for.
+    // In an organization workspace these are the lists that govern its keys.
+    const savedRouterSelections = useModelRouterSelections();
+    const [model, setModel] = useSelectedModel({
+        selectionKey: chatKey,
+        chatModel,
+        lastSelectedModel: profile?.lastSelectedChatModel,
+        routerSelections:
+            savedRouterSelections && !apiKeysDegraded
+                ? savedRouterSelections
+                : null,
+        apiKeys,
+        configuredModelIds,
+    });
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);
@@ -105,10 +247,34 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [docSelectorInitialTab, setDocSelectorInitialTab] =
         useState<DirectoryTab>("files");
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
+    // A playbook picked to run on the attached documents, like a workflow.
+    const [selectedPlaybook, setSelectedPlaybook] = useState<{
+        id: string;
+        title: string;
+    } | null>(null);
+    const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
+    const [playbookModalInitialId, setPlaybookModalInitialId] = useState<
+        string | undefined
+    >(undefined);
+    // Set when the modal is opened from a pill, so it lands on that workflow
+    // instead of the picker's default listing.
+    const [workflowModalInitialId, setWorkflowModalInitialId] = useState<
+        string | undefined
+    >(undefined);
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
+    const [noModelsWarning, setNoModelsWarning] =
+        useState<NoModelsReason | null>(null);
+    const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
+    const [reasoningLevel, setReasoningLevel] = useSelectedReasoning({
+        selectionKey: chatKey,
+        chatReasoningLevel,
+        lastSelectedReasoningLevel: profile?.lastSelectedReasoningLevel,
+    });
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-    const [uploadingFilenames, setUploadingFilenames] = useState<string[]>([]);
+    const [uploadingFiles, setUploadingFiles] = useState<
+        Array<{ clientId: string; filename: string }>
+    >([]);
     const [uploadWarning, setUploadWarning] = useState<string | null>(null);
     const [droppedDocuments, setDroppedDocuments] = useState<Document[]>([]);
     const [slashWorkflows, setSlashWorkflows] = useState<Workflow[] | null>(
@@ -117,6 +283,49 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [activeSlashIndex, setActiveSlashIndex] = useState(0);
     const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
     const dragDepthRef = useRef(0);
+    const localFileInputRef = useRef<HTMLInputElement>(null);
+    const settingsSaveRef = useRef<Promise<boolean>>(Promise.resolve(true));
+    // `ChatInput` keys this component by chat. Mark this generation inactive
+    // during the keyed unmount so upload callbacks from the previous thread
+    // cannot mutate its replacement or call outward with stale documents.
+    const uploadGenerationActiveRef = useRef(true);
+    useLayoutEffect(() => {
+        uploadGenerationActiveRef.current = true;
+        return () => {
+            uploadGenerationActiveRef.current = false;
+        };
+    }, []);
+
+    const handleModelChange = useCallback(
+        (nextModel: string) => {
+            setModel(nextModel);
+            // Keep rapid picker changes ordered so the final database value
+            // always matches the final visible selection.
+            settingsSaveRef.current = settingsSaveRef.current
+                .catch(() => false)
+                .then(() => persistChatModelSelection(nextModel, chatKey));
+        },
+        [chatKey, persistChatModelSelection, setModel],
+    );
+
+    const handleReasoningChange = useCallback(
+        (nextLevel: ReasoningLevel) => {
+            setReasoningLevel(nextLevel);
+            settingsSaveRef.current = settingsSaveRef.current
+                .catch(() => false)
+                .then(() =>
+                    persistChatReasoningSelection(nextLevel, chatKey),
+                );
+        }, [
+            chatKey,
+            persistChatReasoningSelection,
+            setReasoningLevel,
+        ],
+    );
+
+    const chatSettingsLoading =
+        !!chatKey &&
+        (chatModel === undefined || chatReasoningLevel === undefined);
 
     const slashQuery = slashCommandQuery(value);
     const matchingWorkflows = matchingSlashWorkflows(
@@ -134,28 +343,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         Math.max(0, matchingWorkflows.length - 1),
     );
 
-    useImperativeHandle(ref, () => ({
-        addDoc: (doc: Document) => {
-            setAttachedDocs((prev) => {
-                if (prev.some((d) => d.id === doc.id)) return prev;
-                return [...prev, doc];
-            });
-        },
-        startWorkflowDocumentSelection: (workflow, prompt, options) => {
-            setSelectedWorkflow(workflow);
-            setDocSelectorInitialTab(options?.initialDocumentTab ?? "files");
-            if (prompt) {
-                setValue((current) => current || prompt);
-                requestAnimationFrame(() => {
-                    if (!textareaRef.current) return;
-                    textareaRef.current.style.height = "auto";
-                    textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
-                });
-            }
-            setDocSelectorOpen(true);
-        },
-    }));
-
     useEffect(() => {
         const el = controlsRef.current;
         if (!el) return;
@@ -170,7 +357,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         if (!slashCommandsLoading) return;
 
         let cancelled = false;
-        listWorkflows("assistant")
+        listWorkflows("assistant", workspace ?? "personal")
             .then((workflows) => {
                 if (!cancelled) setSlashWorkflows(workflows);
             })
@@ -181,7 +368,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         return () => {
             cancelled = true;
         };
-    }, [slashCommandsLoading]);
+    }, [slashCommandsLoading, workspace]);
 
     const handleAddDocsFromSelector = useCallback(
         (selectedDocs: Document[]) => {
@@ -208,50 +395,154 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
     const handleDroppedFiles = useCallback(
         async (files: File[]) => {
+            if (!composerOpen) {
+                if (canSend === false) {
+                    setUploadWarning(
+                        "Only someone with edit access can add documents.",
+                    );
+                }
+                return;
+            }
             const { supported, unsupported } =
                 partitionSupportedDocumentFiles(files);
             setUploadWarning(formatUnsupportedDocumentWarning(unsupported));
             if (supported.length === 0) return;
 
-            setUploadingFilenames(supported.map((file) => file.name));
-            const results = await Promise.allSettled(
-                supported.map((file) =>
-                    projectId
-                        ? uploadProjectDocument(projectId, file)
-                        : uploadStandaloneDocument(file),
-                ),
+            const uploadInputs = supported.map((file) => ({
+                file,
+                clientId: crypto.randomUUID(),
+            }));
+            setUploadingFiles(
+                uploadInputs.map(({ clientId, file }) => ({
+                    clientId,
+                    filename: file.name,
+                })),
             );
-            const uploaded = results.flatMap((result) =>
-                result.status === "fulfilled" ? [result.value] : [],
-            );
-            if (uploaded.length > 0) {
-                addAttachedDocuments(uploaded);
+            const addCompletedDocument = (document: Document) => {
+                if (!uploadGenerationActiveRef.current) return;
+                addAttachedDocuments([document]);
                 setDroppedDocuments((prev) => {
                     const existing = new Set(
                         prev.map((document) => document.id),
                     );
                     return [
                         ...prev,
-                        ...uploaded.filter(
-                            (document) => !existing.has(document.id),
-                        ),
+                        ...(existing.has(document.id) ? [] : [document]),
                     ];
                 });
-                onDocumentsUploaded?.(uploaded);
-            }
-            if (results.some((result) => result.status === "rejected")) {
-                setUploadWarning(
-                    uploaded.length > 0
-                        ? "Some documents could not be uploaded."
-                        : "Documents could not be uploaded. Please try again.",
+            };
+            const handleProgress = (progress: UploadProgress<Document>) => {
+                if (!uploadGenerationActiveRef.current) return;
+                if (
+                    progress.status === "completed" ||
+                    progress.status === "error"
+                ) {
+                    setUploadingFiles((current) =>
+                        current.filter(
+                            (upload) => upload.clientId !== progress.clientId,
+                        ),
+                    );
+                }
+                if (progress.status === "completed" && progress.result) {
+                    addCompletedDocument(progress.result);
+                }
+            };
+            try {
+                const uploadsToProject = dropUploadsToProject && !!projectId;
+                const outcomes = uploadsToProject
+                    ? await uploadProjectDocuments(projectId, uploadInputs, {
+                          onProgress: handleProgress,
+                      })
+                    : await uploadStandaloneDocuments(
+                          uploadInputs,
+                          { onProgress: handleProgress },
+                          workspace,
+                      );
+                if (!uploadGenerationActiveRef.current) return;
+                const uploaded = outcomes.flatMap((outcome) =>
+                    outcome.status === "completed" && outcome.result
+                        ? [outcome.result]
+                        : [],
                 );
+                uploaded.forEach(addCompletedDocument);
+                if (uploadsToProject && uploaded.length > 0) {
+                    onDocumentsUploaded?.(uploaded);
+                }
+                if (outcomes.some((outcome) => outcome.status === "error")) {
+                    setUploadWarning(failedUploadMessage(outcomes));
+                }
+            } catch (error) {
+                if (!uploadGenerationActiveRef.current) return;
+                setUploadWarning(
+                    error instanceof UploadBatchError
+                        ? failedUploadMessage(error.outcomes)
+                        : userFacingApiError(
+                              error,
+                              "Documents could not be uploaded. Please try again.",
+                          ),
+                );
+            } finally {
+                if (uploadGenerationActiveRef.current) setUploadingFiles([]);
             }
-            setUploadingFilenames([]);
         },
-        [addAttachedDocuments, onDocumentsUploaded, projectId],
+        [
+            workspace,
+            addAttachedDocuments,
+            canSend,
+            composerOpen,
+            dropUploadsToProject,
+            onDocumentsUploaded,
+            projectId,
+        ],
     );
 
+    useImperativeHandle(ref, () => ({
+        addDoc: (doc: Document) => {
+            setAttachedDocs((prev) => {
+                if (prev.some((d) => d.id === doc.id)) return prev;
+                return [...prev, doc];
+            });
+        },
+        addFiles: (files: File[]) => {
+            void handleDroppedFiles(files);
+        },
+        addExcerpt: (excerpt: MessageExcerpt) => {
+            if (!composerOpen) return;
+            setExcerpts((prev) =>
+                prev.some(
+                    (e) => e.text === excerpt.text && e.note === excerpt.note,
+                )
+                    ? prev
+                    : [...prev, excerpt],
+            );
+            requestAnimationFrame(() => textareaRef.current?.focus());
+        },
+        attachPlaybook: (playbook) => {
+            setSelectedPlaybook(playbook);
+            requestAnimationFrame(() => textareaRef.current?.focus());
+        },
+        startWorkflow: (workflow, prompt) => {
+            setSelectedWorkflow(workflow);
+            if (prompt !== undefined) setValue(prompt);
+            requestAnimationFrame(() => textareaRef.current?.focus());
+        },
+        startWorkflowDocumentSelection: (workflow, prompt, options) => {
+            setSelectedWorkflow(workflow);
+            setDocSelectorInitialTab(options?.initialDocumentTab ?? "files");
+            if (prompt !== undefined) {
+                setValue(prompt);
+                requestAnimationFrame(() => {
+                    if (!textareaRef.current) return;
+                    textareaRef.current.style.height = "auto";
+                    textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+                });
+            }
+            setDocSelectorOpen(true);
+        },
+    }));
+
     useEffect(() => {
+        if (!enableGlobalFileDrop || !composerOpen) return;
         const hasFiles = (dataTransfer: DataTransfer | null) =>
             !!dataTransfer && Array.from(dataTransfer.types).includes("Files");
 
@@ -277,7 +568,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             event.stopPropagation();
             dragDepthRef.current = 0;
             setIsDraggingFiles(false);
-            void handleDroppedFiles(Array.from(event.dataTransfer?.files ?? []));
+            void handleDroppedFiles(
+                Array.from(event.dataTransfer?.files ?? []),
+            );
         };
 
         window.addEventListener("dragenter", handleDragEnter);
@@ -290,23 +583,47 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             window.removeEventListener("dragleave", handleDragLeave);
             window.removeEventListener("drop", handleDrop);
         };
-    }, [handleDroppedFiles]);
+    }, [composerOpen, enableGlobalFileDrop, handleDroppedFiles]);
 
-    const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        setValue(e.target.value);
+    const updateInput = (el: HTMLTextAreaElement) => {
+        setValue(el.value);
         setActiveSlashIndex(0);
         setSlashMenuDismissed(false);
-        const el = e.target;
         el.style.height = "auto";
         el.style.height = `${el.scrollHeight}px`;
     };
+
+    const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        const el = event.currentTarget;
+        if (!composerOpen || event.clipboardData.files.length > 0) return;
+        // Preserve spacing when inserting into an existing sentence or code.
+        const replacesMessage = !el.value.trim()
+            || (el.selectionStart === 0 && el.selectionEnd === el.value.length);
+        if (!replacesMessage) return;
+        const pasted = event.clipboardData.getData("text/plain");
+        const trimmed = pasted.trim();
+        if (!pasted || pasted === trimmed) return;
+        event.preventDefault();
+        el.setRangeText(trimmed, 0, el.value.length, "end");
+        updateInput(el);
+    };
+
+    const hasAnnotatedExcerpt = excerpts.some((excerpt) => excerpt.note);
 
     const submitMessage = (
         query: string,
         workflow: { id: string; title: string } | null,
     ) => {
-        if (!query || isLoading) return;
-        if (apiKeys && !isModelAvailable(model, apiKeys)) {
+        // An annotated excerpt already says what is being asked about it.
+        if ((!query && !hasAnnotatedExcerpt) || isLoading) return;
+        if (!model) {
+            setModelRequiredWarning(true);
+            return;
+        }
+        if (
+            apiKeys &&
+            !isModelAvailable(model, apiKeys, configuredModelIds)
+        ) {
             setApiKeyModalProvider(getModelProvider(model));
             return;
         }
@@ -318,16 +635,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         const files = attachedDocs.map((d) => ({
             filename: d.filename,
             document_id: d.id,
+            ...(d.current_version_id
+                ? { version_id: d.current_version_id }
+                : {}),
+            ...(d.active_version_number != null
+                ? { version_number: d.active_version_number }
+                : {}),
         }));
         setAttachedDocs([]);
         setSelectedWorkflow(null);
+        setSelectedPlaybook(null);
+        setExcerpts([]);
 
         onSubmit?.({
             role: "user",
-            content: query,
+            content: serializeExcerpts(excerpts, query),
             files: files.length > 0 ? files : undefined,
             workflow: workflow ?? undefined,
+            playbook: selectedPlaybook ?? undefined,
             model,
+            reasoning: reasoningLevel,
         });
     };
 
@@ -337,7 +664,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             id: workflow.id,
             title: workflow.metadata.title,
         });
-        setValue("");
+        setValue((current) => withoutSlashCommand(current));
         setSlashMenuDismissed(true);
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
@@ -347,11 +674,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
     const handleSubmit = () => {
         const query = value.trim();
-        if (slashCommandsLoading) return;
-        const slashWorkflow = exactSlashWorkflow(
-            slashWorkflows ?? [],
-            query,
-        );
+        if (!composerOpen || slashCommandsLoading) return;
+        const slashWorkflow = slashQuery
+            ? exactSlashWorkflow(slashWorkflows ?? [], slashQuery)
+            : undefined;
         if (slashWorkflow) {
             selectSlashWorkflow(slashWorkflow);
             return;
@@ -411,16 +737,36 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         onSelect={selectSlashWorkflow}
                     />
                 )}
-                <div className="rounded-[18px] border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl md:rounded-[22px]">
+                <div
+                    className={cn(
+                        "rounded-[21px]",
+                        LIQUID_GLASS_TRANSLUCENT_CLASS,
+                    )}
+                >
                     {/* Attached chips */}
-                    {(selectedWorkflow || attachedDocs.length > 0) && (
+                    {(selectedWorkflow ||
+                        selectedPlaybook ||
+                        attachedDocs.length > 0 ||
+                        excerpts.length > 0) && (
                         <div className="flex flex-wrap gap-1.5 px-2 pt-2">
                             {selectedWorkflow && (
-                                <div className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-xs bg-blue-600 text-white border border-white/20 shadow backdrop-blur-sm">
-                                    <Library className="h-2.5 w-2.5 shrink-0" />
-                                    <span className="max-w-[140px] truncate">
-                                        {selectedWorkflow.title}
-                                    </span>
+                                <div className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-xs bg-blue-600 text-white border border-white/20 shadow">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setWorkflowModalInitialId(
+                                                selectedWorkflow.id,
+                                            );
+                                            setWorkflowModalOpen(true);
+                                        }}
+                                        aria-label={`Open workflow ${selectedWorkflow.title}`}
+                                        className="inline-flex min-w-0 items-center gap-1 rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                                    >
+                                        <Waypoints className="h-2.5 w-2.5 shrink-0" />
+                                        <span className="max-w-[140px] truncate">
+                                            {selectedWorkflow.title}
+                                        </span>
+                                    </button>
                                     <button
                                         type="button"
                                         onClick={() =>
@@ -432,48 +778,76 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     </button>
                                 </div>
                             )}
-                            {attachedDocs.map((doc) => {
-                                return (
-                                    <div
-                                        key={doc.id}
-                                        className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
+                            {selectedPlaybook && (
+                                <div className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-xs bg-slate-700 text-white border border-white/20 shadow">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setPlaybookModalInitialId(
+                                                selectedPlaybook.id,
+                                            );
+                                            setPlaybookModalOpen(true);
+                                        }}
+                                        aria-label={`Open playbook ${selectedPlaybook.title}`}
+                                        className="inline-flex min-w-0 items-center gap-1 rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                                     >
-                                        <FileTypeIcon
-                                            fileType={doc.file_type}
-                                            className="h-2.5 w-2.5"
-                                        />
+                                        <ClipboardCheck className="h-2.5 w-2.5 shrink-0" />
                                         <span className="max-w-[140px] truncate">
-                                            {doc.filename}
+                                            {selectedPlaybook.title}
                                         </span>
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setAttachedDocs((prev) =>
-                                                    prev.filter(
-                                                        (d) => d.id !== doc.id,
-                                                    ),
-                                                )
-                                            }
-                                            className="ml-0.5 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-gray-900/5 hover:text-gray-700"
-                                        >
-                                            <X className="h-2.5 w-2.5" />
-                                        </button>
-                                    </div>
-                                );
-                            })}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        aria-label={`Remove playbook ${selectedPlaybook.title}`}
+                                        onClick={() => setSelectedPlaybook(null)}
+                                        className="rounded-full p-0.5 ml-0.5 text-white/60 hover:text-white hover:bg-white/20 transition-colors"
+                                    >
+                                        <X className="h-2.5 w-2.5" />
+                                    </button>
+                                </div>
+                            )}
+                            {attachedDocs.map((doc) => (
+                                <DocumentPill
+                                    key={doc.id}
+                                    filename={doc.filename}
+                                    fileType={doc.file_type}
+                                    onOpen={
+                                        onDocumentClick
+                                            ? () => onDocumentClick(doc)
+                                            : undefined
+                                    }
+                                    onRemove={() =>
+                                        setAttachedDocs((prev) =>
+                                            prev.filter((d) => d.id !== doc.id),
+                                        )
+                                    }
+                                />
+                            ))}
+                            {excerpts.map((excerpt, index) => (
+                                <ExcerptPillUI
+                                    key={`${index}-${excerpt.text}`}
+                                    excerpt={excerpt}
+                                    onOpen={() => setOpenExcerpt(excerpt)}
+                                    onRemove={() =>
+                                        setExcerpts((prev) =>
+                                            prev.filter((_, i) => i !== index),
+                                        )
+                                    }
+                                />
+                            ))}
                         </div>
                     )}
 
-                    {uploadingFilenames.length > 0 && (
+                    {uploadingFiles.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1.5 px-2 pt-2">
-                            {uploadingFilenames.map((filename, index) => (
+                            {uploadingFiles.map((upload) => (
                                 <div
-                                    key={`${filename}-${index}`}
-                                    className="inline-flex items-center gap-1 rounded-[10px] bg-white/75 px-2 py-1 text-xs text-gray-600 shadow-[0_2px_6px_rgba(15,23,42,0.08)] backdrop-blur-xl"
+                                    key={upload.clientId}
+                                    className={`inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-xs text-gray-600 ${LIQUID_GLASS_FLAT_CLASS}`}
                                 >
                                     <Loader2 className="h-2.5 w-2.5 animate-spin" />
                                     <span className="max-w-[140px] truncate">
-                                        {filename}
+                                        {upload.filename}
                                     </span>
                                 </div>
                             ))}
@@ -485,9 +859,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         <textarea
                             ref={textareaRef}
                             rows={1}
-                            placeholder="How can I help?"
+                            disabled={!composerOpen}
+                            placeholder={placeholderFor({
+                                canSend,
+                                chatLoading,
+                                isLoading,
+                            })}
                             value={value}
-                            onChange={handleChange}
+                            onChange={(event) => updateInput(event.target)}
+                            onPaste={handlePaste}
                             onKeyDown={handleKeyDown}
                             role="combobox"
                             aria-autocomplete="list"
@@ -502,77 +882,84 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     ? `${WORKFLOW_SLASH_MENU_ID}-${resolvedSlashIndex}`
                                     : undefined
                             }
-                            className="w-full resize-none text-sm overflow-hidden border-0 text-base p-0 bg-transparent outline-none placeholder:text-gray-400 leading-6 max-h-48"
+                            className="w-full resize-none text-sm overflow-x-hidden overflow-y-auto border-0 text-base p-0 bg-transparent outline-none placeholder:text-gray-400 leading-6 max-h-48"
                         />
                     </div>
 
                     {/* Controls */}
                     <div
                         ref={controlsRef}
-                        className="flex items-center justify-between md:p-2.5 p-2"
+                        className="flex items-center justify-between py-2 pr-2 pl-1.5"
                     >
                         <div className="flex items-center gap-1">
-                            {!hideAddDocButton && (
+                            {!hideAddDocButton && composerOpen && (
                                 <AddDocButton
+                                    onLocalFiles={() => localFileInputRef.current?.click()}
+                                    uploading={uploadingFiles.length > 0}
                                     onBrowseAll={() => {
                                         setDocSelectorInitialTab("files");
                                         setDocSelectorOpen(true);
                                     }}
-                                    selectedDocIds={attachedDocs.map(
-                                        (d) => d.id,
-                                    )}
-                                    hideLabel={compactControls}
+                                    onWorkflows={
+                                        hideWorkflowButton
+                                            ? undefined
+                                            : () => {
+                                                  setWorkflowModalInitialId(
+                                                      undefined,
+                                                  );
+                                                  setWorkflowModalOpen(true);
+                                              }
+                                    }
+                                    onPlaybooks={
+                                        hideWorkflowButton
+                                            ? undefined
+                                            : () => {
+                                                  setPlaybookModalInitialId(
+                                                      undefined,
+                                                  );
+                                                  setPlaybookModalOpen(true);
+                                              }
+                                    }
                                 />
-                            )}
-                            {!hideWorkflowButton && (
-                                <button
-                                    type="button"
-                                    onClick={() => setWorkflowModalOpen(true)}
-                                    aria-label="Open workflows"
-                                    className={cn(
-                                        "flex items-center gap-1.5 rounded-lg px-2 h-8 text-sm transition-colors",
-                                        selectedWorkflow
-                                            ? "text-blue-600 hover:text-blue-700"
-                                            : "text-gray-400 hover:text-gray-700",
-                                    )}
-                                >
-                                    {selectedWorkflow ? (
-                                        <Check className="h-3.5 w-3.5" />
-                                    ) : (
-                                        <Waypoints className="h-3.5 w-3.5" />
-                                    )}
-                                    <span
-                                        className={
-                                            compactControls
-                                                ? "hidden"
-                                                : "hidden sm:inline"
-                                        }
-                                    >
-                                        Workflows
-                                    </span>
-                                </button>
                             )}
                         </div>
 
                         <div className="flex items-center gap-1">
-                            <ModelToggle
-                                value={model}
-                                onChange={setModel}
-                                apiKeys={apiKeys}
-                            />
+                            {!chatSettingsLoading && (
+                                <ModelToggle
+                                    value={model}
+                                    onChange={handleModelChange}
+                                    apiKeys={apiKeys}
+                                    apiKeysLoading={
+                                        profileLoading && !profile
+                                    }
+                                    routerSelections={savedRouterSelections}
+                                    compact={compactControls}
+                                    triggerClassName={cn(
+                                        "h-7.5",
+                                        compactControls && "w-7.5",
+                                    )}
+                                    onNoModelsClick={setNoModelsWarning}
+                                    reasoningLevel={reasoningLevel}
+                                    onReasoningChange={handleReasoningChange}
+                                />
+                            )}
                             <button
                                 type="button"
                                 aria-label={
                                     isLoading ? "Stop response" : "Send message"
                                 }
                                 className={cn(
-                                    "relative bg-gradient-to-b from-neutral-700 to-black text-white rounded-[10px] h-8 w-8 flex items-center justify-center cursor-pointer disabled:cursor-default disabled:from-neutral-600 disabled:to-black backdrop-blur-xl border border-white/30 active:enabled:scale-95 transition-all duration-150",
-                                    "shadow-[0_5px_14px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]",
+                                    COMPOSER_SEND_BUTTON_CLASS,
+                                    "h-7.5 w-7.5 rounded-full",
                                 )}
                                 onClick={handleActionClick}
                                 disabled={
                                     !isLoading &&
-                                    (!value.trim() || slashCommandsLoading)
+                                    (!composerOpen ||
+                                        (!value.trim() &&
+                                            !hasAnnotatedExcerpt) ||
+                                        slashCommandsLoading)
                                 }
                             >
                                 {isLoading ? (
@@ -590,6 +977,24 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 </div>
             </div>
 
+            <input
+                ref={localFileInputRef}
+                type="file"
+                accept={SUPPORTED_DOCUMENT_ACCEPT}
+                multiple
+                hidden
+                aria-label="Upload Documents"
+                disabled={!composerOpen || uploadingFiles.length > 0}
+                onChange={(event) => {
+                    const files = Array.from(event.currentTarget.files ?? []);
+                    event.currentTarget.value = "";
+                    if (files.length) void handleDroppedFiles(files);
+                }}
+            />
+            <ExcerptModalUI
+                excerpt={openExcerpt}
+                onClose={() => setOpenExcerpt(null)}
+            />
             <AddDocumentsModal
                 open={docSelectorOpen}
                 keepMounted
@@ -598,7 +1003,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 initialSelectedDocuments={attachedDocs}
                 externalUploadedDocuments={droppedDocuments}
                 initialTab={docSelectorInitialTab}
-                projectId={projectId}
+                projectId={dropUploadsToProject ? projectId : undefined}
+                uploadStateId={`assistant-chat:${projectId ?? "standalone"}`}
                 breadcrumb={
                     selectedWorkflow
                         ? ["Assistant", selectedWorkflow.title, "Add Documents"]
@@ -617,11 +1023,37 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 }}
                 projectName={projectName}
                 projectCmNumber={projectCmNumber}
+                initialWorkflowId={workflowModalInitialId}
+            />
+            <PlaybookPickerModal
+                open={playbookModalOpen}
+                onClose={() => setPlaybookModalOpen(false)}
+                onSelect={(playbook) =>
+                    setSelectedPlaybook({
+                        id: playbook.id,
+                        title: playbook.name || "Untitled playbook",
+                    })
+                }
+                breadcrumbs={
+                    projectName
+                        ? ["Projects", projectName, "Assistant", "Add playbook"]
+                        : ["Assistant", "Add playbook"]
+                }
+                initialPlaybookId={playbookModalInitialId}
             />
             <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}
-                provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
+            />
+            <NoModelsWarningPopup
+                reason={noModelsWarning}
+                onClose={() => setNoModelsWarning(null)}
+            />
+            <WarningPopup
+                open={modelRequiredWarning}
+                onClose={() => setModelRequiredWarning(false)}
+                title="Select a model"
+                message="Choose a model before sending your message."
             />
             <UploadOverlay
                 open={isDraggingFiles}
@@ -629,5 +1061,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 onWarningClose={() => setUploadWarning(null)}
             />
         </>
+    );
+}
+
+const ChatInputForChat = forwardRef<ChatInputHandle, Props>(ChatInputForChatImpl);
+
+/**
+ * Chat composer whose draft and asynchronous uploads belong to one chat key.
+ * Changing the key remounts the stateful implementation; its layout cleanup
+ * invalidates callbacks before the replacement composer can be displayed.
+ */
+export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
+    props,
+    ref,
+) {
+    const identity = useWorkspaceIdentity();
+    return (
+        <ChatInputForChat
+            key={`${identity}:${props.chatKey ?? "new-chat"}`}
+            {...props}
+            ref={ref}
+        />
     );
 });

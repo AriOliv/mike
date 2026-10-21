@@ -5,21 +5,18 @@ import {
     type DragEvent,
     type ReactNode,
     type SetStateAction,
+    type UIEvent,
     useCallback,
     useEffect,
     useMemo,
     useRef,
     useState,
 } from "react";
-import { createPortal } from "react-dom";
+import { Loader2, AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
 import {
-    Loader2,
-    AlertCircle,
-    ChevronDown,
-    ChevronRight,
-} from "lucide-react";
-import {
+    UploadBatchError,
     deleteDocument,
+    getDocument,
     getDocumentUrl,
     downloadDocumentsZip,
     listDocumentVersions,
@@ -27,9 +24,15 @@ import {
     replaceDocumentVersionFile,
     copyDocumentVersionFromDocument,
     deleteDocumentVersion,
+    failedUploadMessage,
     renameDocumentVersion,
     type DocumentVersion,
+    type UploadOutcome,
+    type UploadProgress,
+    type UploadProgressStatus,
+    MikeApiError,
 } from "@/app/lib/mikeApi";
+import { runUserExport } from "@/app/lib/asyncExport";
 import type {
     Document,
     Folder as ProjectFolder,
@@ -39,20 +42,69 @@ import {
     closeRowActionMenus,
     RowActionMenuItems,
     RowActions,
-    type RowActionMenuSurfaceProps,
+    ROW_ACTION_MENU_CLASS,
+    type RowAddStatus,
 } from "@/app/components/shared/RowActions";
-import {
-    SubfolderSvgIcon,
-} from "@/app/components/shared/FolderSvgIcon";
+import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
+import { DropdownAtPoint } from "@/shared/ui/dropdown";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useOptionalUserProfile } from "@/app/contexts/UserProfileContext";
+import {
+    CreatorLabel,
+    CreatorLabelSkeleton,
+} from "@/app/components/shared/CreatorLabel";
+import {
+    PersonFilter,
+    distinctPeople,
+    localPeople,
+} from "@/app/components/shared/PersonFilter";
+import {
+    creatorScopedAllowed,
+    type Capability,
+} from "@/app/lib/permissions";
+import type { OwnerGate } from "@/app/components/projects/ProjectWorkspace";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { UploadOverlay } from "@/app/components/assistant/UploadOverlay";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+    UserVisibleError,
+    notifyError,
+    notifyPartialFailure,
+} from "@/app/lib/userFacingError";
+import { useAssignLatest } from "@/app/hooks/useLatestRef";
+import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
+import { useRemountPersistentState } from "@/app/hooks/useRemountPersistentState";
 import {
     formatUnsupportedDocumentWarning,
     partitionSupportedDocumentFiles,
     SUPPORTED_DOCUMENT_ACCEPT,
 } from "@/app/lib/documentUploadValidation";
+import {
+    collectDroppedDocumentUploadEntries,
+    dataTransferHasDirectory,
+    DOCUMENT_UPLOAD_CONCURRENCY,
+    documentUploadEntriesFromFiles,
+    documentUploadFolderSegments,
+    folderUploadProgressLabel,
+    resolvedDocumentUploadProgressEntries,
+    MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD,
+    resolveDocumentUploadRootFolder,
+    type DocumentUploadEntry,
+    type DocumentUploadFolderPathResolution,
+    type DocumentUploadProgressEntry,
+} from "@/app/lib/documentDirectoryUpload";
+import { settleWithConcurrency } from "@/shared/lib/settleWithConcurrency";
+import {
+    collectionSelectAllState,
+    folderSelectionRootIds,
+    folderTreeIds as collectFolderTreeIds,
+    MULTI_DOCUMENT_DRAG_TYPE,
+    readDocumentDragPayload,
+    SINGLE_DOCUMENT_DRAG_TYPE,
+    writeDocumentDragPayload,
+} from "@/app/lib/docTableSelection";
+import { setDocumentRowsDragPreview } from "@/app/lib/docTableDragPreview";
+import { textLayerWarning } from "@/app/lib/textLayerWarning";
 import {
     DOC_NAME_COL_W,
     DocIcon,
@@ -63,60 +115,101 @@ import {
     type ProjectContextMenu,
 } from "@/app/components/projects/ProjectPageParts";
 import { DocumentSidePanel } from "@/app/components/shared/DocumentSidePanel";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { LibrarySkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import { EmptyState } from "@/app/components/ui/empty-state";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_GROUP_HOVER_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_GROUP_HOVER_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import {
     TABLE_CHECKBOX_CLASS,
+    selectionAnchorAfterRowSelection,
+    selectionRangeIds,
     TableFilters,
+    TableSortFilter,
     TableHeaderCell,
     TableHeaderRow,
+    TableEmptyState,
     TableScrollArea,
     TableStickyCell,
     type TableFilterOption,
     type TableSortDirection,
 } from "@/app/components/shared/TablePrimitive";
 
+// Above this many documents the zip is built by a background export job
+// instead of inside the request: a small selection zips in well under a second
+// and should download instantly, while a large one risks an out-of-memory or a
+// gateway timeout and is worth the polling round trips.
+const ASYNC_ZIP_THRESHOLD = 10;
+const DOC_TABLE_STICKY_CELL_CLASS = "table-sticky-cell";
+
 export type DocTableFolder = ProjectFolder | LibraryFolder;
-export interface DocTableSelectionActions {
-    selectedCount: number;
-    hasDocumentsInFolders: boolean;
-    onDownload: () => Promise<void>;
-    onRemoveFromFolder: () => Promise<void>;
-    onDelete: () => Promise<void>;
+export type DocTableFolderBreadcrumb = {
+    id: string;
+    name: string;
+    onClick: () => void;
+};
+// Dropdown content mounts on open, so use the table's latest menu state.
+function SelectionMenuItems({ render }: { render: () => ReactNode }) {
+    return render();
 }
 
-type DocumentSortKey = "name" | "size" | "version" | "created" | "updated";
+export interface DocTableSelectionActions {
+    renderMenuItems: (onClose?: () => void) => ReactNode;
+}
 
-const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
-    { value: "asc", label: "Ascending" },
-    { value: "desc", label: "Descending" },
-];
+export type DocumentSortKey = "name" | "size" | "version" | "created" | "updated";
+
+export type DocumentSort = {
+    key: DocumentSortKey;
+    direction: TableSortDirection;
+};
+
+export interface DocTableQuery {
+    search: string;
+    fileType: string | null;
+    sort: DocumentSort | null;
+}
+
+const SORT_KEY_LABELS: Record<DocumentSortKey, string> = {
+    name: "Name",
+    size: "Size",
+    version: "Version",
+    created: "Created",
+    updated: "Updated",
+};
 
 interface DocTableOperations {
-    uploadDocument: (file: File) => Promise<Document>;
-    refreshCollection: () => Promise<void>;
-    createFolder: (
-        name: string,
-        parentFolderId?: string | null,
-    ) => Promise<DocTableFolder>;
-    renameFolder: (
-        folderId: string,
-        name: string,
-    ) => Promise<DocTableFolder>;
-    deleteFolder: (folderId: string) => Promise<void>;
-    moveFolder: (
-        folderId: string,
-        parentFolderId: string | null,
-    ) => Promise<DocTableFolder>;
-    moveDocument: (
-        documentId: string,
-        folderId: string | null,
+    uploadDocument: (
+        file: File,
+        folderId?: string | null,
     ) => Promise<Document>;
+    uploadDocuments?: (
+        files: Array<{
+            file: File;
+            folderId: string | null;
+            clientId: string;
+        }>,
+        options?: {
+            onProgress?: (progress: UploadProgress<Document>) => void;
+        },
+    ) => Promise<UploadOutcome<Document>[]>;
+    refreshCollection: () => Promise<void>;
+    createFolder: (name: string, parentFolderId?: string | null) => Promise<DocTableFolder>;
+    resolveFolderPath: (
+        segments: string[],
+        baseFolderId: string | null,
+        conflictResolution?: "error" | "reuse" | "rename",
+    ) => Promise<DocumentUploadFolderPathResolution<DocTableFolder>>;
+    renameFolder: (folderId: string, name: string) => Promise<DocTableFolder>;
+    deleteFolder: (folderId: string) => Promise<void>;
+    moveFolder: (folderId: string, parentFolderId: string | null) => Promise<DocTableFolder>;
+    moveDocument: (documentId: string, folderId: string | null) => Promise<Document>;
     renameDocument: (documentId: string, filename: string) => Promise<Document>;
+    bulkDeleteDocuments?: (documentIds: string[]) => Promise<{ deletedIds: string[] }>;
 }
 
 interface DocTableProps {
@@ -128,35 +221,80 @@ interface DocTableProps {
     loading: boolean;
     search: string;
     operations: DocTableOperations;
-    emptyDropLabel?: string;
+    emptyStateTitle: string;
+    /** A second way to fill an empty collection, offered beside Upload. */
+    emptyStateSecondaryAction?: { label: string; onClick: () => void };
     renderAddDocumentsModal?: (
         open: boolean,
         onClose: () => void,
         onSelect: (documents: Document[]) => void,
     ) => ReactNode;
     onAddDocumentsActionChange?: (action: (() => void) | null) => void;
+    onUploadFilesActionChange?: (action: (() => void) | null) => void;
+    onUploadFolderActionChange?: (action: (() => void) | null) => void;
     onCreateFolderActionChange?: (action: (() => void) | null) => void;
+    onFolderViewBackActionChange?: (action: (() => void) | null) => void;
+    onFolderViewChange?: (path: DocTableFolderBreadcrumb[]) => void;
+    folderViewId?: string | null;
+    onFolderViewIdChange?: (folderId: string | null) => void;
     onSelectionActionsChange?: (actions: DocTableSelectionActions | null) => void;
-    onOwnerOnlyAction?: Dispatch<SetStateAction<string | null>>;
+    onOwnerOnlyAction?: Dispatch<SetStateAction<OwnerGate | null>>;
+    /**
+     * Role-based capability check for the containing collection. Required:
+     * a table whose job here is gating must be told what the caller may do,
+     * and a surface with no role model at all (the personal library) says so
+     * by passing `NO_ROLE_MODEL` rather than by leaving this out.
+     */
+    canDo: (capability: Capability) => boolean;
     enableHeaderFilters?: boolean;
+    // When provided, folder contents are fetched on demand as folders are
+    // expanded (instead of the whole tree being loaded and auto-expanded
+    // up front). Called once per folder id the first time it's expanded.
+    onExpandFolder?: (folderId: string) => void | Promise<void>;
+    // Per-level document pagination, keyed by parent folder id (root uses
+    // the sentinel "root"). When onLoadMoreDocuments is provided, a level
+    // with more documents than are currently loaded shows a "load more" row.
+    documentsHasMoreByLevel?: Record<string, boolean>;
+    loadingMoreDocumentsByLevel?: Record<string, boolean>;
+    onLoadMoreDocuments?: (parentId: string | null) => void;
+    // Optional client-side visibility limits for collections that already
+    // contain every document but should present the same paged directory UI.
+    documentLimitByLevel?: Record<string, number>;
+    // When non-null, these are already filtered/sorted server results and are
+    // rendered as a flat list instead of the folder tree.
+    serverDocuments?: Document[] | null;
+    serverQueryLoading?: boolean;
+    serverQueryHasMore?: boolean;
+    serverQueryLoadingMore?: boolean;
+    onLoadMoreServerDocuments?: () => void;
+    onServerQueryChange?: (query: DocTableQuery) => void;
+    onSelectAllMatching?: (query: DocTableQuery) => Promise<string[]>;
+    documentTypeOptions?: TableFilterOption<string>[];
+    autoLoadOnScroll?: boolean;
+    defaultSort?: DocumentSort | null;
+    /**
+     * Presents a fixed set of bundled files instead of stored documents. The
+     * rows are not backend documents, so the table is read-only: nothing can
+     * be uploaded, renamed, moved or deleted, files are viewed and downloaded
+     * from the catalog's own URLs, and the only action is adding copies.
+     */
+    catalog?: DocTableCatalog;
+    /** Adds a Creator column; the project directory shows who added each row. */
+    showCreator?: boolean;
 }
 
-function apiErrorDetail(error: unknown): string | null {
-    if (!(error instanceof Error)) return null;
-    try {
-        const parsed = JSON.parse(error.message) as unknown;
-        if (
-            parsed &&
-            typeof parsed === "object" &&
-            "detail" in parsed &&
-            typeof parsed.detail === "string"
-        ) {
-            return parsed.detail;
-        }
-    } catch {
-        // Non-JSON errors can fall through to the plain message below.
-    }
-    return error.message || null;
+export interface DocTableCatalog {
+    resolveDocumentUrl: (documentId: string) => {
+        url: string;
+        filename: string;
+    };
+    /** False for a file the side panel cannot render; it downloads instead. */
+    canPreview?: (doc: Document) => boolean;
+    canAdd?: (doc: Document) => boolean;
+    addLabel: (count: number, status?: RowAddStatus) => string;
+    addStatus?: (documents: Document[]) => RowAddStatus;
+    addDisabled?: boolean;
+    onAdd: (documents: Document[]) => void;
 }
 
 function documentTypeValue(doc: Document): string {
@@ -179,19 +317,14 @@ function documentVersionNumber(doc: Document): number | null {
     return doc.active_version_number ?? doc.latest_version_number ?? null;
 }
 
-function ProjectTableLoadingHeader({
-    stickyCellBg,
-}: {
-    stickyCellBg: string;
-}) {
+function ProjectTableLoadingHeader({ showCreator }: { showCreator: boolean }) {
     return (
-        <TableHeaderRow className={`${stickyCellBg} pr-8 md:pr-8`}>
+        <TableHeaderRow className="pr-3">
             <TableStickyCell
                 header
                 widthClassName={DOC_NAME_COL_W}
-                bgClassName={stickyCellBg}
             >
-                <div className="mr-4 h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
+                <div className="mr-3 h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
                 <span className="mr-1">Name</span>
             </TableStickyCell>
             <TableHeaderCell className="ml-auto flex w-20 items-center gap-1">
@@ -203,6 +336,11 @@ function ProjectTableLoadingHeader({
             <TableHeaderCell className="flex w-20 items-center gap-1">
                 <span>Version</span>
             </TableHeaderCell>
+            {showCreator && (
+                <TableHeaderCell className="flex w-32 items-center gap-1">
+                    <span>Creator</span>
+                </TableHeaderCell>
+            )}
             <TableHeaderCell className="flex w-32 items-center gap-1">
                 <span>Created</span>
             </TableHeaderCell>
@@ -214,23 +352,18 @@ function ProjectTableLoadingHeader({
     );
 }
 
-function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
+function ProjectTableLoading({ showCreator }: { showCreator: boolean }) {
     return (
         <div className="flex-1 flex flex-col min-h-0">
             {[1, 2, 3, 4, 5].map((i) => (
-                <div
-                    key={i}
-                    className="flex h-10 min-w-max items-center pr-8"
-                >
-                    <div
-                        className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
-                    >
-                        <div className="flex items-center">
-                            <div className="mr-4 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
+                <div key={i} className="flex h-10 min-w-max items-center pr-3">
+                    <div className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2`}>
+                        <div className="flex min-w-0 items-center">
+                            <div className="mr-3 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div
-                                className="h-3.5 rounded bg-gray-100 animate-pulse"
-                                style={{ width: `${210 + i * 16}px` }}
+                                className="h-3.5 min-w-0 flex-1 rounded bg-gray-100 animate-pulse"
+                                style={{ maxWidth: `${160 + i * 20}px` }}
                             />
                         </div>
                     </div>
@@ -243,6 +376,11 @@ function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
                     <div className="w-20 shrink-0">
                         <div className="h-3 w-5 rounded bg-gray-100 animate-pulse" />
                     </div>
+                    {showCreator && (
+                        <div className="w-32 shrink-0">
+                            <CreatorLabelSkeleton className="w-16" />
+                        </div>
+                    )}
                     <div className="w-32 shrink-0">
                         <div className="h-3 w-16 rounded bg-gray-100 animate-pulse" />
                     </div>
@@ -256,6 +394,19 @@ function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
     );
 }
 
+function UploadingTrailingLabel() {
+    return (
+        <span role="status" aria-label="Uploading">
+            <span aria-hidden="true">Uploading</span>
+            <span aria-hidden="true" className="uploading-ellipsis">
+                <span className="uploading-ellipsis-one">.</span>
+                <span className="uploading-ellipsis-two">..</span>
+                <span className="uploading-ellipsis-three">...</span>
+            </span>
+        </span>
+    );
+}
+
 export function DocTable({
     scopeKey,
     documents,
@@ -265,34 +416,98 @@ export function DocTable({
     loading,
     search,
     operations,
-    emptyDropLabel = "Drop PDF, Word, Excel, or PowerPoint files here",
+    emptyStateTitle,
+    emptyStateSecondaryAction,
     renderAddDocumentsModal,
     onAddDocumentsActionChange,
+    onUploadFilesActionChange,
+    onUploadFolderActionChange,
     onCreateFolderActionChange,
+    onFolderViewBackActionChange,
+    onFolderViewChange,
+    folderViewId,
+    onFolderViewIdChange,
     onSelectionActionsChange,
     onOwnerOnlyAction,
+    canDo,
     enableHeaderFilters = false,
+    onExpandFolder,
+    documentsHasMoreByLevel,
+    loadingMoreDocumentsByLevel,
+    onLoadMoreDocuments,
+    documentLimitByLevel,
+    serverDocuments = null,
+    serverQueryLoading = false,
+    serverQueryHasMore = false,
+    serverQueryLoadingMore = false,
+    onLoadMoreServerDocuments,
+    onServerQueryChange,
+    onSelectAllMatching,
+    documentTypeOptions,
+    autoLoadOnScroll = false,
+    defaultSort = null,
+    catalog,
+    showCreator = false,
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
-    const stickyCellBg = "bg-app-surface";
+    const ownProfile = useOptionalUserProfile()?.profile;
     const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
     const [viewingDocVersion, setViewingDocVersion] = useState<{
         id: string;
         label: string;
     } | null>(null);
     const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+    const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(
+        () => new Set(),
+    );
+    const [selectionCameFromSelectAll, setSelectionCameFromSelectAll] = useState(false);
+    const [selectingAllDocuments, setSelectingAllDocuments] = useState(false);
+    const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
     const [typeFilter, setTypeFilter] = useState<string | null>(null);
-    const [sort, setSort] = useState<{
-        key: DocumentSortKey;
-        direction: TableSortDirection;
-    } | null>(null);
+    const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
+    const [sort, setSort] = useState<DocumentSort | null>(null);
+    const serverQueryActive = serverDocuments !== null;
     const documentUploadInputRef = useRef<HTMLInputElement>(null);
+    const directoryUploadInputRef = useRef<HTMLInputElement>(null);
+    const tableRootRef = useRef<HTMLDivElement>(null);
+    const selectionAnchorKeyRef = useRef<string | null>(null);
+    const autoLoadTriggeredRef = useRef(false);
     const loadingRef = useRef(loading);
     const renderAddDocumentsModalRef = useRef(renderAddDocumentsModal);
-    const setOwnerOnlyAction = useMemo(
-        () => onOwnerOnlyAction ?? (() => {}),
-        [onOwnerOnlyAction],
+    const setOwnerOnlyAction = useMemo(() => onOwnerOnlyAction ?? (() => {}), [onOwnerOnlyAction]);
+    const allowed = canDo;
+
+    /** The Creator cell; the caller's own rows read "Me" with their current photo. */
+    function renderCreatorCell(row: {
+        user_id?: string | null;
+        owner_display_name?: string | null;
+        owner_profile_photo?: string | null;
+    }) {
+        if (!showCreator) return null;
+        const mine = !!user?.id && row.user_id === user.id;
+        return (
+            <div className="w-32 shrink-0 text-xs text-gray-500">
+                <CreatorLabel
+                    label={mine ? "Me" : row.owner_display_name?.trim() || "Shared"}
+                    photo={mine ? ownProfile?.profilePhoto ?? row.owner_profile_photo : row.owner_profile_photo}
+                    name={mine ? ownProfile?.displayName ?? row.owner_display_name : row.owner_display_name}
+                />
+            </div>
+        );
+    }
+    /** Guard: false + popup when the caller's role lacks the capability. */
+    const requireCapability = useCallback(
+        (
+            capability: Capability,
+            action: string,
+            requiredRole: "owner" | "editor",
+        ) => {
+            if (allowed(capability)) return true;
+            setOwnerOnlyAction({ action, requiredRole });
+            return false;
+        },
+        [allowed, setOwnerOnlyAction],
     );
 
     useEffect(() => {
@@ -302,39 +517,54 @@ export function DocTable({
 
     const openAddDocuments = useCallback(() => {
         if (loadingRef.current) return;
+        // Same capability the header Add button is gated on — this also
+        // covers the empty-state click, which calls openAddDocuments
+        // directly.
+        if (!requireCapability("content.edit", "add documents", "editor"))
+            return;
         if (renderAddDocumentsModalRef.current) {
             setAddDocsOpen(true);
             return;
         }
         documentUploadInputRef.current?.click();
-    }, []);
+    }, [requireCapability]);
 
     useEffect(() => {
         onAddDocumentsActionChange?.(openAddDocuments);
         return () => onAddDocumentsActionChange?.(null);
     }, [onAddDocumentsActionChange, openAddDocuments]);
 
+    const openUploadFiles = useCallback(() => {
+        if (loadingRef.current) return;
+        documentUploadInputRef.current?.click();
+    }, []);
+
+    useEffect(() => {
+        onUploadFilesActionChange?.(openUploadFiles);
+        return () => onUploadFilesActionChange?.(null);
+    }, [onUploadFilesActionChange, openUploadFiles]);
+
+    const openUploadFolder = useCallback(() => {
+        if (loadingRef.current) return;
+        directoryUploadInputRef.current?.click();
+    }, []);
+
+    useEffect(() => {
+        onUploadFolderActionChange?.(openUploadFolder);
+        return () => onUploadFolderActionChange?.(null);
+    }, [onUploadFolderActionChange, openUploadFolder]);
+
     // Version-history expansion (per-doc). versionsByDocId caches fetched
     // versions so toggling closed + open again doesn't refetch. loadingIds
     // drives the inline spinner in the version cell while a fetch is in
     // flight.
-    const [expandedVersionDocIds, setExpandedVersionDocIds] = useState<
-        Set<string>
-    >(() => new Set());
+    const [expandedVersionDocIds, setExpandedVersionDocIds] = useState<Set<string>>(() => new Set());
     const [versionsByDocId, setVersionsByDocId] = useState<
-        Map<
-            string,
-            { currentVersionId: string | null; versions: DocumentVersion[] }
-        >
+        Map<string, { currentVersionId: string | null; versions: DocumentVersion[] }>
     >(() => new Map());
-    const [loadingVersionDocIds, setLoadingVersionDocIds] = useState<
-        Set<string>
-    >(() => new Set());
+    const [loadingVersionDocIds, setLoadingVersionDocIds] = useState<Set<string>>(() => new Set());
 
-    const loadDocumentVersions = async (
-        docId: string,
-        options: { expand?: boolean; force?: boolean } = {},
-    ) => {
+    const loadDocumentVersions = async (docId: string, options: { expand?: boolean; force?: boolean } = {}) => {
         if (options.expand) {
             setExpandedVersionDocIds((prev) => new Set([...prev, docId]));
         }
@@ -351,7 +581,12 @@ export function DocTable({
                 return next;
             });
         } catch (e) {
-            console.error("listDocumentVersions failed", e);
+            notifyError(e, {
+                action: "load the version history",
+                onRetry: () => {
+                    void loadDocumentVersions(docId, { force: true });
+                },
+            });
         } finally {
             setLoadingVersionDocIds((prev) => {
                 const next = new Set(prev);
@@ -375,11 +610,7 @@ export function DocTable({
         await loadDocumentVersions(docId, { expand: true });
     };
 
-    async function downloadDocVersion(
-        docId: string,
-        versionId: string,
-        filename: string,
-    ) {
+    async function downloadDocVersion(docId: string, versionId: string, filename: string) {
         try {
             const resolved = await getDocumentUrl(docId, versionId);
             const a = document.createElement("a");
@@ -390,7 +621,13 @@ export function DocTable({
             a.download = resolved.filename || filename;
             a.click();
         } catch (e) {
-            console.error("downloadDocVersion failed", e);
+            notifyError(e, {
+                action: "download this version",
+                supportNote: `Document ${docId}, version ${versionId}`,
+                onRetry: () => {
+                    void downloadDocVersion(docId, versionId, filename);
+                },
+            });
         }
     }
 
@@ -399,9 +636,7 @@ export function DocTable({
         window.setTimeout(() => versionUploadInputRef.current?.click(), 0);
     }
 
-    async function handleVersionUploadInputChange(
-        e: React.ChangeEvent<HTMLInputElement>,
-    ) {
+    async function handleVersionUploadInputChange(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0] ?? null;
         e.target.value = "";
         const doc = versionUploadTargetDoc;
@@ -410,30 +645,107 @@ export function DocTable({
         await handleDropDocumentVersions(doc, [file]);
     }
 
-    async function submitNewVersion(
-        doc: Document,
-        file: File,
-        filename: string,
-    ) {
+    /**
+     * Version file-replace and delete are creator-scoped server-side, not
+     * role-based: `DELETE /single-documents/:id/versions/:versionId` and
+     * `PUT …/versions/:versionId/file` both call
+     * `creatorScopedAllowed(access, doc.user_id)` (backend/src/lib/access.ts),
+     * which is
+     *
+     *     the document's uploader
+     *     — or, ONLY once that account is gone and `user_id` is null,
+     *       somebody holding container.delete on the project.
+     *
+     * The departed-uploader arm exists because deleting an account blanks
+     * `documents.user_id`; while an uploader still exists, "an admin does not
+     * get to reach into a colleague's versions" (that comment is the server's
+     * own). No capability in the matrix expresses this, so it is checked here
+     * against the row, and the refusal says which rule it is.
+     */
+    function requireDocOwnerForVersions(docId: string, action: string): boolean {
+        const doc = documents.find((d) => d.id === docId);
+        if (!doc) {
+            // Fail closed. This used to `return true` — a document we cannot
+            // find is one we know nothing about, and the one thing we must
+            // not do with an unknown is wave it through.
+            setOwnerOnlyAction({
+                title: "Document unavailable",
+                message:
+                    "That document is not loaded, so its versions cannot be changed. Reload and try again.",
+            });
+            return false;
+        }
+        if (
+            creatorScopedAllowed(
+                doc.user_id,
+                user?.id,
+                allowed("container.delete"),
+            )
+        )
+            return true;
+        if (doc.user_id) {
+            // Not "Only an admin can …", which is what the admin-tier popup
+            // used to claim: no admin can lift this while the uploader's
+            // account exists, so naming that tier sent people to somebody who
+            // could not help. And no "ask …" line, for the same reason.
+            setOwnerOnlyAction({
+                title: "Uploader only",
+                message: `Only the person who uploaded this document can ${action}.`,
+            });
+            return false;
+        }
+        // No uploader on the row: the server does hand these versions to
+        // project admins, so here the admin tier IS the rule and the normal
+        // popup — with its contact line — is the right one.
+        setOwnerOnlyAction({ action, requiredRole: "owner" });
+        return false;
+    }
+
+    async function submitNewVersion(doc: Document, file: File, filename: string) {
+        // Same tier as the server's POST /versions guard (content.edit).
+        if (!requireCapability("content.edit", "upload a new version", "editor"))
+            return;
         try {
             await uploadDocumentVersion(doc.id, file, filename);
-            await refreshDocumentVersionState(doc.id);
         } catch (e) {
-            console.error("uploadDocumentVersion failed", e);
+            notifyError(e, {
+                action: "upload the new version",
+                supportNote: `Document ${doc.filename}`,
+                onRetry: () => {
+                    void submitNewVersion(doc, file, filename);
+                },
+            });
+            return;
+        }
+        await refreshVersionsAfterChange(doc.id);
+    }
+
+    /**
+     * Re-read the table and the version list after a version has landed.
+     * Kept apart from the upload on purpose: when only this re-read fails,
+     * its Retry must re-read, not re-upload. A Retry that re-ran the whole
+     * upload stored the same file as a second version.
+     */
+    async function refreshVersionsAfterChange(docId: string): Promise<void> {
+        try {
+            await refreshDocumentVersionState(docId);
+        } catch (e) {
+            notifyError(e, {
+                action: "refresh the version history",
+                dedupeKey: `doc-versions-refresh:${docId}`,
+                onRetry: () => refreshVersionsAfterChange(docId),
+            });
         }
     }
 
-    async function replaceVersionFile(
-        docId: string,
-        versionId: string,
-        file: File,
-        filename: string,
-    ) {
+    async function replaceVersionFile(docId: string, versionId: string, file: File, filename: string) {
+        if (
+            !requireDocOwnerForVersions(docId, "replace this version's file")
+        )
+            return;
         await replaceDocumentVersionFile(docId, versionId, file, filename);
         const res = await refreshDocumentVersionState(docId);
-        const replaced = res.versions.find(
-            (version) => version.id === versionId,
-        );
+        const replaced = res.versions.find((version) => version.id === versionId);
         if (replaced) {
             setViewingDocVersion({
                 id: replaced.id,
@@ -462,58 +774,50 @@ export function DocTable({
     /**
      * Patch a version filename and update the local cache in place.
      */
-    async function handleRenameVersion(
-        docId: string,
-        versionId: string,
-        filename: string | null,
-    ) {
+    async function handleRenameVersion(docId: string, versionId: string, filename: string | null) {
+        // Server PATCH /versions/:id guard is content.edit.
+        if (!requireCapability("content.edit", "rename versions", "editor"))
+            return;
         const previousFilename = versionsByDocId
             .get(docId)
             ?.versions.find((version) => version.id === versionId)
             ?.filename?.trim();
-        if (
-            previousFilename &&
-            (filename == null ||
-                hasFilenameExtensionChange(previousFilename, filename))
-        ) {
+        if (previousFilename && (filename == null || hasFilenameExtensionChange(previousFilename, filename))) {
             setDocumentRenameWarning(extensionChangeWarning(previousFilename));
             return;
         }
 
         try {
-            const updated = await renameDocumentVersion(
-                docId,
-                versionId,
-                filename,
-            );
+            const updated = await renameDocumentVersion(docId, versionId, filename);
             setVersionsByDocId((prev) => {
                 const cached = prev.get(docId);
                 if (!cached) return prev;
                 const next = new Map(prev);
                 next.set(docId, {
                     ...cached,
-                    versions: cached.versions.map((v) =>
-                        v.id === versionId ? updated : v,
-                    ),
+                    versions: cached.versions.map((v) => (v.id === versionId ? updated : v)),
                 });
                 return next;
             });
         } catch (e) {
-            console.error("renameDocumentVersion failed", e);
+            notifyError(e, {
+                action: "rename the version",
+                onRetry: () => {
+                    void handleRenameVersion(docId, versionId, filename);
+                },
+            });
         }
     }
 
     async function handleDeleteVersion(docId: string, versionId: string) {
+        if (!requireDocOwnerForVersions(docId, "delete document versions"))
+            return;
         try {
             await deleteDocumentVersion(docId, versionId);
             const res = await refreshDocumentVersionState(docId);
-            const activeVersions = res.versions.filter(
-                (version) => version.deleted_at == null,
-            );
+            const activeVersions = res.versions.filter((version) => version.deleted_at == null);
             const nextVersion =
-                activeVersions.find(
-                    (version) => version.id === res.current_version_id,
-                ) ??
+                activeVersions.find((version) => version.id === res.current_version_id) ??
                 activeVersions[activeVersions.length - 1] ??
                 null;
             setViewingDocVersion(
@@ -525,91 +829,88 @@ export function DocTable({
                     : null,
             );
         } catch (e) {
-            console.error("deleteDocumentVersion failed", e);
-            setDocumentRenameWarning("Could not delete this version.");
+            notifyError(e, {
+                action: "delete this version",
+                onRetry: () => {
+                    void handleDeleteVersion(docId, versionId);
+                },
+            });
         }
     }
 
-    const [renamingDocumentId, setRenamingDocumentId] = useState<string | null>(
-        null,
-    );
+    const [renamingDocumentId, setRenamingDocumentId] = useState<string | null>(null);
     const [renameDocumentValue, setRenameDocumentValue] = useState("");
 
     // Folder state
-    const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(
-        new Set(),
+    const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+    const [viewedFolderId, setViewedFolderId] = useState<string | null>(
+        folderViewId ?? null,
     );
+    const [loadingChildFolderIds, setLoadingChildFolderIds] = useState<Set<string>>(() => new Set());
     // undefined = not creating; null = creating at root; string = creating inside that folder id
-    const [creatingFolderIn, setCreatingFolderIn] = useState<
-        string | null | undefined
-    >(undefined);
+    const [creatingFolderIn, setCreatingFolderIn] = useState<string | null | undefined>(undefined);
     const [newFolderName, setNewFolderName] = useState("");
-    const [renamingFolderId, setRenamingFolderId] = useState<string | null>(
-        null,
-    );
+    const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
     const [renameFolderValue, setRenameFolderValue] = useState("");
-    const [contextMenu, setContextMenu] = useState<ProjectContextMenu | null>(
-        null,
-    );
-    const contextMenuRef = useRef<HTMLDivElement>(null);
+    const [contextMenu, setContextMenu] = useState<ProjectContextMenu | null>(null);
     const newFolderInputRef = useRef<HTMLDivElement | null>(null);
     const versionUploadInputRef = useRef<HTMLInputElement>(null);
-    const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(
-        null,
-    );
+    const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
     const [dragOverRoot, setDragOverRoot] = useState(false);
     const [dragOverFileRoot, setDragOverFileRoot] = useState(false);
-    const [isDraggingCollectionFiles, setIsDraggingCollectionFiles] =
-        useState(false);
+    const [isDraggingCollectionFiles, setIsDraggingCollectionFiles] = useState(false);
     const collectionDragDepthRef = useRef(0);
-    const [dragOverVersionDocId, setDragOverVersionDocId] = useState<
-        string | null
+    const [dragOverVersionDocId, setDragOverVersionDocId] = useState<string | null>(null);
+    const [uploadingVersionDocIds, setUploadingVersionDocIds] = useState<Set<string>>(() => new Set());
+    const [versionUploadTargetDoc, setVersionUploadTargetDoc] = useState<Document | null>(null);
+    const [collectionUploadProgress, setCollectionUploadProgress] =
+        useRemountPersistentState<Array<{
+            uploadId: string;
+            parentFolderId: string | null;
+            entries: DocumentUploadProgressEntry[];
+            files: Array<{
+                clientId: string;
+                entry: DocumentUploadEntry;
+                status: UploadProgressStatus;
+            }>;
+        }>>(`document-upload:${scopeKey}`, []);
+    const [folderUploadConflict, setFolderUploadConflict] = useState<{
+        folderName: string;
+        suggestedName: string;
+    } | null>(null);
+    const folderUploadConflictResolverRef = useRef<
+        ((choice: "rename" | "cancel") => void) | null
     >(null);
-    const [uploadingVersionDocIds, setUploadingVersionDocIds] = useState<
-        Set<string>
-    >(() => new Set());
-    const [versionUploadTargetDoc, setVersionUploadTargetDoc] =
-        useState<Document | null>(null);
-    const [uploadingDroppedFilenames, setUploadingDroppedFilenames] = useState<
-        string[]
-    >([]);
-    const [deletingDocIds, setDeletingDocIds] = useState<Set<string>>(
-        () => new Set(),
-    );
-    const [documentUploadWarning, setDocumentUploadWarning] = useState<
-        string | null
-    >(null);
-    const [documentRenameWarning, setDocumentRenameWarning] = useState<
-        string | null
-    >(null);
-    const [collectionActionWarning, setCollectionActionWarning] = useState<
-        string | null
-    >(null);
+    const [deletingDocIds, setDeletingDocIds] = useState<Set<string>>(() => new Set());
+    const [documentUploadWarning, setDocumentUploadWarning] = useState<string | null>(null);
+    const [documentRenameWarning, setDocumentRenameWarning] = useState<string | null>(null);
     const [pendingVersionDrop, setPendingVersionDrop] = useState<{
         targetDoc: Document;
         sourceDoc: Document;
     } | null>(null);
-    const [pendingDeleteDoc, setPendingDeleteDoc] = useState<Document | null>(
-        null,
-    );
-    const [pendingDeleteStatus, setPendingDeleteStatus] = useState<
-        "idle" | "deleting" | "deleted"
-    >("idle");
+    const [pendingDeleteDoc, setPendingDeleteDoc] = useState<Document | null>(null);
+    const [pendingDeleteStatus, setPendingDeleteStatus] = useState<"idle" | "deleting" | "deleted">("idle");
     const [pendingDeleteFolder, setPendingDeleteFolder] = useState<{
         folder: DocTableFolder;
         folderIds: string[];
         documentIds: string[];
         documentCount: number;
     } | null>(null);
-    const [pendingDeleteFolderStatus, setPendingDeleteFolderStatus] = useState<
-        "idle" | "deleting" | "deleted"
-    >("idle");
+    const [pendingDeleteFolderStatus, setPendingDeleteFolderStatus] = useState<"idle" | "deleting" | "deleted">("idle");
+
+    useEffect(
+        () => () => {
+            folderUploadConflictResolverRef.current?.("cancel");
+            folderUploadConflictResolverRef.current = null;
+        },
+        [],
+    );
 
     const openCreateFolder = useCallback(() => {
         if (loadingRef.current) return;
-        setCreatingFolderIn(null);
+        setCreatingFolderIn(viewedFolderId);
         setNewFolderName("");
-    }, []);
+    }, [viewedFolderId]);
 
     useEffect(() => {
         onCreateFolderActionChange?.(openCreateFolder);
@@ -617,30 +918,119 @@ export function DocTable({
     }, [onCreateFolderActionChange, openCreateFolder]);
 
     useEffect(() => {
-        if (loading) return;
-        setExpandedFolderIds(new Set(folders.map((f) => f.id)));
-    }, [loading, folders]);
-
-    useEffect(() => {
         setSelectedDocIds([]);
+        setSelectedFolderIds(new Set());
+        setExpandedFolderIds(new Set());
+        setViewedFolderId(null);
+        setSelectionCameFromSelectAll(false);
+        setConfirmDeleteAllOpen(false);
         setContextMenu(null);
+        selectionAnchorKeyRef.current = null;
         setTypeFilter(null);
+        setCreatorFilter(null);
         setSort(null);
     }, [scopeKey]);
 
-    // Close context menu on outside click
+    const foldersRef = useRef(folders);
+    foldersRef.current = folders;
+    const viewedFolderIdRef = useRef(viewedFolderId);
+    viewedFolderIdRef.current = viewedFolderId;
+    const onFolderViewIdChangeRef = useRef(onFolderViewIdChange);
+    onFolderViewIdChangeRef.current = onFolderViewIdChange;
+
+    const updateViewedFolder = useCallback((folderId: string | null) => {
+        if (viewedFolderIdRef.current === folderId) return;
+        viewedFolderIdRef.current = folderId;
+        setViewedFolderId(folderId);
+        onFolderViewIdChangeRef.current?.(folderId);
+    }, []);
+
     useEffect(() => {
-        if (!contextMenu) return;
-        function handle(e: MouseEvent) {
-            if (
-                contextMenuRef.current &&
-                !contextMenuRef.current.contains(e.target as Node)
-            )
-                setContextMenu(null);
+        if (folderViewId === undefined) return;
+        viewedFolderIdRef.current = folderViewId;
+        setViewedFolderId(folderViewId);
+    }, [folderViewId, scopeKey]);
+
+    const backFromFolderView = useCallback(() => {
+        const currentFolderId = viewedFolderIdRef.current;
+        if (!currentFolderId) return;
+        updateViewedFolder(
+            foldersRef.current.find(
+                (folder) => folder.id === currentFolderId,
+            )?.parent_folder_id ?? null,
+        );
+    }, [updateViewedFolder]);
+
+    const navigateToFolder = useCallback((folderId: string) => {
+        updateViewedFolder(folderId);
+        setExpandedFolderIds((previous) => {
+            if (previous.has(folderId)) return previous;
+            return new Set([...previous, folderId]);
+        });
+    }, [updateViewedFolder]);
+
+    const navigateToFolderRoot = useCallback(() => {
+        updateViewedFolder(null);
+    }, [updateViewedFolder]);
+
+    useEffect(() => {
+        onFolderViewBackActionChange?.(
+            viewedFolderId ? backFromFolderView : null,
+        );
+    }, [
+        backFromFolderView,
+        onFolderViewBackActionChange,
+        viewedFolderId,
+    ]);
+
+    const folderPathRef = useRef<DocTableFolder[]>([]);
+    const folderPathKey = useMemo(() => {
+        const path: DocTableFolder[] = [];
+        let current = viewedFolderId
+            ? folders.find((folder) => folder.id === viewedFolderId)
+            : undefined;
+        while (current) {
+            path.unshift(current);
+            current = current.parent_folder_id
+                ? folders.find(
+                      (folder) => folder.id === current?.parent_folder_id,
+                )
+                : undefined;
         }
-        document.addEventListener("mousedown", handle);
-        return () => document.removeEventListener("mousedown", handle);
-    }, [contextMenu]);
+        folderPathRef.current = path;
+        return JSON.stringify(
+            path.map((folder) => [folder.id, folder.name]),
+        );
+    }, [folders, viewedFolderId]);
+
+    useEffect(() => {
+        onFolderViewChange?.(
+            folderPathRef.current.map((folder) => ({
+                id: folder.id,
+                name: folder.name,
+                onClick: () => navigateToFolder(folder.id),
+            })),
+        );
+    }, [folderPathKey, navigateToFolder, onFolderViewChange]);
+
+    const onFolderViewBackActionChangeRef = useRef(
+        onFolderViewBackActionChange,
+    );
+    onFolderViewBackActionChangeRef.current = onFolderViewBackActionChange;
+    const onFolderViewChangeRef = useRef(onFolderViewChange);
+    onFolderViewChangeRef.current = onFolderViewChange;
+
+    useEffect(
+        () => () => {
+            onFolderViewBackActionChangeRef.current?.(null);
+            onFolderViewChangeRef.current?.([]);
+        },
+        [],
+    );
+
+    useEffect(() => {
+        if (search.trim() || serverQueryActive) navigateToFolderRoot();
+    }, [navigateToFolderRoot, search, serverQueryActive]);
 
     // Clear all drag state when any drag operation ends
     useEffect(() => {
@@ -655,6 +1045,41 @@ export function DocTable({
         return () => document.removeEventListener("dragend", handleDragEnd);
     }, []);
 
+    // Poll documents stuck in deferred conversion until the backend marks
+    // them "ready"/"error" (async conversion flips status server-side)
+    useEffect(() => {
+        const converting = documents.filter(
+            (d) => d.status === "pending" || d.status === "processing",
+        );
+        if (converting.length === 0) return;
+
+        let cancelled = false;
+        const interval = window.setInterval(() => {
+            for (const doc of converting) {
+                getDocument(doc.id)
+                    .then((latest) => {
+                        if (cancelled || latest.status === doc.status) return;
+                        setDocuments((prev) =>
+                            prev.map((d) =>
+                                d.id === doc.id ? { ...d, ...latest } : d,
+                            ),
+                        );
+                    })
+                    .catch(() => {
+                        // Deliberately silent: this 3s status poll retries by
+                        // itself on the next tick and the user asked for
+                        // nothing here, so a notice would report a failure that
+                        // has already healed. A conversion that really fails
+                        // arrives as an "error" status on the row.
+                    });
+            }
+        }, 3000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, [documents, setDocuments]);
+
     // Scroll new-folder input into view whenever it appears
     useEffect(() => {
         if (creatingFolderIn !== undefined) {
@@ -667,19 +1092,53 @@ export function DocTable({
 
     // ── Folder handlers ───────────────────────────────────────────────────────
 
+    async function expandFolderChildren(folderId: string) {
+        if (!onExpandFolder) return;
+        setLoadingChildFolderIds((prev) => new Set([...prev, folderId]));
+        try {
+            await onExpandFolder(folderId);
+        } catch (e) {
+            notifyError(e, {
+                action: "open this folder",
+                onRetry: () => {
+                    void expandFolderChildren(folderId);
+                },
+            });
+        } finally {
+            setLoadingChildFolderIds((prev) => {
+                const next = new Set(prev);
+                next.delete(folderId);
+                return next;
+            });
+        }
+    }
+
     function toggleFolder(id: string) {
+        const opening = !expandedFolderIds.has(id);
         setExpandedFolderIds((prev) => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
             return next;
         });
+        if (opening) void expandFolderChildren(id);
+    }
+
+    function openFolderView(id: string) {
+        updateViewedFolder(id);
+        if (expandedFolderIds.has(id)) return;
+        setExpandedFolderIds((prev) => new Set([...prev, id]));
+        void expandFolderChildren(id);
     }
 
     async function handleCreateFolder(parentId: string | null) {
         const name = newFolderName.trim();
         setNewFolderName("");
         if (!name) {
+            setCreatingFolderIn(undefined);
+            return;
+        }
+        if (!requireCapability("docs.organize", "create folders", "editor")) {
             setCreatingFolderIn(undefined);
             return;
         }
@@ -697,8 +1156,11 @@ export function DocTable({
         } as DocTableFolder;
         setFolders((prev) => [...prev, optimistic]);
         setExpandedFolderIds((prev) => new Set([...prev, tempId]));
-        if (parentId)
+        if (parentId) {
+            const wasExpanded = expandedFolderIds.has(parentId);
             setExpandedFolderIds((prev) => new Set([...prev, parentId]));
+            if (!wasExpanded) void expandFolderChildren(parentId);
+        }
 
         // Replace with real folder from API
         const folder = await operations.createFolder(name, parentId ?? null);
@@ -715,18 +1177,31 @@ export function DocTable({
         const name = renameFolderValue.trim();
         setRenamingFolderId(null);
         if (!name) return;
+        // Folder operations are member-level: organizing the shelf is part
+        // of collaborating on what sits on it, not an administrative act.
+        if (!requireCapability("docs.organize", "rename folders", "editor"))
+            return;
+        const updatedAt = new Date().toISOString();
         setFolders((prev) =>
-            prev.map((f) => (f.id === folderId ? { ...f, name } : f)),
+            prev.map((folder) =>
+                folder.id === folderId
+                    ? { ...folder, name, updated_at: updatedAt }
+                    : folder,
+            ),
         );
-        await operations.renameFolder(folderId, name);
+        const updated = await operations.renameFolder(folderId, name);
+        setFolders((prev) =>
+            prev.map((folder) =>
+                folder.id === folderId ? { ...folder, ...updated } : folder,
+            ),
+        );
     }
 
     function folderDeleteImpact(folderId: string) {
         const childrenByParent = new Map<string, string[]>();
         for (const folder of folders) {
             if (!folder.parent_folder_id) continue;
-            const children =
-                childrenByParent.get(folder.parent_folder_id) ?? [];
+            const children = childrenByParent.get(folder.parent_folder_id) ?? [];
             children.push(folder.id);
             childrenByParent.set(folder.parent_folder_id, children);
         }
@@ -741,13 +1216,19 @@ export function DocTable({
         }
 
         const folderIds = [...toDelete];
-        const documentIds = documents
-            .filter((d) => d.folder_id && toDelete.has(d.folder_id))
-            .map((d) => d.id);
+        const documentIds = documents.filter((d) => d.folder_id && toDelete.has(d.folder_id)).map((d) => d.id);
         return { folderIds, documentIds, documentCount: documentIds.length };
     }
 
     function requestDeleteFolder(folderId: string) {
+        if (
+            !requireCapability(
+                "docs.organize",
+                "delete folders and their documents",
+                "editor",
+            )
+        )
+            return;
         const folder = folders.find((f) => f.id === folderId);
         if (!folder) return;
         const impact = folderDeleteImpact(folderId);
@@ -764,15 +1245,18 @@ export function DocTable({
         const pending = pendingDeleteFolder;
         if (!pending || pendingDeleteFolderStatus === "deleting") return;
         setPendingDeleteFolderStatus("deleting");
+        const folderSnapshot = folders;
+        const documentSnapshot = documents;
+        const toDelete = new Set(pending.folderIds);
+        setFolders((prev) => prev.filter((f) => !toDelete.has(f.id)));
+        setDocuments((prev) => prev.filter((d) => !d.folder_id || !toDelete.has(d.folder_id)));
 
         try {
             await operations.deleteFolder(pending.folder.id);
-            const toDelete = new Set(pending.folderIds);
-
-            setFolders((prev) => prev.filter((f) => !toDelete.has(f.id)));
-            setDocuments((prev) =>
-                prev.filter((d) => !d.folder_id || !toDelete.has(d.folder_id)),
-            );
+            const currentFolderId = viewedFolderIdRef.current;
+            if (currentFolderId && toDelete.has(currentFolderId)) {
+                updateViewedFolder(pending.folder.parent_folder_id ?? null);
+            }
             setExpandedFolderIds((prev) => {
                 const next = new Set(prev);
                 for (const id of toDelete) next.delete(id);
@@ -785,9 +1269,12 @@ export function DocTable({
                 setContextMenu(null);
             }
             const deletedDocIds = new Set(pending.documentIds);
-            setSelectedDocIds((prev) =>
-                prev.filter((id) => !deletedDocIds.has(id)),
-            );
+            setSelectedDocIds((prev) => prev.filter((id) => !deletedDocIds.has(id)));
+            setSelectedFolderIds((prev) => {
+                const next = new Set(prev);
+                for (const id of toDelete) next.delete(id);
+                return next;
+            });
             setExpandedVersionDocIds((prev) => {
                 const next = new Set(prev);
                 for (const id of pending.documentIds) next.delete(id);
@@ -805,22 +1292,35 @@ export function DocTable({
             }, 650);
         } catch (err) {
             console.error("delete folder failed", err);
-            setPendingDeleteFolderStatus("idle");
-            setCollectionActionWarning(
-                "Folder could not be deleted. Please try again.",
+            setFolders((current) =>
+                restoreOptimisticallyDeletedRows(
+                    current,
+                    folderSnapshot,
+                    pending.folderIds,
+                ),
             );
+            setDocuments((current) =>
+                restoreOptimisticallyDeletedRows(
+                    current,
+                    documentSnapshot,
+                    pending.documentIds,
+                ),
+            );
+            setPendingDeleteFolderStatus("idle");
+            // The confirm dialog stays open on failure, so the button itself
+            // is the retry; a Retry action here would race it.
+            notifyError(err, {
+                action: "delete the folder",
+                fallback: "This folder could not be deleted. Please try again.",
+                supportNote: `Folder ${pending.folder.name}`,
+            });
         }
     }
 
     // ── Doc/chat/review handlers ──────────────────────────────────────────────
 
     function handleDocsSelected(newDocs: Document[]) {
-        setDocuments((prev) =>
-            [
-                ...prev,
-                ...newDocs.filter((d) => !prev.some((e) => e.id === d.id)),
-            ],
-        );
+        setDocuments((prev) => [...prev, ...newDocs.filter((d) => !prev.some((e) => e.id === d.id))]);
     }
 
     function removeDocumentFromLocalState(docId: string) {
@@ -868,17 +1368,11 @@ export function DocTable({
         setDocuments((prev) => {
             if (prev.some((d) => d.id === doc.id)) return prev;
             const nextDocs = [...prev];
-            nextDocs.splice(
-                Math.max(0, Math.min(snapshot.index, nextDocs.length)),
-                0,
-                doc,
-            );
+            nextDocs.splice(Math.max(0, Math.min(snapshot.index, nextDocs.length)), 0, doc);
             return nextDocs;
         });
         if (snapshot.selected) {
-            setSelectedDocIds((prev) =>
-                prev.includes(doc.id) ? prev : [...prev, doc.id],
-            );
+            setSelectedDocIds((prev) => (prev.includes(doc.id) ? prev : [...prev, doc.id]));
         }
         if (snapshot.versionsOpen) {
             setExpandedVersionDocIds((prev) => new Set([...prev, doc.id]));
@@ -907,12 +1401,36 @@ export function DocTable({
     }
 
     async function handleRemoveDocFromFolder(docId: string) {
+        if (
+            !requireCapability("docs.organize", "move documents", "editor")
+        )
+            return;
         setDocuments((prev) =>
-            prev.map((d) =>
-                d.id === docId ? { ...d, folder_id: null } : d,
+            prev.map((document) =>
+                document.id === docId
+                    ? { ...document, folder_id: null }
+                    : document,
             ),
         );
-        await operations.moveDocument(docId, null);
+        try {
+            const updated = await operations.moveDocument(docId, null);
+            setDocuments((prev) =>
+                prev.map((document) =>
+                    document.id === updated.id
+                        ? { ...document, ...updated }
+                        : document,
+                ),
+            );
+        } catch (error) {
+            // The row already jumped out of its folder optimistically, so a
+            // silent failure leaves it looking moved. Re-read the collection
+            // so the tree matches the server, then say what happened.
+            await operations.refreshCollection().catch(() => undefined);
+            notifyError(error, {
+                action: "remove the document from its folder",
+                onRetry: () => void handleRemoveDocFromFolder(docId),
+            });
+        }
     }
 
     async function submitDocumentRename(docId: string) {
@@ -923,6 +1441,12 @@ export function DocTable({
         }
         const previous = documents.find((d) => d.id === docId);
         if (!previous || trimmed === previous.filename) {
+            setRenamingDocumentId(null);
+            return;
+        }
+        if (
+            !requireCapability("docs.organize", "rename documents", "editor")
+        ) {
             setRenamingDocumentId(null);
             return;
         }
@@ -946,31 +1470,52 @@ export function DocTable({
         );
         try {
             const updated = await operations.renameDocument(docId, trimmed);
-            setDocuments((prev) =>
-                prev.map((d) => (d.id === docId ? { ...d, ...updated } : d)),
-            );
+            setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, ...updated } : d)));
         } catch (e) {
-            console.error("renameDocument failed", e);
-            setDocuments((prev) =>
-                previous
-                    ? prev.map((d) => (d.id === docId ? previous : d))
-                    : prev,
+            setDocuments((prev) => (previous ? prev.map((d) => (d.id === docId ? previous : d)) : prev));
+            // The backend refuses to rename a document that has no file yet
+            // (nothing to carry the name); say so instead of snapping back
+            // silently. Anything else gets the generic fallback.
+            notifyError(
+                e instanceof MikeApiError && e.status === 404
+                    ? new UserVisibleError(
+                          "This document has no file yet, so it can't be renamed.",
+                          { kind: "not_found", cause: e },
+                      )
+                    : e,
+                // No Retry: the row has snapped back to its old name and the
+                // rename input is closed, so re-running this would resubmit a
+                // value the user can no longer see.
+                {
+                    action: "rename the document",
+                    fallback:
+                        "This document could not be renamed. Please try again.",
+                },
             );
         }
     }
 
     async function handleRemoveDoc(docId: string) {
-        const doc = documents.find((d) => d.id === docId);
-        // Backend only lets the doc creator delete. Warn the requester
-        // instead of letting the request 404 silently.
-        if (doc && user?.id && doc.user_id && doc.user_id !== user.id) {
-            setOwnerOnlyAction("delete this document");
+        const doc = docs.find((d) => d.id === docId);
+        // Backend only lets the document's uploader delete. Warn the
+        // requester instead of letting the request 404 silently — and refuse
+        // when we cannot establish ownership, which the old condition read as
+        // permission (it required `doc`, `user.id` AND `doc.user_id` to be
+        // present before it would refuse anything).
+        if (!canDeleteDocument(doc)) {
+            refuseDocumentDelete("delete it");
             return;
         }
         setDeletingDocIds((prev) => new Set([...prev, docId]));
+        const snapshot = docs;
+        setDocuments((prev) => prev.filter((d) => d.id !== docId));
         try {
             await deleteDocument(docId);
-            setDocuments((prev) => prev.filter((d) => d.id !== docId));
+        } catch (error) {
+            setDocuments((current) =>
+                restoreOptimisticallyDeletedRows(current, snapshot, [docId]),
+            );
+            throw error;
         } finally {
             setDeletingDocIds((prev) => {
                 const next = new Set(prev);
@@ -985,12 +1530,23 @@ export function DocTable({
             setOwnerOnlyAction("delete this document");
             return;
         }
-        const versionCount =
-            versionsByDocId.get(doc.id)?.versions.length ??
-            currentVersionNumber(doc) ??
-            1;
+        const versionCount = versionsByDocId.get(doc.id)?.versions.length ?? currentVersionNumber(doc) ?? 1;
         if (versionCount <= 1) {
-            void handleRemoveDoc(doc.id);
+            // No confirmation dialog owns this failure, so surface it here
+            // instead of letting the rethrow become an unhandled rejection and
+            // the row reappear with no explanation.
+            void handleRemoveDoc(doc.id).catch((error) => {
+                notifyError(error, {
+                    action: "delete the document",
+                    fallback:
+                        "This file could not be deleted. Please try again.",
+                    supportNote: `Document ${doc.filename}`,
+                    // Through the same entry point, so a failed retry is
+                    // reported again and a document that has gained versions
+                    // since goes through its confirmation.
+                    onRetry: () => requestRemoveDoc(doc),
+                });
+            });
             return;
         }
         setPendingDeleteStatus("idle");
@@ -1009,8 +1565,13 @@ export function DocTable({
                 setPendingDeleteStatus("idle");
             }, 650);
         } catch (err) {
-            console.error("delete document failed", err);
             setPendingDeleteStatus("idle");
+            // The confirm dialog stays open, so its own button is the retry.
+            notifyError(err, {
+                action: "delete the document",
+                fallback: "This file could not be deleted. Please try again.",
+                supportNote: `Document ${pending.filename}`,
+            });
         }
     }
 
@@ -1018,9 +1579,7 @@ export function DocTable({
 
     function wouldCreateCycle(movingId: string, targetId: string): boolean {
         // Returns true if targetId is movingId or a descendant of it
-        let cur: DocTableFolder | undefined = folders.find(
-            (f) => f.id === targetId,
-        );
+        let cur: DocTableFolder | undefined = folders.find((f) => f.id === targetId);
         while (cur) {
             if (cur.id === movingId) return true;
             if (!cur.parent_folder_id) break;
@@ -1029,52 +1588,423 @@ export function DocTable({
         return false;
     }
 
+    // A catalog accepts no drops and starts no drags, so every payload check
+    // reports nothing to handle.
     function hasMovePayload(dt: DataTransfer): boolean {
+        if (catalog) return false;
         return Array.from(dt.types).some(
             (type) =>
-                type === "application/mike-doc" ||
+                type === SINGLE_DOCUMENT_DRAG_TYPE ||
+                type === MULTI_DOCUMENT_DRAG_TYPE ||
                 type === "application/mike-folder",
         );
     }
 
     function hasFilePayload(dt: DataTransfer): boolean {
+        if (catalog) return false;
         return Array.from(dt.types).includes("Files");
     }
 
     function hasDocumentPayload(dt: DataTransfer): boolean {
-        return Array.from(dt.types).includes("application/mike-doc");
+        if (catalog) return false;
+        return Array.from(dt.types).includes(SINGLE_DOCUMENT_DRAG_TYPE);
     }
 
     function currentVersionNumber(doc: Document): number | null {
         return documentVersionNumber(doc);
     }
 
-    function isSharedDocument(doc: Document | null | undefined): boolean {
-        return !!(doc?.user_id && user?.id && doc.user_id !== user.id);
+    /**
+     * Whether the caller may delete this document.
+     *
+     * `DELETE /single-documents/:documentId` (backend/src/routes/documents.ts)
+     * selects the row with `.eq("id", documentId).eq("user_id", userId)` and
+     * 404s if that finds nothing. There is no `ensureDocAccess`, no `can()`,
+     * no departed-uploader arm — deletion is pure row ownership, and a
+     * project admin genuinely cannot delete a colleague's document. So this
+     * stays keyed on the uploader rather than moving to `canDo`; a role-based
+     * check here would be the client promising something the server refuses.
+     *
+     * What changes is that both halves must now be KNOWN. The old
+     * `isSharedDocument(doc)` test answered false — "not somebody else's" —
+     * for a document with no uploader at all and for a caller whose id had
+     * not resolved, and both were being read as "yours, go ahead", enabling
+     * a delete the server was always going to 404.
+     */
+    const canDeleteDocument = useCallback(
+        (doc: Document | null | undefined): boolean =>
+            // Creator-scoped with NO departed-uploader arm: this route has no
+            // `ensureDocAccess` at all, so when `user_id` is null the row is
+            // deletable by nobody.
+            creatorScopedAllowed(doc?.user_id, user?.id, false),
+        [user?.id],
+    );
+
+    /** The refusal for a delete: the uploader rule, and nobody to ask. */
+    function refuseDocumentDelete(action: string) {
+        setOwnerOnlyAction({
+            title: "Uploader only",
+            message: `Only the person who uploaded this document can ${action}.`,
+        });
     }
 
-    async function handleDropCollectionFiles(files: File[]) {
-        if (files.length === 0) return;
-        const { supported, unsupported } =
-            partitionSupportedDocumentFiles(files);
+    function requestFolderUploadConflictChoice(conflict: {
+        folder_name: string;
+        suggested_name: string;
+    }): Promise<"rename" | "cancel"> {
+        folderUploadConflictResolverRef.current?.("cancel");
+        setFolderUploadConflict({
+            folderName: conflict.folder_name,
+            suggestedName: conflict.suggested_name,
+        });
+        return new Promise((resolve) => {
+            folderUploadConflictResolverRef.current = resolve;
+        });
+    }
+
+    function finishFolderUploadConflict(
+        choice: "rename" | "cancel",
+    ) {
+        const resolve = folderUploadConflictResolverRef.current;
+        folderUploadConflictResolverRef.current = null;
+        setFolderUploadConflict(null);
+        resolve?.(choice);
+    }
+
+    async function handleCollectionUploadEntries(
+        entries: DocumentUploadEntry[],
+        baseFolderId: string | null = viewedFolderIdRef.current,
+    ) {
+        if (entries.length === 0) return;
+        // Drag-and-drop and the folder picker bypass the
+        // (capability-gated) Add button, so they need the same
+        // content.edit check: viewers get the role popup instead of a
+        // doomed upload that the backend would 403 anyway.
+        if (!requireCapability("content.edit", "add documents", "editor"))
+            return;
+        const { supported, unsupported } = partitionSupportedDocumentFiles(
+            entries.map((entry) => entry.file),
+        );
         setDocumentUploadWarning(formatUnsupportedDocumentWarning(unsupported));
         if (supported.length === 0) return;
-        setUploadingDroppedFilenames(supported.map((file) => file.name));
-        try {
-            const uploaded = await Promise.all(
-                supported.map((file) => operations.uploadDocument(file)),
+        const supportedFiles = new Set(supported);
+        const supportedEntries = entries.filter((entry) =>
+            supportedFiles.has(entry.file),
+        );
+        if (
+            supportedEntries.length > MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD
+        ) {
+            notifyError(
+                new UserVisibleError(
+                    `You can upload up to ${MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD} supported documents at a time. Nothing was uploaded.`,
+                    { kind: "validation" },
+                ),
+                { action: "upload these files" },
             );
+            return;
+        }
+        const progressFiles = supportedEntries.map((entry) => ({
+            clientId: crypto.randomUUID(),
+            entry,
+            status: "pending" as UploadProgressStatus,
+        }));
+        // What a Retry re-sends: only the entries whose upload did not
+        // complete, so the files already stored are not uploaded twice.
+        const entriesThatDidNotLand = (outcomes: UploadOutcome<unknown>[]) => {
+            const failedClientIds = new Set(
+                outcomes
+                    .filter((outcome) => outcome.status !== "completed")
+                    .map((outcome) => outcome.clientId),
+            );
+            return progressFiles
+                .filter((progress) => failedClientIds.has(progress.clientId))
+                .map((progress) => progress.entry);
+        };
+        const uploadId = crypto.randomUUID();
+        const clientIdByFile = new Map(
+            progressFiles.map((progress) => [
+                progress.entry.file,
+                progress.clientId,
+            ]),
+        );
+        const resolvedRootFolderNames = new Map<string, string>();
+        const updateCollectionUploadProgress = () => {
+            setCollectionUploadProgress((current) => {
+                const existing = current.find(
+                    (upload) => upload.uploadId === uploadId,
+                );
+                const nextUpload = {
+                    uploadId,
+                    parentFolderId: baseFolderId,
+                    entries: resolvedDocumentUploadProgressEntries(
+                        supportedEntries,
+                        resolvedRootFolderNames,
+                    ),
+                    files: existing?.files ?? progressFiles,
+                };
+                return existing
+                    ? current.map((upload) =>
+                          upload.uploadId === uploadId ? nextUpload : upload,
+                      )
+                    : [...current, nextUpload];
+            });
+        };
+        updateCollectionUploadProgress();
+
+        try {
+            const addResolvedFolders = (resolvedFolders: DocTableFolder[]) => {
+                setFolders((current) => {
+                    const next = [...current];
+                    const knownIds = new Set(current.map((folder) => folder.id));
+                    for (const folder of resolvedFolders) {
+                        if (knownIds.has(folder.id)) continue;
+                        knownIds.add(folder.id);
+                        next.push(folder);
+                    }
+                    return next;
+                });
+            };
+
+            const rootFolderNames = Array.from(
+                new Set(
+                    supportedEntries.flatMap((entry) => {
+                        const segments = documentUploadFolderSegments(entry);
+                        return segments.length > 0 ? [segments[0]] : [];
+                    }),
+                ),
+            );
+            const resolvedRoots = new Map<
+                string,
+                { folderId: string }
+            >();
+
+            for (const rootFolderName of rootFolderNames) {
+                const resolution = await resolveDocumentUploadRootFolder({
+                    rootFolderName,
+                    baseFolderId,
+                    resolveFolderPath: operations.resolveFolderPath,
+                    chooseConflict: requestFolderUploadConflictChoice,
+                });
+                if (!resolution) return;
+
+                resolvedRootFolderNames.set(
+                    rootFolderName,
+                    resolution.resolved_name,
+                );
+                updateCollectionUploadProgress();
+                addResolvedFolders(resolution.folders);
+                resolvedRoots.set(rootFolderName, {
+                    folderId: resolution.folder_id,
+                });
+            }
+
+            const folderPathPromises = new Map<string, Promise<string>>();
+            const resolveEntryFolder = async (entry: DocumentUploadEntry) => {
+                const segments = documentUploadFolderSegments(entry);
+                if (segments.length === 0) return baseFolderId;
+                const root = resolvedRoots.get(segments[0]);
+                if (!root) throw new Error("Folder root was not resolved");
+                const remainingSegments = segments.slice(1);
+                if (remainingSegments.length === 0) return root.folderId;
+                const key = JSON.stringify([root.folderId, remainingSegments]);
+                const existing = folderPathPromises.get(key);
+                if (existing) return existing;
+                const pending = operations
+                    .resolveFolderPath(
+                        remainingSegments,
+                        root.folderId,
+                        "reuse",
+                    )
+                    .then((nestedResolution) => {
+                        if (nestedResolution.conflict) {
+                            throw new Error("Nested folder path conflicted");
+                        }
+                        addResolvedFolders(nestedResolution.folders);
+                        return nestedResolution.folder_id;
+                    });
+                folderPathPromises.set(key, pending);
+                return pending;
+            };
+
+            const folderResults = await settleWithConcurrency(
+                supportedEntries,
+                DOCUMENT_UPLOAD_CONCURRENCY,
+                async (entry) => {
+                    const folderId = await resolveEntryFolder(entry);
+                    return { entry, folderId };
+                },
+            );
+            const resolvedEntries = folderResults.flatMap((result) =>
+                result.status === "fulfilled" ? [result.value] : [],
+            );
+            const folderFailureOutcomes = folderResults.flatMap(
+                (result, index): UploadOutcome<Document>[] =>
+                    result.status === "rejected"
+                        ? [
+                              {
+                                  clientId: progressFiles[index].clientId,
+                                  filename:
+                                      progressFiles[index].entry.file.name,
+                                  status: "error",
+                                  result: null,
+                                  errorCode: "folder_resolution_failed",
+                              },
+                          ]
+                        : [],
+            );
+            let batchOutcomes: UploadOutcome<Document>[] | null = null;
+            let uploaded: Document[];
+            if (operations.uploadDocuments) {
+                batchOutcomes = await operations.uploadDocuments(
+                    resolvedEntries.map(({ entry, folderId }) => ({
+                        file: entry.file,
+                        folderId,
+                        clientId: clientIdByFile.get(entry.file)!,
+                    })),
+                    {
+                        onProgress: (progress) => {
+                            setCollectionUploadProgress((current) =>
+                                current.map((upload) =>
+                                    upload.uploadId === uploadId
+                                        ? {
+                                              ...upload,
+                                              files: upload.files.map((file) =>
+                                                  file.clientId ===
+                                                  progress.clientId
+                                                      ? {
+                                                            ...file,
+                                                            status: progress.status,
+                                                        }
+                                                      : file,
+                                              ),
+                                          }
+                                        : upload,
+                                ),
+                            );
+                            if (
+                                progress.status === "completed" &&
+                                progress.result
+                            ) {
+                                handleDocsSelected([progress.result]);
+                            }
+                        },
+                    },
+                );
+                uploaded = batchOutcomes.flatMap((outcome) =>
+                    outcome.status === "completed" && outcome.result
+                        ? [outcome.result]
+                        : [],
+                );
+            } else {
+                const results = await settleWithConcurrency(
+                    resolvedEntries,
+                    DOCUMENT_UPLOAD_CONCURRENCY,
+                    ({ entry, folderId }) =>
+                        operations.uploadDocument(entry.file, folderId),
+                );
+                uploaded = results.flatMap((result) =>
+                    result.status === "fulfilled" ? [result.value] : [],
+                );
+            }
             handleDocsSelected(uploaded);
+            const failedCount = supportedEntries.length - uploaded.length;
+            if (failedCount > 0) {
+                const outcomes = [
+                    ...folderFailureOutcomes,
+                    ...(batchOutcomes ?? []),
+                ];
+                const failedEntries = entriesThatDidNotLand(outcomes);
+                notifyPartialFailure(
+                    failedUploadMessage(outcomes),
+                    {
+                        action: "upload every file",
+                        // Retry re-uploads only the files that failed, so the
+                        // ones already stored are not duplicated.
+                        onRetry:
+                            failedEntries.length > 0
+                                ? () => {
+                                      void handleCollectionUploadEntries(
+                                          failedEntries,
+                                          baseFolderId,
+                                      );
+                                  }
+                                : undefined,
+                    },
+                );
+            }
         } catch (err) {
-            console.error("Document drop upload failed", err);
+            // Retry only what did not land. An UploadBatchError carries the
+            // per-file outcomes, so the files already stored are left alone;
+            // a throw from the folder-resolution phase means nothing was
+            // uploaded, so the whole batch is safe to run again.
+            const retryEntries =
+                err instanceof UploadBatchError
+                    ? entriesThatDidNotLand(err.outcomes)
+                    : supportedEntries;
+            notifyError(
+                err instanceof UploadBatchError
+                    ? new UserVisibleError(failedUploadMessage(err.outcomes), {
+                          kind: "unknown",
+                          retryable: retryEntries.length > 0,
+                          cause: err,
+                      })
+                    : err,
+                {
+                    action: "upload these files",
+                    fallback:
+                        "This folder could not be uploaded. Please try again.",
+                    onRetry:
+                        retryEntries.length > 0
+                            ? () => {
+                                  void handleCollectionUploadEntries(
+                                      retryEntries,
+                                      baseFolderId,
+                                  );
+                              }
+                            : undefined,
+                },
+            );
         } finally {
-            setUploadingDroppedFilenames([]);
+            setCollectionUploadProgress((current) =>
+                current.filter((upload) => upload.uploadId !== uploadId),
+            );
+        }
+    }
+
+    function handleDropCollectionFiles(
+        files: File[],
+        baseFolderId?: string | null,
+    ) {
+        return handleCollectionUploadEntries(
+            documentUploadEntriesFromFiles(files),
+            baseFolderId,
+        );
+    }
+
+    async function handleDroppedCollectionDataTransfer(
+        dataTransfer: DataTransfer,
+        baseFolderId?: string | null,
+    ) {
+        try {
+            const entries =
+                await collectDroppedDocumentUploadEntries(dataTransfer);
+            await handleCollectionUploadEntries(entries, baseFolderId);
+        } catch (error) {
+            notifyError(
+                new UserVisibleError(
+                    "This folder could not be read. Try selecting it with Upload folder instead.",
+                    { kind: "unknown", cause: error },
+                ),
+                { action: "read the dropped folder" },
+            );
         }
     }
 
     useEffect(() => {
         const hasFiles = (dataTransfer: DataTransfer | null) =>
-            !!dataTransfer && Array.from(dataTransfer.types).includes("Files");
+            !catalog &&
+            !!dataTransfer &&
+            Array.from(dataTransfer.types).includes("Files");
 
         function handleDragEnter(event: globalThis.DragEvent) {
             if (!hasFiles(event.dataTransfer)) return;
@@ -1091,10 +2021,7 @@ export function DocTable({
 
         function handleDragLeave(event: globalThis.DragEvent) {
             if (!hasFiles(event.dataTransfer)) return;
-            collectionDragDepthRef.current = Math.max(
-                0,
-                collectionDragDepthRef.current - 1,
-            );
+            collectionDragDepthRef.current = Math.max(0, collectionDragDepthRef.current - 1);
             if (collectionDragDepthRef.current === 0) {
                 setIsDraggingCollectionFiles(false);
             }
@@ -1104,12 +2031,12 @@ export function DocTable({
             if (!hasFiles(event.dataTransfer)) return;
             event.preventDefault();
             event.stopPropagation();
+            const dataTransfer = event.dataTransfer;
             collectionDragDepthRef.current = 0;
             setIsDraggingCollectionFiles(false);
             setDragOverFileRoot(false);
-            void handleDropCollectionFiles(
-                Array.from(event.dataTransfer?.files ?? []),
-            );
+            if (!dataTransfer) return;
+            void handleDroppedCollectionDataTransfer(dataTransfer);
         }
 
         window.addEventListener("dragenter", handleDragEnter);
@@ -1126,19 +2053,37 @@ export function DocTable({
 
     async function handleDropDocumentVersions(doc: Document, files: File[]) {
         if (files.length === 0) return;
-        const { supported, unsupported } =
-            partitionSupportedDocumentFiles(files);
+        // Same tier as the server's POST /versions guard (content.edit) —
+        // without it an org viewer's drop fails into console.error only.
+        if (!requireCapability("content.edit", "upload a new version", "editor"))
+            return;
+        const { supported, unsupported } = partitionSupportedDocumentFiles(files);
         setDocumentUploadWarning(formatUnsupportedDocumentWarning(unsupported));
         if (supported.length === 0) return;
 
         setUploadingVersionDocIds((prev) => new Set([...prev, doc.id]));
         try {
-            for (const file of supported) {
-                await uploadDocumentVersion(doc.id, file, file.name);
+            // Counted so a Retry re-sends only the files that did not land:
+            // each upload is its own new version, so re-sending one that
+            // succeeded would store it twice.
+            let landed = 0;
+            try {
+                for (const file of supported) {
+                    await uploadDocumentVersion(doc.id, file, file.name);
+                    landed += 1;
+                }
+            } catch (err) {
+                const remaining = supported.slice(landed);
+                notifyError(err, {
+                    action: "upload the new version",
+                    fallback: "This version could not be uploaded. Try again.",
+                    supportNote: `Document ${doc.filename}`,
+                    onRetry: () => {
+                        void handleDropDocumentVersions(doc, remaining);
+                    },
+                });
             }
-            await refreshDocumentVersionState(doc.id);
-        } catch (err) {
-            console.error("Document version drop upload failed", err);
+            if (landed > 0) await refreshVersionsAfterChange(doc.id);
         } finally {
             setUploadingVersionDocIds((prev) => {
                 const next = new Set(prev);
@@ -1148,42 +2093,43 @@ export function DocTable({
         }
     }
 
-    async function saveExistingDocumentAsNewVersion(
-        targetDoc: Document,
-        sourceDoc: Document,
-    ) {
-        const sourceIndex =
-            documents.findIndex((doc) => doc.id === sourceDoc.id);
+    async function saveExistingDocumentAsNewVersion(targetDoc: Document, sourceDoc: Document) {
+        const sourceIndex = documents.findIndex((doc) => doc.id === sourceDoc.id);
         const sourceSnapshot = {
             index: sourceIndex >= 0 ? sourceIndex : 0,
             selected: selectedDocIds.includes(sourceDoc.id),
             versionsOpen: expandedVersionDocIds.has(sourceDoc.id),
             versions: versionsByDocId.get(sourceDoc.id)?.versions,
-            currentVersionId: versionsByDocId.get(sourceDoc.id)
-                ?.currentVersionId,
+            currentVersionId: versionsByDocId.get(sourceDoc.id)?.currentVersionId,
             loadingVersions: loadingVersionDocIds.has(sourceDoc.id),
             uploadingVersion: uploadingVersionDocIds.has(sourceDoc.id),
             viewing: viewingDoc?.id === sourceDoc.id,
-            viewingVersion:
-                viewingDoc?.id === sourceDoc.id ? viewingDocVersion : null,
+            viewingVersion: viewingDoc?.id === sourceDoc.id ? viewingDocVersion : null,
         };
 
         setUploadingVersionDocIds((prev) => new Set([...prev, targetDoc.id]));
         removeDocumentFromLocalState(sourceDoc.id);
         try {
-            await copyDocumentVersionFromDocument(
-                targetDoc.id,
-                sourceDoc.id,
-                sourceDoc.filename,
-            );
-            await refreshDocumentVersionState(targetDoc.id);
-        } catch (err) {
-            console.error("Existing document version drop failed", err);
-            restoreDocumentToLocalState(sourceDoc, sourceSnapshot);
-            setCollectionActionWarning(
-                apiErrorDetail(err) ??
-                    "Could not save this document as a new version.",
-            );
+            try {
+                await copyDocumentVersionFromDocument(targetDoc.id, sourceDoc.id, sourceDoc.filename);
+            } catch (err) {
+                restoreDocumentToLocalState(sourceDoc, sourceSnapshot);
+                notifyError(err, {
+                    action: "save this document as a new version",
+                    fallback:
+                        "This document could not be saved as a new version.",
+                    supportNote: `${sourceDoc.filename} onto ${targetDoc.filename}`,
+                    onRetry: () => {
+                        void saveExistingDocumentAsNewVersion(targetDoc, sourceDoc);
+                    },
+                });
+                return;
+            }
+            // The copy landed and the server deleted the source document, so
+            // its row stays gone. If only the re-read fails, Retry re-reads;
+            // re-running the copy would point at a source that no longer
+            // exists.
+            await refreshVersionsAfterChange(targetDoc.id);
         } finally {
             setUploadingVersionDocIds((prev) => {
                 const next = new Set(prev);
@@ -1193,24 +2139,16 @@ export function DocTable({
         }
     }
 
-    function handleDropExistingDocumentVersion(
-        targetDoc: Document,
-        sourceDocId: string,
-    ) {
+    function handleDropExistingDocumentVersion(targetDoc: Document, sourceDocId: string) {
         if (!sourceDocId || sourceDocId === targetDoc.id) return;
         const sourceDoc = documents.find((doc) => doc.id === sourceDocId);
         if (!sourceDoc) return;
         setPendingVersionDrop({ targetDoc, sourceDoc });
     }
 
-    function handleDocumentVersionDragOver(
-        e: DragEvent<HTMLDivElement>,
-        docId: string,
-    ) {
-        if (
-            !hasFilePayload(e.dataTransfer) &&
-            !hasDocumentPayload(e.dataTransfer)
-        ) {
+    function handleDocumentVersionDragOver(e: DragEvent<HTMLDivElement>, docId: string) {
+        if (dataTransferHasDirectory(e.dataTransfer)) return;
+        if (!hasFilePayload(e.dataTransfer) && !hasDocumentPayload(e.dataTransfer)) {
             return;
         }
         e.preventDefault();
@@ -1227,14 +2165,9 @@ export function DocTable({
         }
     }
 
-    function handleDocumentVersionDrop(
-        e: DragEvent<HTMLDivElement>,
-        doc: Document,
-    ) {
-        if (
-            !hasFilePayload(e.dataTransfer) &&
-            !hasDocumentPayload(e.dataTransfer)
-        ) {
+    function handleDocumentVersionDrop(e: DragEvent<HTMLDivElement>, doc: Document) {
+        if (dataTransferHasDirectory(e.dataTransfer)) return;
+        if (!hasFilePayload(e.dataTransfer) && !hasDocumentPayload(e.dataTransfer)) {
             return;
         }
         e.preventDefault();
@@ -1246,51 +2179,61 @@ export function DocTable({
         setDragOverRoot(false);
         setDragOverFolderId(null);
         if (hasFilePayload(e.dataTransfer)) {
-            void handleDropDocumentVersions(
-                doc,
-                Array.from(e.dataTransfer.files),
-            );
+            void handleDropDocumentVersions(doc, Array.from(e.dataTransfer.files));
             return;
         }
         void handleDropExistingDocumentVersion(
             doc,
-            e.dataTransfer.getData("application/mike-doc"),
+            readDocumentDragPayload(e.dataTransfer)[0] ?? "",
         );
     }
 
-    async function handleDropOnFolder(
-        targetFolderId: string | null,
-        dt: DataTransfer,
-    ) {
+    async function handleDropOnFolder(targetFolderId: string | null, dt: DataTransfer) {
         if (!hasMovePayload(dt)) return;
-        const docId = dt.getData("application/mike-doc");
+        const docIds = readDocumentDragPayload(dt);
         const subFolderId = dt.getData("application/mike-folder");
-        if (docId) {
-            const doc = documents.find((d) => d.id === docId);
-            if (!doc || (doc.folder_id ?? null) === targetFolderId) return;
-            setDocuments((prev) =>
-                prev.map((d) =>
-                    d.id === docId ? { ...d, folder_id: targetFolderId } : d,
-                ),
-            );
-            await operations.moveDocument(docId, targetFolderId);
-        } else if (subFolderId && subFolderId !== targetFolderId) {
+        if (docIds.length > 0) {
+            const movingIds = docIds.filter((id) => {
+                const doc = documents.find((candidate) => candidate.id === id);
+                return doc && (doc.folder_id ?? null) !== targetFolderId;
+            });
+            if (movingIds.length === 0) return;
             if (
-                targetFolderId !== null &&
-                wouldCreateCycle(subFolderId, targetFolderId)
+                !requireCapability("docs.organize", "move documents", "editor")
             )
                 return;
-            const folder = folders.find((f) => f.id === subFolderId);
-            if (!folder || (folder.parent_folder_id ?? null) === targetFolderId)
+            await moveDocsToFolder(movingIds, targetFolderId);
+        } else if (subFolderId && subFolderId !== targetFolderId) {
+            if (
+                !requireCapability("docs.organize", "move folders", "editor")
+            )
                 return;
+            if (targetFolderId !== null && wouldCreateCycle(subFolderId, targetFolderId)) return;
+            const folder = folders.find((f) => f.id === subFolderId);
+            if (!folder || (folder.parent_folder_id ?? null) === targetFolderId) return;
+            const updatedAt = new Date().toISOString();
             setFolders((prev) =>
-                prev.map((f) =>
-                    f.id === subFolderId
-                        ? { ...f, parent_folder_id: targetFolderId }
-                        : f,
+                prev.map((candidate) =>
+                    candidate.id === subFolderId
+                        ? {
+                              ...candidate,
+                              parent_folder_id: targetFolderId,
+                              updated_at: updatedAt,
+                          }
+                        : candidate,
                 ),
             );
-            await operations.moveFolder(subFolderId, targetFolderId);
+            const updated = await operations.moveFolder(
+                subFolderId,
+                targetFolderId,
+            );
+            setFolders((prev) =>
+                prev.map((candidate) =>
+                    candidate.id === subFolderId
+                        ? { ...candidate, ...updated }
+                        : candidate,
+                ),
+            );
         }
     }
 
@@ -1301,27 +2244,32 @@ export function DocTable({
         return (
             <div
                 ref={newFolderInputRef}
-                className="group flex h-10 min-w-max items-center pr-8"
+                className="group flex h-10 min-w-max items-center pr-3"
                 key={`new-folder-${parentId ?? "root"}`}
             >
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
+                    className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
                     <div className="flex items-center">
-                        <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-                            <ChevronRight className="h-3.5 w-3.5 text-gray-300" />
+                        <input
+                            type="checkbox"
+                            disabled
+                            aria-label="Select files in new folder"
+                            className={`${TABLE_CHECKBOX_CLASS} cursor-default opacity-40`}
+                        />
+                        <span className="mr-2 flex h-4 w-4 shrink-0 items-center justify-center">
+                            <ChevronRight className="h-4 w-4 text-gray-300" />
                         </span>
                         <SubfolderSvgIcon className="mr-2 h-4 w-4 shrink-0" />
                         <input
                             autoFocus
-                            className="flex-1 min-w-0 text-sm text-gray-800 bg-transparent outline-none border-b border-gray-300"
+                            className="flex-1 min-w-0 text-xs text-gray-800 bg-transparent outline-none border-b border-gray-300"
                             placeholder="Folder name"
                             value={newFolderName}
                             onChange={(e) => setNewFolderName(e.target.value)}
                             onKeyDown={(e) => {
-                                if (e.key === "Enter")
-                                    void handleCreateFolder(parentId);
+                                if (e.key === "Enter") void handleCreateFolder(parentId);
                                 if (e.key === "Escape") {
                                     setCreatingFolderIn(undefined);
                                     setNewFolderName("");
@@ -1334,6 +2282,7 @@ export function DocTable({
                 <div className="ml-auto w-20 shrink-0" />
                 <div className="w-24 shrink-0" />
                 <div className="w-20 shrink-0" />
+                {showCreator && <div className="w-32 shrink-0" />}
                 <div className="w-32 shrink-0" />
                 <div className="w-32 shrink-0" />
                 <div className="w-8 shrink-0" />
@@ -1347,96 +2296,501 @@ export function DocTable({
         fileType,
         depth,
         statusLabel,
+        nameTrailingLabel,
+        entryKind = "file",
     }: {
         key: string;
         filename: string;
         fileType: string | null;
         depth: number;
         statusLabel: string;
+        nameTrailingLabel?: ReactNode;
+        entryKind?: "file" | "folder";
     }) {
         return (
-            <div
-                key={key}
-                className="group flex h-10 min-w-max items-center pr-8"
-            >
+            <div key={key} className="group flex h-10 min-w-max items-center pr-3">
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
+                    className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
-                    <div className="flex items-center">
-                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                    <div className="flex min-w-0 items-center">
+                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                        {entryKind === "folder" && (
+                            <span className="mr-2 flex h-4 w-4 shrink-0 items-center justify-center">
+                                <ChevronRight className="h-4 w-4 text-gray-400" />
+                            </span>
+                        )}
                         <span className="mr-2 shrink-0">
-                            <DocIcon
-                                fileType={fileType ?? filename}
-                                muted
-                            />
+                            {entryKind === "folder" ? (
+                                <SubfolderSvgIcon className="h-4 w-4 opacity-50" />
+                            ) : (
+                                <DocIcon fileType={fileType ?? filename} muted />
+                            )}
                         </span>
-                        <span className="text-sm text-gray-400 truncate">
+                        <span className="min-w-0 flex-1 truncate text-xs text-gray-400">
                             {filename}
                         </span>
+                        {nameTrailingLabel && (
+                            <span className="ml-2 shrink-0 text-xs tabular-nums text-gray-400">
+                                {nameTrailingLabel}
+                            </span>
+                        )}
                     </div>
                 </div>
-                <div className="ml-auto w-20 shrink-0 text-xs text-gray-300 uppercase truncate">
-                    {fileType ??
-                        (filename.includes(".")
-                            ? filename.split(".").pop()
-                            : "file")}
+                <div className="ml-auto w-20 shrink-0 text-xs text-gray-300 lowercase truncate">
+                    {entryKind === "folder"
+                        ? "folder"
+                        : fileType ??
+                          (filename.includes(".")
+                              ? filename.split(".").pop()
+                              : "file")}
                 </div>
-                <div className="w-24 shrink-0 text-sm text-gray-300">
-                    {statusLabel}
-                </div>
-                <div className="w-20 shrink-0 text-sm text-gray-300">—</div>
-                <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
-                <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
+                <div className="w-24 shrink-0 text-xs text-gray-300">{statusLabel}</div>
+                <div className="w-20 shrink-0 text-xs text-gray-300">—</div>
+                {renderCreatorCell({ user_id: user?.id })}
+                <div className="w-32 shrink-0 text-xs text-gray-300">—</div>
+                <div className="w-32 shrink-0 text-xs text-gray-300">—</div>
                 <div className="w-8 shrink-0" />
             </div>
         );
     }
 
-    function renderUploadingDocumentRows(depth: number) {
-        return uploadingDroppedFilenames.map((filename) =>
-            renderDocumentActivityRow({
-                key: `uploading-doc-${filename}`,
-                filename,
-                fileType: null,
-                depth,
-                statusLabel: "Uploading",
-            }),
+    function renderUploadingDocumentRows(
+        depth: number,
+        parentFolderId: string | null,
+    ) {
+        const visibleUploads = collectionUploadProgress.filter(
+            (upload) => upload.parentFolderId === parentFolderId,
+        );
+        const directRows = visibleUploads.flatMap((upload) =>
+            upload.files
+                .filter(
+                    (file) =>
+                        documentUploadFolderSegments(file.entry).length === 0 &&
+                        file.status !== "completed" &&
+                        file.status !== "error",
+                )
+                .map((file) =>
+                    renderDocumentActivityRow({
+                        key: `uploading-file-${upload.uploadId}-${file.clientId}`,
+                        filename: file.entry.file.name,
+                        fileType: null,
+                        depth,
+                        statusLabel: "",
+                        nameTrailingLabel: <UploadingTrailingLabel />,
+                    }),
+                ),
+        );
+        const folderRows = visibleUploads.flatMap((upload) =>
+            upload.entries
+                .filter((entry) => entry.kind === "folder")
+                .map((entry, index) => {
+                    const folderFiles = upload.files.filter(
+                        (file) =>
+                            documentUploadFolderSegments(file.entry)[0] ===
+                            entry.sourceName,
+                    );
+                    return renderDocumentActivityRow({
+                        key: `uploading-folder-${upload.uploadId}-${entry.name}-${index}`,
+                        filename: entry.name,
+                        fileType: null,
+                        depth,
+                        statusLabel: "",
+                        nameTrailingLabel: folderUploadProgressLabel(
+                            folderFiles.map((file) => file.status),
+                        ),
+                        entryKind: "folder",
+                    });
+                }),
+        );
+        return [...directRows, ...folderRows];
+    }
+
+    const effectiveSort = sort ?? defaultSort;
+
+    const foldersByParentId = useMemo(() => {
+        const byParentId = new Map<string | null, DocTableFolder[]>();
+        for (const folder of folders) {
+            const parentId = folder.parent_folder_id ?? null;
+            byParentId.set(parentId, [
+                ...(byParentId.get(parentId) ?? []),
+                folder,
+            ]);
+        }
+        return byParentId;
+    }, [folders]);
+    const uploadingFolderNamesByParentId = useMemo(() => {
+        const byParentId = new Map<string | null, Set<string>>();
+        for (const upload of collectionUploadProgress) {
+            const names = byParentId.get(upload.parentFolderId) ?? new Set();
+            for (const entry of upload.entries) {
+                if (entry.kind === "folder") names.add(entry.name);
+            }
+            byParentId.set(upload.parentFolderId, names);
+        }
+        return byParentId;
+    }, [collectionUploadProgress]);
+    const childFoldersForLevel = useCallback(
+        (parentId: string | null) => {
+            const nameMultiplier =
+                enableHeaderFilters &&
+                effectiveSort?.key === "name" &&
+                effectiveSort.direction === "desc"
+                    ? -1
+                    : 1;
+            const uploadingFolderNames =
+                uploadingFolderNamesByParentId.get(parentId);
+            return (foldersByParentId.get(parentId) ?? [])
+                .filter(
+                    (folder) => !uploadingFolderNames?.has(folder.name),
+                )
+                .sort(
+                    (left, right) =>
+                        left.name.localeCompare(right.name) * nameMultiplier,
+                );
+        },
+        [
+            effectiveSort,
+            enableHeaderFilters,
+            foldersByParentId,
+            uploadingFolderNamesByParentId,
+        ],
+    );
+
+    const folderTreeIds = useCallback(
+        (folderId: string) => collectFolderTreeIds(folders, [folderId]),
+        [folders],
+    );
+
+    /**
+     * Document ids implied by a set of selected folders — the same derivation
+     * `selectedFolderDocumentIds` uses for the rendered checkmarks.
+     */
+    function documentIdsImpliedByFolders(
+        folderIds: ReadonlySet<string>,
+    ): Set<string> {
+        if (folderIds.size === 0) return new Set();
+        const treeIds = collectFolderTreeIds(
+            folders,
+            folderSelectionRootIds(folders, folderIds),
+        );
+        return new Set(
+            docs
+                .filter(
+                    (candidate) =>
+                        candidate.folder_id != null &&
+                        treeIds.has(candidate.folder_id),
+                )
+                .map((candidate) => candidate.id),
         );
     }
 
+    /**
+     * Drop the folder selection that made `documentIds` look selected.
+     *
+     * A checked folder selects its documents by derivation, so those documents
+     * are not in `selectedDocIds`. Clearing the folder alone would therefore
+     * uncheck every sibling as well. Materialize the documents the cleared
+     * folders implied into `selectedDocIds` first, so only the documents the
+     * user actually deselected lose their checkmark.
+     */
+    function clearSelectedFolderAncestors(documentIds: readonly string[]) {
+        const ancestorIds = new Set<string>();
+        for (const documentId of documentIds) {
+            let currentId: string | null =
+                docs.find((candidate) => candidate.id === documentId)
+                    ?.folder_id ?? null;
+            while (currentId && !ancestorIds.has(currentId)) {
+                ancestorIds.add(currentId);
+                currentId =
+                    folders.find((folder) => folder.id === currentId)
+                        ?.parent_folder_id ?? null;
+            }
+        }
+        if (ancestorIds.size === 0) return;
+
+        const nextFolderIds = new Set(selectedFolderIds);
+        let cleared = false;
+        for (const id of ancestorIds) {
+            if (nextFolderIds.delete(id)) cleared = true;
+        }
+        if (!cleared) return;
+
+        const stillImplied = documentIdsImpliedByFolders(nextFolderIds);
+        const materialized = [
+            ...documentIdsImpliedByFolders(selectedFolderIds),
+        ].filter((id) => !stillImplied.has(id));
+
+        setSelectedFolderIds(nextFolderIds);
+        if (materialized.length > 0) {
+            setSelectedDocIds((current) => [
+                ...new Set([...current, ...materialized]),
+            ]);
+        }
+    }
+
+    function visibleDocumentIds(): string[] {
+        return Array.from(
+            tableRootRef.current?.querySelectorAll<HTMLElement>(
+                "[data-document-row][data-document-id]",
+            ) ?? [],
+            (row) => row.dataset.documentId,
+        ).filter((id): id is string => !!id);
+    }
+
+    function visibleCollectionRowKeys(): string[] {
+        const rows = Array.from(
+            tableRootRef.current?.querySelectorAll<HTMLElement>(
+                "[data-collection-row-key]",
+            ) ?? [],
+        );
+        rows.sort((left, right) => {
+            const topDifference =
+                left.getBoundingClientRect().top -
+                right.getBoundingClientRect().top;
+            if (topDifference !== 0) return topDifference;
+            return left.compareDocumentPosition(right) &
+                Node.DOCUMENT_POSITION_PRECEDING
+                ? 1
+                : -1;
+        });
+        return rows
+            .map((row) => row.dataset.collectionRowKey)
+            .filter((key): key is string => !!key);
+    }
+
+    function updateCollectionRowSelection(
+        rowKeys: readonly string[],
+        selected: boolean,
+    ) {
+        const documentIds = rowKeys
+            .filter((key) => key.startsWith("document:"))
+            .map((key) => key.slice("document:".length));
+        const folderIds = rowKeys
+            .filter((key) => key.startsWith("folder:"))
+            .map((key) => key.slice("folder:".length));
+        setSelectionCameFromSelectAll(false);
+        setSelectedFolderIds((current) => {
+            const next = new Set(current);
+            for (const id of folderIds) {
+                if (selected) next.add(id);
+                else next.delete(id);
+            }
+            return next;
+        });
+        setSelectedDocIds((current) => {
+            const next = new Set(current);
+            for (const id of documentIds) {
+                if (selected) next.add(id);
+                else next.delete(id);
+            }
+            return [...next];
+        });
+    }
+
+    function updateDocumentSelection(
+        doc: Document,
+        selected: boolean,
+        shiftKey: boolean,
+    ) {
+        const targetKey = `document:${doc.id}`;
+        const rowKeys = shiftKey
+            ? selectionRangeIds(
+                  visibleCollectionRowKeys(),
+                  selectionAnchorKeyRef.current,
+                  targetKey,
+              )
+            : [targetKey];
+        if (!selected) {
+            clearSelectedFolderAncestors(
+                rowKeys
+                    .filter((key) => key.startsWith("document:"))
+                    .map((key) => key.slice("document:".length)),
+            );
+        }
+        updateCollectionRowSelection(rowKeys, selected);
+        selectionAnchorKeyRef.current = selectionAnchorAfterRowSelection(
+            selectionAnchorKeyRef.current,
+            targetKey,
+            rowKeys,
+            selected,
+        );
+    }
+
+    function handleDocumentRowClick(
+        event: React.MouseEvent<HTMLDivElement>,
+        doc: Document,
+    ) {
+        if (event.shiftKey) {
+            event.preventDefault();
+            updateDocumentSelection(doc, true, true);
+            return;
+        }
+        if (event.ctrlKey || event.metaKey) {
+            event.preventDefault();
+            updateDocumentSelection(doc, true, false);
+            return;
+        }
+        if (catalog?.canPreview?.(doc) === false) {
+            void downloadDoc(doc.id);
+            return;
+        }
+        setViewingDocVersion(null);
+        setViewingDoc(doc);
+    }
+
+    function catalogAddActions(targets: Document[]) {
+        const addable = targets.filter((doc) => catalog?.canAdd?.(doc) !== false);
+        const addStatus = catalog?.addStatus?.(addable);
+        return {
+            onAdd: addable.length > 0 ? () => catalog?.onAdd(addable) : undefined,
+            addLabel: catalog?.addLabel(addable.length, addStatus),
+            addStatus,
+            addDisabled: catalog?.addDisabled,
+        };
+    }
+
+    function catalogDocumentActions(doc: Document) {
+        return {
+            onView:
+                catalog?.canPreview?.(doc) === false
+                    ? undefined
+                    : () => {
+                          setViewingDocVersion(null);
+                          setViewingDoc(doc);
+                      },
+            ...catalogAddActions([doc]),
+            onDownload: () => void downloadDoc(doc.id),
+        };
+    }
+
+    function catalogFolderActions(folderId: string) {
+        const treeIds = collectFolderTreeIds(folders, [folderId]);
+        const addable = documents.filter(
+            (doc) =>
+                doc.folder_id != null &&
+                treeIds.has(doc.folder_id) &&
+                catalog?.canAdd?.(doc) !== false,
+        );
+        return {
+            onView: () => openFolderView(folderId),
+            viewLabel: "Open",
+            ...catalogAddActions(addable),
+        };
+    }
+
+    function handleDocumentDragStart(
+        event: DragEvent<HTMLDivElement>,
+        doc: Document,
+    ) {
+        if (renamingDocumentId === doc.id) {
+            event.preventDefault();
+            return;
+        }
+        const visibleIds = new Set(visibleDocumentIds());
+        const selectedVisibleIds = [...effectiveSelectedDocIdSet].filter((id) =>
+            visibleIds.has(id),
+        );
+        const draggedIds = writeDocumentDragPayload(
+            event.dataTransfer,
+            doc.id,
+            selectedVisibleIds,
+        );
+        setDocumentRowsDragPreview({
+            dataTransfer: event.dataTransfer,
+            tableRoot: tableRootRef.current,
+            draggedDocumentIds: draggedIds,
+            draggedDocumentId: doc.id,
+            clientX: event.clientX,
+            clientY: event.clientY,
+        });
+        if (!effectiveSelectedDocIdSet.has(doc.id)) {
+            setSelectedFolderIds(new Set());
+            setSelectionCameFromSelectAll(false);
+            setSelectedDocIds(draggedIds);
+        }
+        selectionAnchorKeyRef.current = `document:${doc.id}`;
+    }
+
     function renderLevel(parentId: string | null, depth: number) {
-        const nameMultiplier =
-            enableHeaderFilters &&
-            sort?.key === "name" &&
-            sort.direction === "desc"
-                ? -1
-                : 1;
-        const childFolders = folders
-            .filter((f) => f.parent_folder_id === parentId)
-            .sort((a, b) => a.name.localeCompare(b.name) * nameMultiplier);
-        const childDocs = filteredDocs.filter(
+        const childFolders = childFoldersForLevel(parentId);
+        const allChildDocs = filteredDocs.filter(
             (d) => (d.folder_id ?? null) === parentId,
         );
+        const levelKey = parentId ?? "root";
+        const levelLimit = documentLimitByLevel?.[levelKey];
+        const childDocs =
+            !q && levelLimit != null
+                ? allChildDocs.slice(0, levelLimit)
+                : allChildDocs;
+        const combinedSortKey =
+            effectiveSort?.key === "name" ||
+            effectiveSort?.key === "created" ||
+            effectiveSort?.key === "updated"
+                ? effectiveSort.key
+                : null;
+        const combinedDirection = effectiveSort?.direction === "desc" ? -1 : 1;
+        const rowOrder = new Map(
+            [
+                ...childDocs.map((document) => ({
+                    key: `document:${document.id}`,
+                    name: document.filename,
+                    createdAt: document.created_at,
+                    updatedAt: document.updated_at ?? document.created_at,
+                    fallbackGroup: 0,
+                })),
+                ...childFolders.map((folder) => ({
+                    key: `folder:${folder.id}`,
+                    name: folder.name,
+                    createdAt: folder.created_at,
+                    updatedAt: folder.updated_at ?? folder.created_at,
+                    fallbackGroup: 1,
+                })),
+            ]
+                .sort((a, b) => {
+                    if (combinedSortKey === "name") {
+                        return (
+                            a.name.localeCompare(b.name) * combinedDirection
+                        );
+                    }
+                    if (combinedSortKey === "created") {
+                        const difference =
+                            dateTimeValue(a.createdAt) -
+                            dateTimeValue(b.createdAt);
+                        return difference === 0
+                            ? a.name.localeCompare(b.name)
+                            : difference * combinedDirection;
+                    }
+                    if (combinedSortKey === "updated") {
+                        const difference =
+                            dateTimeValue(a.updatedAt) -
+                            dateTimeValue(b.updatedAt);
+                        return difference === 0
+                            ? a.name.localeCompare(b.name)
+                            : difference * combinedDirection;
+                    }
+                    return (
+                        a.fallbackGroup - b.fallbackGroup ||
+                        a.name.localeCompare(b.name)
+                    );
+                })
+                .map((row, index) => [row.key, index + 1]),
+        );
+        const trailingRowOrder = rowOrder.size + 2;
 
         return (
-            <>
-                {parentId === null && renderUploadingDocumentRows(depth)}
-                {/* Files first */}
+            <div className="flex flex-col">
+                {renderUploadingDocumentRows(depth, parentId)}
                 {childDocs.map((doc) => {
                     const docName = doc.filename;
-                    const isProcessing =
-                        doc.status === "pending" || doc.status === "processing";
+                    const isProcessing = doc.status === "pending" || doc.status === "processing";
                     const isError = doc.status === "error";
                     const isVersionsOpen = expandedVersionDocIds.has(doc.id);
                     const versionNumber = currentVersionNumber(doc);
-                    const hasVersions =
-                        typeof versionNumber === "number" && versionNumber > 1;
+                    const hasVersions = typeof versionNumber === "number" && versionNumber > 1;
                     const isVersionDragOver = dragOverVersionDocId === doc.id;
-                    const isUploadingVersion = uploadingVersionDocIds.has(
-                        doc.id,
-                    );
-                    const isSelected = selectedDocIds.includes(doc.id);
+                    const isUploadingVersion = uploadingVersionDocIds.has(doc.id);
+                    const isSelected = effectiveSelectedDocIdSet.has(doc.id);
                     const isDeletingDoc = deletingDocIds.has(doc.id);
                     if (isDeletingDoc) {
                         return renderDocumentActivityRow({
@@ -1448,37 +2802,32 @@ export function DocTable({
                         });
                     }
                     return (
-                        <div key={`doc-${doc.id}`}>
+                        <div
+                            key={`doc-${doc.id}`}
+                            style={{
+                                order:
+                                    rowOrder.get(`document:${doc.id}`) ?? 1,
+                            }}
+                        >
                             <div
                                 data-document-row
-                                draggable={renamingDocumentId !== doc.id}
-                                onDragStart={(e) => {
-                                    if (renamingDocumentId === doc.id) {
-                                        e.preventDefault();
-                                        return;
-                                    }
-                                    e.dataTransfer.setData(
-                                        "application/mike-doc",
-                                        doc.id,
-                                    );
-                                    e.dataTransfer.effectAllowed = "copyMove";
-                                }}
+                                data-document-id={doc.id}
+                                data-collection-row-key={`document:${doc.id}`}
+                                draggable={!catalog && renamingDocumentId !== doc.id}
+                                onDragStart={(event) =>
+                                    handleDocumentDragStart(event, doc)
+                                }
                                 onDragEnd={() => {
                                     setDragOverRoot(false);
                                     setDragOverFolderId(null);
                                     setDragOverVersionDocId(null);
                                 }}
-                                onDragOver={(e) =>
-                                    handleDocumentVersionDragOver(e, doc.id)
-                                }
+                                onDragOver={(e) => handleDocumentVersionDragOver(e, doc.id)}
                                 onDragLeave={handleDocumentVersionDragLeave}
-                                onDrop={(e) =>
-                                    handleDocumentVersionDrop(e, doc)
+                                onDrop={(e) => handleDocumentVersionDrop(e, doc)}
+                                onClick={(event) =>
+                                    handleDocumentRowClick(event, doc)
                                 }
-                                onClick={() => {
-                                    setViewingDocVersion(null);
-                                    setViewingDoc(doc);
-                                }}
                                 onContextMenu={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -1491,53 +2840,39 @@ export function DocTable({
                                         showFolderActions: false,
                                     });
                                 }}
-                                className={`group flex h-10 min-w-max items-center pr-8 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : LIQUID_GLASS_HOVER_CLASS}`}
                             >
                                 {(() => {
                                     const rowBg = isVersionDragOver
                                         ? "bg-blue-50"
                                         : isSelected
-                                          ? APP_SURFACE_ACTIVE_CLASS
-                                          : stickyCellBg;
+                                          ? LIQUID_GLASS_SELECTED_CLASS
+                                          : "";
                                     return (
                                         <>
                                             <div
-                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                                className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                                 style={treeNameCellStyle(depth)}
                                             >
                                                 <div className="flex items-center">
-                                                    {isProcessing ||
-                                                    isUploadingVersion ? (
-                                                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                                                    {isProcessing || isUploadingVersion ? (
+                                                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                     ) : (
                                                         <input
                                                             type="checkbox"
-                                                            checked={selectedDocIds.includes(
-                                                                doc.id,
-                                                            )}
-                                                            onChange={() =>
-                                                                setSelectedDocIds(
-                                                                    (prev) =>
-                                                                        prev.includes(
-                                                                            doc.id,
-                                                                        )
-                                                                            ? prev.filter(
-                                                                                  (
-                                                                                      x,
-                                                                                  ) =>
-                                                                                      x !==
-                                                                                      doc.id,
-                                                                              )
-                                                                            : [
-                                                                                  ...prev,
-                                                                                  doc.id,
-                                                                              ],
+                                                            checked={effectiveSelectedDocIdSet.has(doc.id)}
+                                                            onChange={(event) =>
+                                                                updateDocumentSelection(
+                                                                    doc,
+                                                                    event.target.checked,
+                                                                    (
+                                                                        event.nativeEvent as MouseEvent
+                                                                    ).shiftKey,
                                                                 )
                                                             }
-                                                            onClick={(e) =>
-                                                                e.stopPropagation()
-                                                            }
-                                                            className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            aria-label={`Select ${doc.filename}`}
+                                                            className={TABLE_CHECKBOX_CLASS}
                                                         />
                                                     )}
                                                     <span className="mr-2 shrink-0">
@@ -1545,102 +2880,62 @@ export function DocTable({
                                                             <AlertCircle className="h-4 w-4 text-red-500" />
                                                         ) : (
                                                             <DocIcon
-                                                                fileType={
-                                                                    doc.file_type
-                                                                }
+                                                                fileType={doc.file_type}
+                                                                warning={textLayerWarning(
+                                                                    doc.page_count,
+                                                                    doc.textless_page_count,
+                                                                )}
                                                             />
                                                         )}
                                                     </span>
-                                                    {renamingDocumentId ===
-                                                    doc.id ? (
+                                                    {renamingDocumentId === doc.id ? (
                                                         <input
                                                             autoFocus
-                                                            className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none border-b border-gray-300"
-                                                            value={
-                                                                renameDocumentValue
-                                                            }
-                                                            onClick={(e) =>
-                                                                e.stopPropagation()
-                                                            }
-                                                            onDragStart={(
-                                                                e,
-                                                            ) => {
+                                                            className="min-w-0 flex-1 text-xs text-gray-800 bg-transparent outline-none border-b border-gray-300"
+                                                            value={renameDocumentValue}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onDragStart={(e) => {
                                                                 e.preventDefault();
                                                                 e.stopPropagation();
                                                             }}
-                                                            onChange={(e) =>
-                                                                setRenameDocumentValue(
-                                                                    e.target
-                                                                        .value,
-                                                                )
-                                                            }
+                                                            onChange={(e) => setRenameDocumentValue(e.target.value)}
                                                             onKeyDown={(e) => {
-                                                                if (
-                                                                    e.key ===
-                                                                    "Enter"
-                                                                )
-                                                                    void submitDocumentRename(
-                                                                        doc.id,
-                                                                    );
-                                                                if (
-                                                                    e.key ===
-                                                                    "Escape"
-                                                                ) {
-                                                                    setRenamingDocumentId(
-                                                                        null,
-                                                                    );
-                                                                    setRenameDocumentValue(
-                                                                        "",
-                                                                    );
+                                                                if (e.key === "Enter")
+                                                                    void submitDocumentRename(doc.id);
+                                                                if (e.key === "Escape") {
+                                                                    setRenamingDocumentId(null);
+                                                                    setRenameDocumentValue("");
                                                                 }
                                                             }}
-                                                            onBlur={() =>
-                                                                void submitDocumentRename(
-                                                                    doc.id,
-                                                                )
-                                                            }
+                                                            onBlur={() => void submitDocumentRename(doc.id)}
                                                         />
                                                     ) : (
-                                                        <span className="text-sm text-gray-800 truncate">
+                                                        <span className="text-xs text-gray-800 truncate">
                                                             {docName}
                                                         </span>
                                                     )}
                                                 </div>
                                             </div>
-                                            <div className="ml-auto w-20 shrink-0 text-xs text-gray-500 uppercase truncate">
-                                                {doc.file_type ?? (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
-                                                )}
+                                            <div className="ml-auto w-20 shrink-0 text-xs text-gray-500 lowercase truncate">
+                                                {doc.file_type ?? <span className="text-gray-300">—</span>}
                                             </div>
-                                            <div className="w-24 shrink-0 text-sm text-gray-500 truncate">
+                                            <div className="w-24 shrink-0 text-xs text-gray-500 truncate">
                                                 {doc.size_bytes != null ? (
                                                     formatBytes(doc.size_bytes)
                                                 ) : (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300">—</span>
                                                 )}
                                             </div>
                                             <div
-                                                className="w-20 shrink-0 text-sm text-gray-500 flex items-center gap-1"
-                                                onClick={(e) =>
-                                                    e.stopPropagation()
-                                                }
+                                                className="w-20 shrink-0 text-xs text-gray-500 flex items-center gap-1"
+                                                onClick={(e) => e.stopPropagation()}
                                             >
                                                 {hasVersions ? (
                                                     <button
-                                                        onClick={() =>
-                                                            void toggleVersions(
-                                                                doc.id,
-                                                            )
-                                                        }
-                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
+                                                        onClick={() => void toggleVersions(doc.id)}
+                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${LIQUID_GLASS_HOVER_CLASS}`}
                                                     >
-                                                        <span>
-                                                            {versionNumber}
-                                                        </span>
+                                                        <span>{versionNumber}</span>
                                                         {isVersionsOpen ? (
                                                             <ChevronDown className="h-3 w-3 text-gray-400" />
                                                         ) : (
@@ -1648,75 +2943,55 @@ export function DocTable({
                                                         )}
                                                     </button>
                                                 ) : (
-                                                    <span className="text-gray-300 pl-1">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300 pl-1">—</span>
                                                 )}
                                             </div>
-                                            <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
+                                            {renderCreatorCell(doc)}
+                                            <div className="w-32 shrink-0 text-xs text-gray-500 truncate">
                                                 {doc.created_at ? (
                                                     formatDate(doc.created_at)
                                                 ) : (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300">—</span>
                                                 )}
                                             </div>
-                                            <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
+                                            <div className="w-32 shrink-0 text-xs text-gray-500 truncate">
                                                 {doc.updated_at ? (
                                                     formatDate(doc.updated_at)
                                                 ) : (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300">—</span>
                                                 )}
                                             </div>
                                             <div className="w-8 shrink-0 flex justify-end">
                                                 {!isProcessing && (
-                                                    <RowActions
-                                                        onRename={() => {
-                                                            setRenameDocumentValue(
-                                                                docName,
-                                                            );
-                                                            setRenamingDocumentId(
-                                                                doc.id,
-                                                            );
-                                                        }}
-                                                        renameLabel="Rename document"
-                                                        onDownload={() =>
-                                                            downloadDoc(doc.id)
-                                                        }
-                                                        onShowAllVersions={
-                                                            hasVersions &&
-                                                            !isVersionsOpen
-                                                                ? () =>
-                                                                      void toggleVersions(
-                                                                          doc.id,
-                                                                      )
-                                                                : undefined
-                                                        }
-                                                        onUploadNewVersion={() =>
-                                                            void handleUploadNewVersion(
-                                                                doc,
-                                                            )
-                                                        }
-                                                        onRemoveFromFolder={
-                                                            doc.folder_id
-                                                                ? () =>
-                                                                      handleRemoveDocFromFolder(
-                                                                          doc.id,
-                                                                      )
-                                                                : undefined
-                                                        }
-                                                        onDelete={() =>
-                                                            requestRemoveDoc(
-                                                                doc,
-                                                            )
-                                                        }
-                                                        deleteDisabled={isSharedDocument(
-                                                            doc,
-                                                        )}
-                                                    />
+                                                    catalog ? (
+                                                        <RowActions {...catalogDocumentActions(doc)} />
+                                                    ) : (
+                                                        <RowActions
+                                                            onView={() => {
+                                                                setViewingDocVersion(null);
+                                                                setViewingDoc(doc);
+                                                            }}
+                                                            onRename={() => {
+                                                                setRenameDocumentValue(docName);
+                                                                setRenamingDocumentId(doc.id);
+                                                            }}
+                                                            renameLabel="Rename document"
+                                                            onDownload={() => downloadDoc(doc.id)}
+                                                            onShowAllVersions={
+                                                                hasVersions && !isVersionsOpen
+                                                                    ? () => void toggleVersions(doc.id)
+                                                                    : undefined
+                                                            }
+                                                            onUploadNewVersion={() => void handleUploadNewVersion(doc)}
+                                                            onRemoveFromFolder={
+                                                                doc.folder_id
+                                                                    ? () => handleRemoveDocFromFolder(doc.id)
+                                                                    : undefined
+                                                            }
+                                                            onDelete={() => requestRemoveDoc(doc)}
+                                                            deleteDisabled={!canDeleteDocument(doc)}
+                                                        />
+                                                    )
                                                 )}
                                             </div>
                                         </>
@@ -1726,17 +3001,12 @@ export function DocTable({
                             {isVersionsOpen && (
                                 <DocVersionHistory
                                     docId={doc.id}
+                                    showCreator={showCreator}
                                     filename={docName}
                                     activeVersionNumber={versionNumber}
                                     loading={loadingVersionDocIds.has(doc.id)}
-                                    versions={
-                                        versionsByDocId.get(doc.id)?.versions ??
-                                        []
-                                    }
-                                    currentVersionId={
-                                        versionsByDocId.get(doc.id)
-                                            ?.currentVersionId ?? null
-                                    }
+                                    versions={versionsByDocId.get(doc.id)?.versions ?? []}
+                                    currentVersionId={versionsByDocId.get(doc.id)?.currentVersionId ?? null}
                                     depth={depth}
                                     onDownloadVersion={downloadDocVersion}
                                     onOpenVersion={(versionId, label) => {
@@ -1747,16 +3017,10 @@ export function DocTable({
                                         setViewingDoc(doc);
                                     }}
                                     onRenameVersion={(versionId, filename) =>
-                                        handleRenameVersion(
-                                            doc.id,
-                                            versionId,
-                                            filename,
-                                        )
+                                        handleRenameVersion(doc.id, versionId, filename)
                                     }
                                     onExtensionChangeBlocked={(filename) =>
-                                        setDocumentRenameWarning(
-                                            extensionChangeWarning(filename),
-                                        )
+                                        setDocumentRenameWarning(extensionChangeWarning(filename))
                                     }
                                 />
                             )}
@@ -1764,30 +3028,87 @@ export function DocTable({
                     );
                 })}
 
-                {/* Subfolders after files, sorted alphabetically */}
+                {onLoadMoreDocuments && !q && (
+                    <div
+                        style={{
+                            ...treeNameCellStyle(depth),
+                            order: trailingRowOrder,
+                        }}
+                    >
+                        <TableLoadMoreRow
+                            autoLoadOnVisible={autoLoadOnScroll}
+                            loading={false}
+                            hasMore={!!documentsHasMoreByLevel?.[levelKey]}
+                            itemCount={childDocs.length}
+                            loadingMore={!!loadingMoreDocumentsByLevel?.[levelKey]}
+                            hasError={false}
+                            onLoadMore={() => onLoadMoreDocuments(parentId)}
+                        />
+                    </div>
+                )}
+
                 {childFolders.map((folder) => {
                     const isExpanded = expandedFolderIds.has(folder.id);
                     const isRenaming = renamingFolderId === folder.id;
+                    const isLoadingChildren = loadingChildFolderIds.has(folder.id);
+                    const folderIds = folderTreeIds(folder.id);
+                    const folderDocumentIds = docs
+                        .filter(
+                            (document) =>
+                                document.folder_id != null &&
+                                folderIds.has(document.folder_id),
+                        )
+                        .map((document) => document.id);
+                    const folderExplicitlySelected = selectedFolderIds.has(
+                        folder.id,
+                    );
+                    const allFolderDocumentsSelected =
+                        folderExplicitlySelected ||
+                        (folderDocumentIds.length > 0 &&
+                            folderDocumentIds.every((id) =>
+                                effectiveSelectedDocIdSet.has(id),
+                            ));
+                    const someFolderDocumentsSelected =
+                        !allFolderDocumentsSelected &&
+                        folderDocumentIds.some((id) =>
+                            effectiveSelectedDocIdSet.has(id),
+                        );
                     return (
-                        <div key={`folder-${folder.id}`}>
+                        <div
+                            key={`folder-${folder.id}`}
+                            style={{
+                                order:
+                                    rowOrder.get(`folder:${folder.id}`) ?? 1,
+                            }}
+                        >
                             <div
-                                draggable={!isRenaming}
+                                data-folder-row
+                                data-folder-id={folder.id}
+                                data-collection-row-key={`folder:${folder.id}`}
+                                draggable={!catalog && !isRenaming}
                                 onDragStart={(e) => {
                                     if (isRenaming) {
                                         e.preventDefault();
                                         return;
                                     }
-                                    e.dataTransfer.setData(
-                                        "application/mike-folder",
-                                        folder.id,
-                                    );
+                                    e.dataTransfer.setData("application/mike-folder", folder.id);
                                     e.dataTransfer.effectAllowed = "move";
                                     e.stopPropagation();
                                 }}
                                 onDragOver={(e) => {
-                                    if (!hasMovePayload(e.dataTransfer)) return;
+                                    if (
+                                        !hasMovePayload(e.dataTransfer) &&
+                                        !hasFilePayload(e.dataTransfer)
+                                    ) {
+                                        return;
+                                    }
                                     e.preventDefault();
                                     e.stopPropagation();
+                                    e.dataTransfer.dropEffect = hasFilePayload(
+                                        e.dataTransfer,
+                                    )
+                                        ? "copy"
+                                        : "move";
                                     setDragOverFolderId(folder.id);
                                     setDragOverVersionDocId(null);
                                 }}
@@ -1796,18 +3117,50 @@ export function DocTable({
                                     setDragOverFolderId(null);
                                 }}
                                 onDrop={async (e) => {
-                                    if (!hasMovePayload(e.dataTransfer)) return;
+                                    if (
+                                        !hasMovePayload(e.dataTransfer) &&
+                                        !hasFilePayload(e.dataTransfer)
+                                    ) {
+                                        return;
+                                    }
                                     e.preventDefault();
                                     e.stopPropagation();
                                     setDragOverFolderId(null);
                                     setDragOverRoot(false);
                                     setDragOverVersionDocId(null);
-                                    await handleDropOnFolder(
-                                        folder.id,
-                                        e.dataTransfer,
-                                    );
+                                    if (hasFilePayload(e.dataTransfer)) {
+                                        await handleDroppedCollectionDataTransfer(
+                                            e.dataTransfer,
+                                            folder.id,
+                                        );
+                                        return;
+                                    }
+                                    await handleDropOnFolder(folder.id, e.dataTransfer);
                                 }}
-                                onClick={() => toggleFolder(folder.id)}
+                                onClick={(event) => {
+                                    if (
+                                        !event.shiftKey &&
+                                        !event.ctrlKey &&
+                                        !event.metaKey
+                                    ) {
+                                        openFolderView(folder.id);
+                                        return;
+                                    }
+                                    event.preventDefault();
+                                    const targetKey = `folder:${folder.id}`;
+                                    const selectedRowKeys = event.shiftKey
+                                        ? selectionRangeIds(
+                                              visibleCollectionRowKeys(),
+                                              selectionAnchorKeyRef.current,
+                                              targetKey,
+                                          )
+                                        : [targetKey];
+                                    updateCollectionRowSelection(
+                                        selectedRowKeys,
+                                        true,
+                                    );
+                                    selectionAnchorKeyRef.current = targetKey;
+                                }}
                                 onContextMenu={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -1819,92 +3172,122 @@ export function DocTable({
                                         showFolderActions: true,
                                     });
                                 }}
-                                className={`group flex h-10 min-w-max items-center pr-8 ${APP_SURFACE_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
+                                className={`group flex h-10 min-w-max items-center pr-3 ${folderExplicitlySelected ? LIQUID_GLASS_SELECTED_CLASS : LIQUID_GLASS_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
                             >
                                 <div
-                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-4 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : stickyCellBg} transition-colors ${dragOverFolderId === folder.id ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                    className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : folderExplicitlySelected ? LIQUID_GLASS_SELECTED_CLASS : ""} transition-colors ${dragOverFolderId === folder.id || folderExplicitlySelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                     style={treeNameCellStyle(depth)}
                                 >
                                     <div className="flex items-center">
-                                        <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-                                            {isExpanded ? (
-                                                <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
-                                            ) : (
-                                                <ChevronRight className="h-3.5 w-3.5 text-gray-400" />
-                                            )}
-                                        </span>
-                                        <SubfolderSvgIcon
-                                            open={isExpanded}
-                                            className="mr-2 h-4 w-4 shrink-0"
+                                        <input
+                                            type="checkbox"
+                                            checked={allFolderDocumentsSelected}
+                                            ref={(element) => {
+                                                if (element) {
+                                                    element.indeterminate =
+                                                        someFolderDocumentsSelected;
+                                                }
+                                            }}
+                                            onChange={() => {
+                                                selectionAnchorKeyRef.current =
+                                                    `folder:${folder.id}`;
+                                                setSelectionCameFromSelectAll(false);
+                                                setSelectedFolderIds((current) => {
+                                                    const next = new Set(current);
+                                                    if (allFolderDocumentsSelected) {
+                                                        next.delete(folder.id);
+                                                    } else {
+                                                        next.add(folder.id);
+                                                    }
+                                                    return next;
+                                                });
+                                                if (allFolderDocumentsSelected) {
+                                                    setSelectedDocIds((current) => {
+                                                        const next = new Set(current);
+                                                        folderDocumentIds.forEach((id) =>
+                                                            next.delete(id),
+                                                        );
+                                                        return [...next];
+                                                    });
+                                                }
+                                            }}
+                                            onClick={(event) =>
+                                                event.stopPropagation()
+                                            }
+                                            className={TABLE_CHECKBOX_CLASS}
+                                            aria-label={`Select files in ${folder.name}`}
+                                            title={`Select files in ${folder.name}`}
                                         />
+                                        <button
+                                            type="button"
+                                            aria-label={
+                                                isExpanded
+                                                    ? `Collapse ${folder.name}`
+                                                    : `Expand ${folder.name}`
+                                            }
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                toggleFolder(folder.id);
+                                            }}
+                                            className="mr-2 flex h-4 w-4 shrink-0 items-center justify-center"
+                                        >
+                                            {isLoadingChildren ? (
+                                                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                                            ) : isExpanded ? (
+                                                <ChevronDown className="h-4 w-4 text-gray-400" />
+                                            ) : (
+                                                <ChevronRight className="h-4 w-4 text-gray-400" />
+                                            )}
+                                        </button>
+                                        <SubfolderSvgIcon open={isExpanded} className="mr-2 h-4 w-4 shrink-0" />
                                         {isRenaming ? (
                                             <input
                                                 autoFocus
-                                                className="flex-1 min-w-0 text-sm text-gray-800 bg-transparent outline-none"
+                                                className="flex-1 min-w-0 text-xs text-gray-800 bg-transparent outline-none"
                                                 value={renameFolderValue}
                                                 onDragStart={(e) => {
                                                     e.preventDefault();
                                                     e.stopPropagation();
                                                 }}
-                                                onChange={(e) =>
-                                                    setRenameFolderValue(
-                                                        e.target.value,
-                                                    )
-                                                }
+                                                onChange={(e) => setRenameFolderValue(e.target.value)}
                                                 onKeyDown={(e) => {
-                                                    if (e.key === "Enter")
-                                                        void handleRenameFolder(
-                                                            folder.id,
-                                                        );
-                                                    if (e.key === "Escape")
-                                                        setRenamingFolderId(
-                                                            null,
-                                                        );
+                                                    if (e.key === "Enter") void handleRenameFolder(folder.id);
+                                                    if (e.key === "Escape") setRenamingFolderId(null);
                                                 }}
-                                                onBlur={() =>
-                                                    void handleRenameFolder(
-                                                        folder.id,
-                                                    )
-                                                }
-                                                onClick={(e) =>
-                                                    e.stopPropagation()
-                                                }
+                                                onBlur={() => void handleRenameFolder(folder.id)}
+                                                onClick={(e) => e.stopPropagation()}
                                             />
                                         ) : (
-                                            <span className="text-sm text-gray-800 truncate">
-                                                {folder.name}
-                                            </span>
+                                            <span className="text-xs text-gray-800 truncate">{folder.name}</span>
                                         )}
                                     </div>
                                 </div>
-                                <div className="ml-auto w-20 shrink-0 text-xs text-gray-300">
-                                    —
+                                <div className="ml-auto w-20 shrink-0 text-xs text-gray-300">—</div>
+                                <div className="w-24 shrink-0 text-xs text-gray-300">—</div>
+                                <div className="w-20 shrink-0 text-xs text-gray-300">—</div>
+                                {renderCreatorCell(folder)}
+                                <div className="w-32 shrink-0 truncate text-xs text-gray-500">
+                                    {formatDate(folder.created_at)}
                                 </div>
-                                <div className="w-24 shrink-0 text-sm text-gray-300">
-                                    —
+                                <div className="w-32 shrink-0 truncate text-xs text-gray-500">
+                                    {formatDate(
+                                        folder.updated_at ?? folder.created_at,
+                                    )}
                                 </div>
-                                <div className="w-20 shrink-0 text-sm text-gray-300">
-                                    —
-                                </div>
-                                <div className="w-32 shrink-0 text-sm text-gray-300">
-                                    —
-                                </div>
-                                <div className="w-32 shrink-0 text-sm text-gray-300">
-                                    —
-                                </div>
-                                <div
-                                    className="w-8 shrink-0 flex justify-end"
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <RowActions
-                                        onRename={() => {
-                                            setRenameFolderValue(folder.name);
-                                            setRenamingFolderId(folder.id);
-                                        }}
-                                        onDelete={() =>
-                                            requestDeleteFolder(folder.id)
-                                        }
-                                    />
+                                <div className="w-8 shrink-0 flex justify-end" onClick={(e) => e.stopPropagation()}>
+                                    {catalog ? (
+                                        <RowActions {...catalogFolderActions(folder.id)} />
+                                    ) : (
+                                        <RowActions
+                                            onView={() => openFolderView(folder.id)}
+                                            viewLabel="Open"
+                                            onRename={() => {
+                                                setRenameFolderValue(folder.name);
+                                                setRenamingFolderId(folder.id);
+                                            }}
+                                            onDelete={() => requestDeleteFolder(folder.id)}
+                                        />
+                                    )}
                                 </div>
                             </div>
                             {isExpanded && renderLevel(folder.id, depth + 1)}
@@ -1912,70 +3295,265 @@ export function DocTable({
                     );
                 })}
 
-                {/* New-folder input row at the bottom of this level */}
-                {renderFolderInput(parentId, depth)}
-            </>
+                <div style={{ order: trailingRowOrder + 1 }}>
+                    {renderFolderInput(parentId, depth)}
+                </div>
+            </div>
         );
     }
 
     // ── Loading skeleton ──────────────────────────────────────────────────────
 
-    const docs = documents;
+    const docs = serverDocuments ?? documents;
     const downloadDoc = useCallback(async (docId: string) => {
-        const { url, filename } = await getDocumentUrl(docId);
+        const { url, filename } = catalog
+            ? catalog.resolveDocumentUrl(docId)
+            : await getDocumentUrl(docId);
         const a = document.createElement("a");
         a.href = url;
         a.download = filename;
         a.click();
-    }, []);
+    }, [catalog]);
+
+    const selectedFolderRootIds = useMemo(
+        () => folderSelectionRootIds(folders, selectedFolderIds),
+        [folders, selectedFolderIds],
+    );
+
+    const selectedFolderTreeIds = useMemo(
+        () => collectFolderTreeIds(folders, selectedFolderRootIds),
+        [folders, selectedFolderRootIds],
+    );
+
+    const selectedFolderDocumentIds = useMemo(
+        () =>
+            docs
+                .filter(
+                    (document) =>
+                        document.folder_id != null &&
+                        selectedFolderTreeIds.has(document.folder_id),
+                )
+                .map((document) => document.id),
+        [docs, selectedFolderTreeIds],
+    );
+    const selectedFolderDocumentIdSet = useMemo(
+        () => new Set(selectedFolderDocumentIds),
+        [selectedFolderDocumentIds],
+    );
+    const effectiveSelectedDocIdSet = useMemo(
+        () => new Set([...selectedDocIds, ...selectedFolderDocumentIdSet]),
+        [selectedDocIds, selectedFolderDocumentIdSet],
+    );
+
+    const selectedStandaloneDocIds = useMemo(
+        () =>
+            selectedDocIds.filter(
+                (id) => !selectedFolderDocumentIdSet.has(id),
+            ),
+        [selectedDocIds, selectedFolderDocumentIdSet],
+    );
 
     const handleDownloadSelectedDocs = useCallback(async () => {
-        const ids = [...selectedDocIds];
-        if (ids.length === 1) {
-            await downloadDoc(ids[0]);
-            return;
+        try {
+            if (
+                selectedStandaloneDocIds.length === 1 &&
+                selectedFolderRootIds.length === 0
+            ) {
+                await downloadDoc(selectedStandaloneDocIds[0]);
+                return;
+            }
+            // Doc-only selections above the threshold go through the async
+            // export job instead of a synchronous ZIP request. Folder
+            // selections stay on the direct path so the archive keeps its
+            // folder structure.
+            const { blob, filename } =
+                selectedFolderRootIds.length === 0 &&
+                selectedStandaloneDocIds.length > ASYNC_ZIP_THRESHOLD
+                    ? await runUserExport("documents-zip", {
+                          document_ids: selectedStandaloneDocIds,
+                      })
+                    : {
+                          blob: await downloadDocumentsZip(
+                              selectedStandaloneDocIds,
+                              selectedFolderRootIds,
+                          ),
+                          filename: null,
+                      };
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = filename ?? "documents.zip";
+            a.click();
+            URL.revokeObjectURL(a.href);
+        } catch (error) {
+            notifyError(error, {
+                action: "download the selected files",
+                fallback:
+                    "The selected files and folders could not be downloaded.",
+                onRetry: () => {
+                    void handleDownloadSelectedDocs();
+                },
+            });
         }
-        const blob = await downloadDocumentsZip(ids);
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "documents.zip";
-        a.click();
-        URL.revokeObjectURL(a.href);
-    }, [downloadDoc, selectedDocIds]);
+    }, [downloadDoc, selectedFolderRootIds, selectedStandaloneDocIds]);
 
-    const handleRemoveSelectedFromFolder = useCallback(async () => {
-        const ids = selectedDocIds.filter(
-            (id) => docs.find((d) => d.id === id)?.folder_id != null,
-        );
+    // Takes the ids explicitly so a "Retry" can re-run exactly the rows that
+    // failed. Reading the selection again would resend the whole original
+    // batch: the notice's closure is frozen, and `setSelectedDocIds` below
+    // cannot reach it. Drag-moves and "Remove from subfolder" (a move to the
+    // root) both land here, so a retry is reported the same way as the
+    // first attempt.
+    const moveDocsToFolder = useCallback(async (
+        ids: string[],
+        targetFolderId: string | null,
+    ) => {
         if (ids.length === 0) return;
+        const snapshot = docs;
+        const updatedAt = new Date().toISOString();
         setDocuments((prev) =>
-            prev.map((d) =>
-                ids.includes(d.id) ? { ...d, folder_id: null } : d,
+            prev.map((document) =>
+                ids.includes(document.id)
+                    ? {
+                          ...document,
+                          folder_id: targetFolderId,
+                          updated_at: updatedAt,
+                      }
+                    : document,
             ),
         );
-        await Promise.all(
-            ids.map((id) => operations.moveDocument(id, null).catch(() => {})),
+        const results = await Promise.allSettled(
+            ids.map((id) => operations.moveDocument(id, targetFolderId)),
         );
-    }, [docs, operations, selectedDocIds, setDocuments]);
+        // Rows the server did move carry its version of the record. A move
+        // that resolves without one (a 204, say) still counts as moved, so
+        // read the id defensively rather than failing the whole batch on it.
+        const updatedById = new Map(
+            results.flatMap((result) =>
+                result.status === "fulfilled" && result.value?.id
+                    ? [[result.value.id, result.value] as const]
+                    : [],
+            ),
+        );
+        const failedIds = ids.filter(
+            (_, index) => results[index].status === "rejected",
+        );
+        // Put the rows that did not move back where they were instead of
+        // leaving them where they never arrived.
+        setDocuments((prev) =>
+            prev.map((document) => {
+                if (updatedById.has(document.id)) {
+                    return { ...document, ...updatedById.get(document.id)! };
+                }
+                if (!failedIds.includes(document.id)) return document;
+                const before = snapshot.find((doc) => doc.id === document.id);
+                return before
+                    ? {
+                          ...document,
+                          folder_id: before.folder_id,
+                          updated_at: before.updated_at,
+                      }
+                    : document;
+            }),
+        );
+        if (failedIds.length === 0) return;
+        await operations.refreshCollection().catch(() => undefined);
+        const failedNames = snapshot
+            .filter((doc) => failedIds.includes(doc.id))
+            .map((doc) => doc.filename);
+        const one = failedIds.length === 1;
+        const where =
+            targetFolderId === null
+                ? ` out of ${one ? "its folder" : "their folders"}`
+                : "";
+        notifyPartialFailure(
+            `${failedIds.length} ${one ? "document" : "documents"} could not be moved${where}${
+                    failedNames.length > 0 ? `: ${failedNames.join(", ")}` : ""
+                }.`,
+            {
+                action: `move ${one ? "the document" : "those documents"}${where}`,
+                onRetry: () => {
+                    setSelectedDocIds(failedIds);
+                    void moveDocsToFolder(failedIds, targetFolderId);
+                },
+            },
+        );
+    }, [docs, operations, setDocuments, setSelectedDocIds]);
 
-    const handleDeleteSelectedDocs = useCallback(async () => {
-        const ids = [...selectedDocIds];
+    const removeDocsFromFolder = useCallback(
+        async (ids: string[]) => {
+            if (ids.length === 0) return;
+            setSelectedFolderIds(new Set());
+            await moveDocsToFolder(ids, null);
+        },
+        [moveDocsToFolder, setSelectedFolderIds],
+    );
+
+    const handleRemoveSelectedFromFolder = useCallback(async () => {
+        if (!requireCapability("docs.organize", "move documents", "editor"))
+            return;
+        await removeDocsFromFolder(
+            selectedStandaloneDocIds.filter(
+                (id) => docs.find((d) => d.id === id)?.folder_id != null,
+            ),
+        );
+    }, [docs, removeDocsFromFolder, requireCapability, selectedStandaloneDocIds]);
+
+    const deleteDocumentIds = useCallback(async (ids: string[]) => {
         const owned = ids.filter((id) => {
             const doc = documents.find((candidate) => candidate.id === id);
-            return !doc || !doc.user_id || !user?.id || doc.user_id === user.id;
+            // A row we can see is judged on its uploader, both halves known.
+            // A row we cannot see is left to the server, and deliberately so:
+            // unlike project delete — where an admin's sweep really could
+            // destroy rows they never looked at — this endpoint filters on
+            // `user_id = me`, so an id we cannot resolve is at worst a 404
+            // counted in the failure notice. Excluding those would break
+            // select-all-matching in the library, where every row is the
+            // caller's own but few are paged in.
+            if (!doc) return true;
+            return canDeleteDocument(doc);
         });
         const blocked = ids.length - owned.length;
-        setSelectedDocIds([]);
-        const results = await Promise.allSettled(
-            owned.map((id) => deleteDocument(id)),
+        const snapshot = docs;
+        setDocuments((current) =>
+            current.filter((doc) => !owned.includes(doc.id)),
         );
-        const deletedIds = owned.filter(
-            (_, index) => results[index].status === "fulfilled",
-        );
-        const failedCount = owned.length - deletedIds.length;
-        setDocuments((prev) =>
-            prev.filter((doc) => !deletedIds.includes(doc.id)),
-        );
+        let deletedIds: string[] = [];
+        if (operations.bulkDeleteDocuments) {
+            try {
+                const result = await operations.bulkDeleteDocuments(owned);
+                deletedIds = result.deletedIds;
+            } catch {
+                // Report the aggregate failure below, where the rows are
+                // restored and the names are known.
+                deletedIds = [];
+            }
+        } else {
+            // Keep destructive requests bounded for project tables, which do
+            // not yet expose a collection-specific bulk endpoint.
+            const pending = [...owned];
+            const workers = Array.from({ length: Math.min(8, pending.length) }, async () => {
+                const workerDeleted: string[] = [];
+                while (pending.length > 0) {
+                    const id = pending.shift();
+                    if (!id) break;
+                    try {
+                        await deleteDocument(id);
+                        workerDeleted.push(id);
+                    } catch {
+                        // Report the aggregate failure below.
+                    }
+                }
+                return workerDeleted;
+            });
+            deletedIds = (await Promise.all(workers)).flat();
+        }
+        const failedIds = owned.filter((id) => !deletedIds.includes(id));
+        const failedCount = failedIds.length;
+        if (failedIds.length > 0) {
+            setDocuments((current) =>
+                restoreOptimisticallyDeletedRows(current, snapshot, failedIds),
+            );
+            setSelectedDocIds(failedIds);
+        }
         if (deletedIds.length > 0) {
             setExpandedVersionDocIds((prev) => {
                 const next = new Set(prev);
@@ -1989,8 +3567,24 @@ export function DocTable({
             });
         }
         if (failedCount > 0) {
-            setCollectionActionWarning(
-                `${failedCount} ${failedCount === 1 ? "document" : "documents"} could not be deleted. Please try again.`,
+            const failedNames = snapshot
+                .filter((doc) => failedIds.includes(doc.id))
+                .map((doc) => doc.filename);
+            notifyPartialFailure(
+                `${failedCount} ${failedCount === 1 ? "document" : "documents"} could not be deleted${
+                        failedNames.length > 0
+                            ? `: ${failedNames.join(", ")}`
+                            : ""
+                    }. They are still in the list.`,
+                {
+                    action: `delete ${failedCount === 1 ? "the document" : "those documents"}`,
+                    // Only the rows that survived, so a retry cannot delete
+                    // anything twice.
+                    dedupeKey: "bulk-delete-documents",
+                    onRetry: () => {
+                        void deleteDocumentIds(failedIds);
+                    },
+                },
             );
         }
         if (blocked > 0) {
@@ -1998,20 +3592,165 @@ export function DocTable({
                 `delete ${blocked} of the selected documents — only the document creator can delete a document`,
             );
         }
+        if (deletedIds.length > 0 && operations.bulkDeleteDocuments) {
+            await operations.refreshCollection();
+        }
     }, [
+        canDeleteDocument,
+        docs,
         documents,
-        selectedDocIds,
+        operations,
         setDocuments,
         setOwnerOnlyAction,
-        user?.id,
     ]);
 
-    const sidePanelDoc = viewingDoc
-        ? (docs.find((doc) => doc.id === viewingDoc.id) ?? viewingDoc)
-        : null;
+    const handleDeleteSelectedItems = useCallback(async () => {
+        setConfirmDeleteAllOpen(false);
+        setSelectionCameFromSelectAll(false);
+        setSelectedDocIds([]);
+        setSelectedFolderIds(new Set());
+
+        const folderSnapshot = folders;
+        const documentSnapshot = docs;
+        const selectedTreeIds = selectedFolderTreeIds;
+
+        if (selectedTreeIds.size > 0) {
+            setFolders((current) =>
+                current.filter((folder) => !selectedTreeIds.has(folder.id)),
+            );
+            setDocuments((current) =>
+                current.filter(
+                    (doc) => !selectedFolderDocumentIdSet.has(doc.id),
+                ),
+            );
+        }
+
+        const folderResults = await Promise.all(
+            selectedFolderRootIds.map(async (folderId) => {
+                try {
+                    await operations.deleteFolder(folderId);
+                    return { folderId, deleted: true };
+                } catch (error) {
+                    console.error("delete selected folder failed", error);
+                    return { folderId, deleted: false };
+                }
+            }),
+        );
+        const failedFolderRootIds = folderResults
+            .filter((result) => !result.deleted)
+            .map((result) => result.folderId);
+        const failedFolderTreeIds = new Set(
+            failedFolderRootIds.flatMap((folderId) => [
+                ...folderTreeIds(folderId),
+            ]),
+        );
+        const failedFolderDocumentIds = documentSnapshot
+            .filter(
+                (document) =>
+                    document.folder_id != null &&
+                    failedFolderTreeIds.has(document.folder_id),
+            )
+            .map((document) => document.id);
+
+        if (failedFolderTreeIds.size > 0) {
+            setFolders((current) =>
+                restoreOptimisticallyDeletedRows(
+                    current,
+                    folderSnapshot,
+                    [...failedFolderTreeIds],
+                ),
+            );
+            setDocuments((current) =>
+                restoreOptimisticallyDeletedRows(
+                    current,
+                    documentSnapshot,
+                    failedFolderDocumentIds,
+                ),
+            );
+            setSelectedFolderIds(new Set(failedFolderRootIds));
+            const failedFolderNames = folderSnapshot
+                .filter((folder) => failedFolderRootIds.includes(folder.id))
+                .map((folder) => folder.name);
+            notifyPartialFailure(
+                `${failedFolderRootIds.length} ${failedFolderRootIds.length === 1 ? "folder" : "folders"} could not be deleted${
+                        failedFolderNames.length > 0
+                            ? `: ${failedFolderNames.join(", ")}`
+                            : ""
+                    }. ${failedFolderRootIds.length === 1 ? "It is" : "They are"} still in the list and stay selected.`,
+                {
+                    action: `delete ${failedFolderRootIds.length === 1 ? "the folder" : "those folders"}`,
+                    dedupeKey: "bulk-delete-folders",
+                    // Retrying is the Delete button on the still-selected rows;
+                    // re-running this handler here would also re-delete the
+                    // documents that were removed successfully.
+                },
+            );
+        }
+
+        const deletedFolderTreeIds = new Set(
+            [...selectedTreeIds].filter(
+                (folderId) => !failedFolderTreeIds.has(folderId),
+            ),
+        );
+        if (deletedFolderTreeIds.size > 0) {
+            const deletedFolderDocumentIds = documentSnapshot
+                .filter(
+                    (document) =>
+                        document.folder_id != null &&
+                        deletedFolderTreeIds.has(document.folder_id),
+                )
+                .map((document) => document.id);
+            const currentFolderId = viewedFolderIdRef.current;
+            if (currentFolderId && deletedFolderTreeIds.has(currentFolderId)) {
+                updateViewedFolder(null);
+            }
+            setExpandedFolderIds((current) => {
+                const next = new Set(current);
+                for (const id of deletedFolderTreeIds) next.delete(id);
+                return next;
+            });
+            setExpandedVersionDocIds((current) => {
+                const next = new Set(current);
+                for (const id of deletedFolderDocumentIds) next.delete(id);
+                return next;
+            });
+            setVersionsByDocId((current) => {
+                const next = new Map(current);
+                for (const id of deletedFolderDocumentIds) next.delete(id);
+                return next;
+            });
+        }
+
+        await deleteDocumentIds(selectedStandaloneDocIds);
+        if (folderResults.some((result) => result.deleted)) {
+            await operations.refreshCollection();
+        }
+    }, [
+        deleteDocumentIds,
+        docs,
+        folderTreeIds,
+        folders,
+        operations,
+        selectedFolderDocumentIdSet,
+        selectedFolderRootIds,
+        selectedFolderTreeIds,
+        selectedStandaloneDocIds,
+        setDocuments,
+        setFolders,
+        updateViewedFolder,
+    ]);
+
+    const requestDeleteSelectedItems = useCallback(() => {
+        setConfirmDeleteAllOpen(true);
+    }, []);
+
+    const sidePanelDoc = viewingDoc ? (docs.find((doc) => doc.id === viewingDoc.id) ?? viewingDoc) : null;
     const versionUploadAccept = ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt";
-    const q = search.toLowerCase();
-    const typeOptions = useMemo(
+    const q = serverQueryActive ? "__server_results__" : search.toLowerCase();
+    const viewedFolder = viewedFolderId
+        ? folders.find((folder) => folder.id === viewedFolderId) ?? null
+        : null;
+    const derivedTypeOptions = useMemo(
         () =>
             Array.from(new Set(docs.map(documentTypeValue)))
                 .sort((a, b) => a.localeCompare(b))
@@ -2021,91 +3760,137 @@ export function DocTable({
                 })),
         [docs],
     );
+    const typeOptions = documentTypeOptions ?? derivedTypeOptions;
 
-    function clearDocumentSelection() {
+    useEffect(() => {
+        onServerQueryChange?.({ search, fileType: typeFilter, sort });
+    }, [onServerQueryChange, search, sort, typeFilter]);
+
+    const activeDirectoryLevelKey = viewedFolderId ?? "root";
+    const activePageLoadingMore = serverQueryActive
+        ? serverQueryLoadingMore
+        : !!loadingMoreDocumentsByLevel?.[activeDirectoryLevelKey];
+
+    useEffect(() => {
+        if (!activePageLoadingMore) autoLoadTriggeredRef.current = false;
+    }, [activePageLoadingMore]);
+
+    function handleTableScroll(event: UIEvent<HTMLDivElement>) {
+        if (!autoLoadOnScroll || autoLoadTriggeredRef.current) return;
+        const viewport = event.currentTarget;
+        const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+        if (distanceFromBottom > 80) return;
+
+        if (
+            serverQueryActive &&
+            serverQueryHasMore &&
+            !serverQueryLoading &&
+            !serverQueryLoadingMore &&
+            onLoadMoreServerDocuments
+        ) {
+            autoLoadTriggeredRef.current = true;
+            onLoadMoreServerDocuments();
+            return;
+        }
+
+        if (
+            !serverQueryActive &&
+            documentsHasMoreByLevel?.[activeDirectoryLevelKey] &&
+            !loadingMoreDocumentsByLevel?.[activeDirectoryLevelKey] &&
+            onLoadMoreDocuments
+        ) {
+            autoLoadTriggeredRef.current = true;
+            onLoadMoreDocuments(viewedFolderId ?? null);
+        }
+    }
+
+    function clearCollectionSelection() {
         setSelectedDocIds([]);
+        setSelectedFolderIds(new Set());
+        selectionAnchorKeyRef.current = null;
+        setSelectionCameFromSelectAll(false);
+        setConfirmDeleteAllOpen(false);
     }
 
     function handleTypeFilterChange(value: string | null) {
         setTypeFilter(value);
-        clearDocumentSelection();
+        clearCollectionSelection();
     }
 
-    function handleSortChange(
-        key: DocumentSortKey,
-        direction: TableSortDirection | null,
-    ) {
+    function handleCreatorFilterChange(value: string | null) {
+        setCreatorFilter(value);
+        clearCollectionSelection();
+    }
+
+    function handleSortChange(key: DocumentSortKey, direction: TableSortDirection | null) {
         setSort(direction ? { key, direction } : null);
-        clearDocumentSelection();
+        clearCollectionSelection();
     }
 
     const filteredDocs = useMemo(() => {
-        const rows = docs
-            .filter(
-                (doc) =>
-                    !q ||
-                    doc.filename.toLowerCase().includes(q),
-            )
-            .filter(
-                (doc) =>
-                    !enableHeaderFilters ||
-                    !typeFilter ||
-                    documentTypeValue(doc) === typeFilter,
-            );
+        if (serverQueryActive) return docs;
 
-        if (!enableHeaderFilters || !sort) return rows;
+        const rows = docs
+            .filter((doc) => !q || doc.filename.toLowerCase().includes(q))
+            .filter((doc) => !enableHeaderFilters || !typeFilter || documentTypeValue(doc) === typeFilter)
+            // Like the type filter, this narrows documents only: folders stay
+            // as the way in to whatever matches inside them.
+            .filter((doc) => !showCreator || !creatorFilter || doc.user_id === creatorFilter);
+
+        if (!enableHeaderFilters || !effectiveSort) return rows;
 
         return [...rows].sort((a, b) => {
-            const multiplier = sort.direction === "asc" ? 1 : -1;
+            const multiplier = effectiveSort.direction === "asc" ? 1 : -1;
 
-            if (sort.key === "size") {
+            if (effectiveSort.key === "size") {
                 return ((a.size_bytes ?? 0) - (b.size_bytes ?? 0)) * multiplier;
             }
 
-            if (sort.key === "version") {
-                return (
-                    ((documentVersionNumber(a) ?? 0) -
-                        (documentVersionNumber(b) ?? 0)) *
-                    multiplier
-                );
+            if (effectiveSort.key === "version") {
+                return ((documentVersionNumber(a) ?? 0) - (documentVersionNumber(b) ?? 0)) * multiplier;
             }
 
-            if (sort.key === "created") {
-                return (
-                    (dateTimeValue(a.created_at) -
-                        dateTimeValue(b.created_at)) *
-                    multiplier
-                );
+            if (effectiveSort.key === "created") {
+                return (dateTimeValue(a.created_at) - dateTimeValue(b.created_at)) * multiplier;
             }
 
-            if (sort.key === "updated") {
-                return (
-                    (dateTimeValue(a.updated_at) -
-                        dateTimeValue(b.updated_at)) *
-                    multiplier
-                );
+            if (effectiveSort.key === "updated") {
+                return (dateTimeValue(a.updated_at) - dateTimeValue(b.updated_at)) * multiplier;
             }
 
             return a.filename.localeCompare(b.filename) * multiplier;
         });
-    }, [docs, enableHeaderFilters, q, sort, typeFilter]);
+    }, [creatorFilter, docs, effectiveSort, enableHeaderFilters, q, serverQueryActive, showCreator, typeFilter]);
+    const hasVisibleCollectionUpload =
+        collectionUploadProgress.some(
+            (upload) =>
+                upload.parentFolderId === viewedFolderId &&
+                upload.entries.length > 0,
+        );
+    const viewedFolderIsEmpty =
+        !!viewedFolder &&
+        !loadingChildFolderIds.has(viewedFolder.id) &&
+        !docs.some((document) => document.folder_id === viewedFolder.id) &&
+        !folders.some(
+            (folder) => folder.parent_folder_id === viewedFolder.id,
+        ) &&
+        creatingFolderIn !== viewedFolder.id &&
+        !hasVisibleCollectionUpload;
 
-    const nameSortDirection = sort?.key === "name" ? sort.direction : null;
-    const sizeSortDirection = sort?.key === "size" ? sort.direction : null;
-    const versionSortDirection =
-        sort?.key === "version" ? sort.direction : null;
-    const createdSortDirection =
-        sort?.key === "created" ? sort.direction : null;
-    const updatedSortDirection =
-        sort?.key === "updated" ? sort.direction : null;
+    const nameSortDirection = effectiveSort?.key === "name" ? effectiveSort.direction : null;
+    const sizeSortDirection = effectiveSort?.key === "size" ? effectiveSort.direction : null;
+    const versionSortDirection = effectiveSort?.key === "version" ? effectiveSort.direction : null;
+    const createdSortDirection = effectiveSort?.key === "created" ? effectiveSort.direction : null;
+    const updatedSortDirection = effectiveSort?.key === "updated" ? effectiveSort.direction : null;
+    const resetSortLabel = defaultSort
+        ? `Default (${SORT_KEY_LABELS[defaultSort.key]})`
+        : "Default Order";
     const nameFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by name"
             value={nameSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
+            allLabel={resetSortLabel}
             align="right"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("name", direction)}
         />
     ) : null;
@@ -2119,76 +3904,409 @@ export function DocTable({
             onChange={handleTypeFilterChange}
         />
     ) : null;
+    const creatorPeople = useMemo(
+        () =>
+            distinctPeople(
+                [...documents, ...folders].map((row) => {
+                    const mine = !!user?.id && row.user_id === user.id;
+                    const owner = row as {
+                        owner_display_name?: string | null;
+                        owner_profile_photo?: string | null;
+                    };
+                    return {
+                        user_id: row.user_id,
+                        display_name: mine
+                            ? ownProfile?.displayName ?? owner.owner_display_name ?? "Me"
+                            : owner.owner_display_name,
+                        profile_photo: mine
+                            ? ownProfile?.profilePhoto ?? owner.owner_profile_photo
+                            : owner.owner_profile_photo,
+                    };
+                }),
+            ),
+        [documents, folders, ownProfile, user?.id],
+    );
+    const creatorFilterButton = enableHeaderFilters && showCreator ? (
+        <PersonFilter
+            label="Filter by creator"
+            selectedTitle={(name) => `Created by ${name}`}
+            value={
+                creatorPeople.find(
+                    (person) => person.user_id === creatorFilter,
+                ) ?? null
+            }
+            onChange={(person) =>
+                handleCreatorFilterChange(person?.user_id ?? null)
+            }
+            loadPeople={localPeople(creatorPeople)}
+        />
+    ) : null;
     const sizeFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by size"
             value={sizeSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
+            allLabel={resetSortLabel}
             onChange={(direction) => handleSortChange("size", direction)}
         />
     ) : null;
     const versionFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by version"
             value={versionSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
+            allLabel={resetSortLabel}
             onChange={(direction) => handleSortChange("version", direction)}
         />
     ) : null;
     const createdFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by created date"
             value={createdSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
+            allLabel={resetSortLabel}
             onChange={(direction) => handleSortChange("created", direction)}
         />
     ) : null;
     const updatedFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by updated date"
             value={updatedSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
+            allLabel={resetSortLabel}
             onChange={(direction) => handleSortChange("updated", direction)}
         />
     ) : null;
 
-    const allDocsSelected =
-        filteredDocs.length > 0 &&
-        filteredDocs.every((d) => selectedDocIds.includes(d.id));
-    const someDocsSelected =
-        !allDocsSelected &&
-        filteredDocs.some((d) => selectedDocIds.includes(d.id));
+    const selectAllFolderIds = useMemo(() => {
+        if (q) return [];
 
+        const visibleFolderIds: string[] = [];
+        const visitedFolderIds = new Set<string>();
+        const visitLevel = (parentId: string | null) => {
+            for (const folder of childFoldersForLevel(parentId)) {
+                if (visitedFolderIds.has(folder.id)) {
+                    continue;
+                }
+                visitedFolderIds.add(folder.id);
+                visibleFolderIds.push(folder.id);
+                if (expandedFolderIds.has(folder.id)) {
+                    visitLevel(folder.id);
+                }
+            }
+        };
+
+        visitLevel(viewedFolderId);
+        return visibleFolderIds;
+    }, [
+        childFoldersForLevel,
+        expandedFolderIds,
+        q,
+        viewedFolderId,
+    ]);
+    const selectAllFolderTreeIds = useMemo(
+        () => collectFolderTreeIds(folders, selectAllFolderIds),
+        [folders, selectAllFolderIds],
+    );
+    /**
+     * Folder subtree the current view is responsible for, or `null` when the
+     * view spans the whole collection (the root level, and search, which
+     * renders one flat list across every folder).
+     */
+    const viewedFolderTreeIds = useMemo(
+        () =>
+            !q && viewedFolderId
+                ? collectFolderTreeIds(folders, [viewedFolderId])
+                : null,
+        [folders, q, viewedFolderId],
+    );
+    /**
+     * Documents the header "select all" may reach. Folder rows are already
+     * scoped to the viewed level by `selectAllFolderIds`; without the same
+     * scope here, select-all inside a subfolder would silently pull in every
+     * document in the collection and feed it to the bulk actions.
+     */
+    const viewScopedDocumentIds = useCallback(
+        (documentIds: readonly string[]) => {
+            if (!viewedFolderTreeIds) return [...documentIds];
+            const folderIdByDocumentId = new Map(
+                docs.map((document) => [document.id, document.folder_id ?? null]),
+            );
+            return documentIds.filter((documentId) => {
+                // An id with no loaded row cannot be placed in the viewed
+                // folder, so leave it out rather than selecting a document
+                // this view never showed.
+                const folderId = folderIdByDocumentId.get(documentId) ?? null;
+                return !!folderId && viewedFolderTreeIds.has(folderId);
+            });
+        },
+        [docs, viewedFolderTreeIds],
+    );
+    const visibleSelectableDocumentIds = useMemo(
+        () => viewScopedDocumentIds(filteredDocs.map((document) => document.id)),
+        [filteredDocs, viewScopedDocumentIds],
+    );
+    /**
+     * The document half of "select all": in view scope, minus the documents
+     * already covered by a selected folder row.
+     */
+    const selectAllDocumentIds = useCallback(
+        (documentIds: readonly string[]) => {
+            const folderIdByDocumentId = new Map(
+                docs.map((document) => [document.id, document.folder_id ?? null]),
+            );
+            return viewScopedDocumentIds(documentIds).filter((documentId) => {
+                const folderId = folderIdByDocumentId.get(documentId) ?? null;
+                return folderId == null || !selectAllFolderTreeIds.has(folderId);
+            });
+        },
+        [docs, selectAllFolderTreeIds, viewScopedDocumentIds],
+    );
+    const {
+        allSelected: allVisibleRowsSelected,
+        someSelected: someVisibleRowsSelected,
+    } = collectionSelectAllState(
+        visibleSelectableDocumentIds,
+        selectAllFolderIds,
+        [...effectiveSelectedDocIdSet],
+        selectedFolderIds,
+    );
+
+    const retryToggleAllDocumentsRef = useRef<(() => void) | null>(null);
+    const handleToggleAllDocuments = useCallback(async () => {
+        selectionAnchorKeyRef.current = null;
+        if (allVisibleRowsSelected || selectionCameFromSelectAll) {
+            setSelectedDocIds([]);
+            setSelectedFolderIds(new Set());
+            setSelectionCameFromSelectAll(false);
+            return;
+        }
+
+        // Inside a folder the "all matching" endpoint cannot help: it answers
+        // for the whole collection and takes no folder scope, so every id it
+        // returns outside this subtree would have to be discarded anyway.
+        // Select from the rows this level has loaded instead.
+        if (!onSelectAllMatching || viewedFolderTreeIds) {
+            setSelectedDocIds(
+                selectAllDocumentIds(
+                    filteredDocs.map((document) => document.id),
+                ),
+            );
+            setSelectedFolderIds(new Set(selectAllFolderIds));
+            setSelectionCameFromSelectAll(true);
+            return;
+        }
+
+        setSelectingAllDocuments(true);
+        try {
+            const ids = await onSelectAllMatching({
+                search,
+                fileType: typeFilter,
+                sort,
+            });
+            setSelectedDocIds(selectAllDocumentIds(ids));
+            setSelectedFolderIds(new Set(selectAllFolderIds));
+            setSelectionCameFromSelectAll(true);
+        } catch (error) {
+            notifyError(error, {
+                action: "select every matching file",
+                fallback:
+                    "All matching files could not be selected. Please try again.",
+                // Through the ref: the search, filter and sort this reads
+                // may have changed while the request was in flight.
+                onRetry: () => retryToggleAllDocumentsRef.current?.(),
+            });
+        } finally {
+            setSelectingAllDocuments(false);
+        }
+    }, [
+        allVisibleRowsSelected,
+        filteredDocs,
+        onSelectAllMatching,
+        search,
+        selectAllDocumentIds,
+        selectAllFolderIds,
+        selectionCameFromSelectAll,
+        sort,
+        typeFilter,
+        viewedFolderTreeIds,
+    ]);
+
+    // "Retry" must re-enter the newest callback: the one the notice captured
+    // was built from the search, filter and selection as they were when the
+    // request failed.
+    useAssignLatest(retryToggleAllDocumentsRef, () => void handleToggleAllDocuments());
+
+    const selectedItemCount =
+        selectedFolderIds.size + selectedStandaloneDocIds.length;
+    const renderRowActionMenuItems = (
+        docId: string | null | undefined,
+        folderId: string | null | undefined,
+        showFolderActions: boolean | undefined,
+        onClose?: () => void,
+    ) => {
+        const menuDoc = docId ? docs.find((doc) => doc.id === docId) : null;
+        const menuDocVersionNumber = menuDoc ? currentVersionNumber(menuDoc) : null;
+        const menuDocHasVersions =
+            typeof menuDocVersionNumber === "number" && menuDocVersionNumber > 1;
+        const menuDocVersionsOpen = menuDoc
+            ? expandedVersionDocIds.has(menuDoc.id)
+            : false;
+        const menuDocIsSelected =
+            !!menuDoc && effectiveSelectedDocIdSet.has(menuDoc.id);
+        const menuAppliesToSelection = menuDocIsSelected && selectedItemCount > 1;
+        const menuFolderIsSelected = !!folderId && selectedFolderIds.has(folderId);
+        const menuFolderAppliesToSelection =
+            menuFolderIsSelected && selectedItemCount > 1;
+        if (catalog) {
+            if (menuDocIsSelected || menuFolderIsSelected) {
+                const addable = docs.filter(
+                    (doc) =>
+                        effectiveSelectedDocIdSet.has(doc.id) &&
+                        catalog.canAdd?.(doc) !== false,
+                );
+                return (
+                    <RowActionMenuItems
+                        onClose={onClose}
+                        onDeselect={clearCollectionSelection}
+                        {...catalogAddActions(addable)}
+                    />
+                );
+            }
+            if (menuDoc) {
+                return (
+                    <RowActionMenuItems
+                        onClose={onClose}
+                        {...catalogDocumentActions(menuDoc)}
+                    />
+                );
+            }
+            return folderId ? (
+                <RowActionMenuItems
+                    onClose={onClose}
+                    {...catalogFolderActions(folderId)}
+                />
+            ) : null;
+        }
+        if (menuAppliesToSelection || menuFolderAppliesToSelection) {
+            return (
+                <RowActionMenuItems
+                    onClose={onClose}
+                    onDeselect={clearCollectionSelection}
+                    onDownload={handleDownloadSelectedDocs}
+                    onRemoveFromFolder={
+                        selectedStandaloneDocIds.some(
+                            (id) => docs.find((doc) => doc.id === id)?.folder_id,
+                        )
+                            ? () => void handleRemoveSelectedFromFolder()
+                            : undefined
+                    }
+                    onDelete={requestDeleteSelectedItems}
+                    deleteLabel={`Delete ${selectedItemCount} items`}
+                />
+            );
+        }
+        return menuDoc ? (
+            <RowActionMenuItems
+                onClose={onClose}
+                onDeselect={
+                    menuDocIsSelected ? clearCollectionSelection : undefined
+                }
+                onView={() => {
+                    setViewingDocVersion(null);
+                    setViewingDoc(menuDoc);
+                }}
+                onRename={() => {
+                    setRenameDocumentValue(menuDoc.filename);
+                    setRenamingDocumentId(menuDoc.id);
+                }}
+                renameLabel="Rename document"
+                onDownload={() => downloadDoc(menuDoc.id)}
+                onShowAllVersions={
+                    menuDocHasVersions && !menuDocVersionsOpen
+                        ? () => void toggleVersions(menuDoc.id)
+                        : undefined
+                }
+                onUploadNewVersion={() => void handleUploadNewVersion(menuDoc)}
+                onRemoveFromFolder={
+                    menuDoc.folder_id
+                        ? () => void handleRemoveDocFromFolder(menuDoc.id)
+                        : undefined
+                }
+                onDelete={() => requestRemoveDoc(menuDoc)}
+                deleteDisabled={!canDeleteDocument(menuDoc)}
+            />
+        ) : (
+            <RowActionMenuItems
+                onClose={onClose}
+                onDeselect={
+                    menuFolderIsSelected ? clearCollectionSelection : undefined
+                }
+                onView={
+                    showFolderActions && folderId
+                        ? () => openFolderView(folderId!)
+                        : undefined
+                }
+                viewLabel="Open"
+                newSubfolderDisabled={!allowed("docs.organize")}
+                onNewSubfolder={() => {
+                    // Gate the prompt as well as submission in handleCreateFolder.
+                    if (!requireCapability("docs.organize", "create folders", "editor")) return;
+                    setCreatingFolderIn(folderId ?? null);
+                    setNewFolderName("");
+                    if (folderId) {
+                        if (!expandedFolderIds.has(folderId))
+                            void expandFolderChildren(folderId);
+                        setExpandedFolderIds((prev) => new Set([...prev, folderId]));
+                    }
+                }}
+                newSubfolderLabel={
+                    showFolderActions ? "New subfolder inside" : "New subfolder"
+                }
+                onRename={
+                    showFolderActions && folderId
+                        ? () => {
+                              const f = folders.find((x) => x.id === folderId);
+                              setRenameFolderValue(f?.name ?? "");
+                              setRenamingFolderId(folderId!);
+                          }
+                        : undefined
+                }
+                renameLabel="Rename folder"
+                onDelete={
+                    showFolderActions && folderId
+                        ? () => requestDeleteFolder(folderId!)
+                        : undefined
+                }
+                deleteLabel="Delete folder"
+            />
+        );
+    };
+    // Keep the exported selection descriptor stable across unrelated table renders,
+    // while menu content mounted on open uses current versions and permissions.
+    const rowActionRendererRef = useRef(renderRowActionMenuItems);
+    useEffect(() => {
+        rowActionRendererRef.current = renderRowActionMenuItems;
+    });
     const selectionActions = useMemo<DocTableSelectionActions | null>(() => {
-        if (selectedDocIds.length === 0) return null;
+        if (selectedItemCount === 0) return null;
         return {
-            selectedCount: selectedDocIds.length,
-            hasDocumentsInFolders: selectedDocIds.some(
-                (id) => docs.find((d) => d.id === id)?.folder_id != null,
+            renderMenuItems: (onClose) => (
+                <SelectionMenuItems render={() => rowActionRendererRef.current(
+                    selectedStandaloneDocIds[0],
+                    [...selectedFolderIds][0],
+                    selectedFolderIds.size > 0,
+                    onClose,
+                )} />
             ),
-            onDownload: handleDownloadSelectedDocs,
-            onRemoveFromFolder: handleRemoveSelectedFromFolder,
-            onDelete: handleDeleteSelectedDocs,
         };
     }, [
-        docs,
-        handleDeleteSelectedDocs,
-        handleDownloadSelectedDocs,
-        handleRemoveSelectedFromFolder,
-        selectedDocIds,
+        selectedItemCount,
+        selectedStandaloneDocIds,
+        selectedFolderIds,
     ]);
 
     useEffect(() => {
-        onSelectionActionsChange?.(selectionActions);
-    }, [onSelectionActionsChange, selectionActions]);
+        // Republish when catalog progress changes so an open toolbar menu
+        // reads the latest renderer, just like row and right-click menus.
+        onSelectionActionsChange?.(selectionActions ? { ...selectionActions } : null);
+    }, [onSelectionActionsChange, selectionActions, catalog]);
 
     useEffect(() => {
         return () => onSelectionActionsChange?.(null);
@@ -2198,20 +4316,12 @@ export function DocTable({
         <div className="space-y-2">
             <p>
                 You are about to save{" "}
-                <span className="font-medium text-gray-950">
-                    {pendingVersionDrop.sourceDoc.filename}
-                </span>{" "}
-                as a new version of{" "}
-                <span className="font-medium text-gray-950">
-                    {pendingVersionDrop.targetDoc.filename}
-                </span>
-                .
+                <span className="font-medium text-gray-950">{pendingVersionDrop.sourceDoc.filename}</span> as a new
+                version of <span className="font-medium text-gray-950">{pendingVersionDrop.targetDoc.filename}</span>.
             </p>
             <p>
-                <span className="font-medium text-gray-950">
-                    {pendingVersionDrop.sourceDoc.filename}
-                </span>{" "}
-                will no longer exist as a separate document
+                <span className="font-medium text-gray-950">{pendingVersionDrop.sourceDoc.filename}</span> will no
+                longer exist as a separate document
                 {(currentVersionNumber(pendingVersionDrop.sourceDoc) ?? 1) > 1
                     ? " and its older versions will be deleted"
                     : ""}
@@ -2220,19 +4330,14 @@ export function DocTable({
         </div>
     ) : undefined;
     const pendingDeleteDocVersionCount = pendingDeleteDoc
-        ? (versionsByDocId.get(pendingDeleteDoc.id)?.versions.length ??
-          currentVersionNumber(pendingDeleteDoc) ??
-          1)
+        ? (versionsByDocId.get(pendingDeleteDoc.id)?.versions.length ?? currentVersionNumber(pendingDeleteDoc) ?? 1)
         : 0;
     const pendingDeleteDocMessage = pendingDeleteDoc ? (
         <div className="space-y-2">
             <p>
-                <span className="font-medium text-gray-950">
-                    {pendingDeleteDoc.filename}
-                </span>{" "}
-                has {pendingDeleteDocVersionCount}{" "}
-                {pendingDeleteDocVersionCount === 1 ? "version" : "versions"}.
-                Deleting this document will delete all of its versions.
+                <span className="font-medium text-gray-950">{pendingDeleteDoc.filename}</span> has{" "}
+                {pendingDeleteDocVersionCount} {pendingDeleteDocVersionCount === 1 ? "version" : "versions"}. Deleting
+                this document will delete all of its versions.
             </p>
         </div>
     ) : undefined;
@@ -2242,37 +4347,37 @@ export function DocTable({
                 This will permanently delete{" "}
                 <span className="font-medium text-gray-950">
                     {pendingDeleteFolder.folderIds.length}{" "}
-                    {pendingDeleteFolder.folderIds.length === 1
-                        ? "folder"
-                        : "folders"}
+                    {pendingDeleteFolder.folderIds.length === 1 ? "folder" : "folders"}
                 </span>
-                , including{" "}
-                <span className="font-medium text-gray-950">
-                    {pendingDeleteFolder.folder.name}
-                </span>
-                {pendingDeleteFolder.folderIds.length > 1
-                    ? " and its nested subfolders"
-                    : ""}
-                .
+                , including <span className="font-medium text-gray-950">{pendingDeleteFolder.folder.name}</span>
+                {pendingDeleteFolder.folderIds.length > 1 ? " and its nested subfolders" : ""}.
             </p>
             {pendingDeleteFolder.documentCount > 0 && (
                 <p>
                     {pendingDeleteFolder.documentCount}{" "}
-                    {pendingDeleteFolder.documentCount === 1
-                        ? "document"
-                        : "documents"}{" "}
-                    in the deleted{" "}
-                    {pendingDeleteFolder.folderIds.length === 1
-                        ? "folder"
-                        : "folders"}{" "}
-                    will also be permanently deleted.
+                    {pendingDeleteFolder.documentCount === 1 ? "document" : "documents"} in the deleted{" "}
+                    {pendingDeleteFolder.folderIds.length === 1 ? "folder" : "folders"} will also be permanently
+                    deleted.
                 </p>
             )}
         </div>
     ) : undefined;
+    const selectedDeleteSummary = [
+        selectedFolderIds.size > 0
+            ? `${selectedFolderIds.size} ${selectedFolderIds.size === 1 ? "folder" : "folders"}`
+            : null,
+        selectedStandaloneDocIds.length > 0
+            ? `${selectedStandaloneDocIds.length} ${selectedStandaloneDocIds.length === 1 ? "file" : "files"}`
+            : null,
+    ]
+        .filter(Boolean)
+        .join(" and ");
 
     return (
-        <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+            ref={tableRootRef}
+            className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+        >
             <input
                 ref={versionUploadInputRef}
                 type="file"
@@ -2292,9 +4397,24 @@ export function DocTable({
                     void handleDropCollectionFiles(files);
                 }}
             />
+            <input
+                ref={directoryUploadInputRef}
+                type="file"
+                accept={SUPPORTED_DOCUMENT_ACCEPT}
+                multiple
+                className="hidden"
+                {...{ webkitdirectory: "", directory: "" }}
+                onChange={(event) => {
+                    const entries = documentUploadEntriesFromFiles(
+                        event.target.files ?? [],
+                    );
+                    event.target.value = "";
+                    void handleCollectionUploadEntries(entries);
+                }}
+            />
             <UploadOverlay
                 open={isDraggingCollectionFiles}
-                label="Drop files here to upload"
+                label="Drop files or folders here to upload"
                 warning={documentUploadWarning}
                 onWarningClose={() => setDocumentUploadWarning(null)}
             />
@@ -2303,10 +4423,48 @@ export function DocTable({
                 onClose={() => setDocumentRenameWarning(null)}
                 message={documentRenameWarning}
             />
-            <WarningPopup
-                open={!!collectionActionWarning}
-                onClose={() => setCollectionActionWarning(null)}
-                message={collectionActionWarning}
+            <ConfirmPopup
+                open={!!folderUploadConflict}
+                title="Folder already exists"
+                message={
+                    folderUploadConflict
+                        ? `A folder named “${folderUploadConflict.folderName}” already exists. This folder will be uploaded as “${folderUploadConflict.suggestedName}”.`
+                        : undefined
+                }
+                confirmLabel="Continue"
+                cancelLabel="Cancel"
+                onCancel={() => finishFolderUploadConflict("cancel")}
+                onConfirm={() => finishFolderUploadConflict("rename")}
+            />
+            <ConfirmPopup
+                open={confirmDeleteAllOpen && !!selectionActions}
+                title="Delete selected items?"
+                message={
+                    <div className="space-y-2">
+                        <p>
+                            This will permanently delete{" "}
+                            <span className="font-medium text-gray-950">
+                                {selectedDeleteSummary}
+                            </span>
+                            .
+                        </p>
+                        {selectedFolderIds.size > 0 && (
+                            <p>
+                                All nested folders and files contained in the
+                                selected folders will also be deleted.
+                            </p>
+                        )}
+                        <p>
+                            Files owned by others will be skipped. This action
+                            cannot be undone.
+                        </p>
+                    </div>
+                }
+                confirmLabel="Delete"
+                confirmVariant="danger"
+                cancelLabel="Cancel"
+                onCancel={() => setConfirmDeleteAllOpen(false)}
+                onConfirm={() => void handleDeleteSelectedItems()}
             />
             <ConfirmPopup
                 open={!!pendingVersionDrop}
@@ -2319,10 +4477,7 @@ export function DocTable({
                     const pending = pendingVersionDrop;
                     if (!pending) return;
                     setPendingVersionDrop(null);
-                    void saveExistingDocumentAsNewVersion(
-                        pending.targetDoc,
-                        pending.sourceDoc,
-                    );
+                    void saveExistingDocumentAsNewVersion(pending.targetDoc, pending.sourceDoc);
                 }}
             />
             <ConfirmPopup
@@ -2330,6 +4485,7 @@ export function DocTable({
                 title="Delete document?"
                 message={pendingDeleteDocMessage}
                 confirmLabel="Delete"
+                confirmVariant="danger"
                 confirmStatus={
                     pendingDeleteStatus === "deleting"
                         ? "loading"
@@ -2350,6 +4506,7 @@ export function DocTable({
                 title="Delete folder?"
                 message={pendingDeleteFolderMessage}
                 confirmLabel="Delete"
+                confirmVariant="danger"
                 confirmStatus={
                     pendingDeleteFolderStatus === "deleting"
                         ? "loading"
@@ -2367,37 +4524,40 @@ export function DocTable({
             />
             {/* Table content */}
             <TableScrollArea
+                onScroll={handleTableScroll}
+                viewportOverlay={
+                    <>
+                        {dragOverRoot && dragOverFolderId === null && (
+                            <div className="absolute inset-0 z-[80] rounded-b-2xl border-2 border-blue-400 pointer-events-none" />
+                        )}
+                        {dragOverFileRoot && (
+                            <div className="absolute inset-0 z-[90] rounded-b-2xl border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
+                        )}
+                    </>
+                }
                 header={
-                    loading ? (
-                        <ProjectTableLoadingHeader
-                            stickyCellBg={stickyCellBg}
-                        />
+                    loading || (serverQueryActive && serverQueryLoading) ? (
+                        <ProjectTableLoadingHeader showCreator={showCreator} />
                     ) : (
-                        <TableHeaderRow
-                            className={`${stickyCellBg} pr-8 md:pr-8`}
-                        >
-                            <TableStickyCell
-                                header
-                                widthClassName={DOC_NAME_COL_W}
-                                bgClassName={stickyCellBg}
-                            >
+                        <TableHeaderRow className="pr-3">
+                            <TableStickyCell header widthClassName={DOC_NAME_COL_W}>
                                 <input
                                     type="checkbox"
-                                    checked={allDocsSelected}
+                                    checked={
+                                        selectionCameFromSelectAll ||
+                                        allVisibleRowsSelected
+                                    }
+                                    disabled={selectingAllDocuments}
                                     ref={(el) => {
-                                        if (el)
+                                        if (el) {
                                             el.indeterminate =
-                                                someDocsSelected;
+                                                !selectionCameFromSelectAll &&
+                                                someVisibleRowsSelected;
+                                        }
                                     }}
-                                    onChange={() => {
-                                        if (allDocsSelected)
-                                            setSelectedDocIds([]);
-                                        else
-                                            setSelectedDocIds(
-                                                filteredDocs.map((d) => d.id),
-                                            );
-                                    }}
+                                    onChange={() => void handleToggleAllDocuments()}
                                     className={TABLE_CHECKBOX_CLASS}
+                                    aria-label="Select all files and folders"
                                 />
                                 <span className="mr-1">Name</span>
                                 {nameFilterButton}
@@ -2414,6 +4574,12 @@ export function DocTable({
                                 <span>Version</span>
                                 {versionFilterButton}
                             </TableHeaderCell>
+                            {showCreator && (
+                                <TableHeaderCell className="flex w-32 items-center gap-1">
+                                    <span>Creator</span>
+                                    {creatorFilterButton}
+                                </TableHeaderCell>
+                            )}
                             <TableHeaderCell className="flex w-32 items-center gap-1">
                                 <span>Created</span>
                                 {createdFilterButton}
@@ -2427,755 +4593,494 @@ export function DocTable({
                     )
                 }
             >
-                    {loading ? (
-                        <ProjectTableLoading stickyCellBg={stickyCellBg} />
-                    ) : (
-                        <div className="flex-1 flex flex-col min-h-0">
-                            {/* Blue ring wraps everything below the header when root-dropping */}
-                            <div
-                                className="flex-1 flex flex-col min-h-0 relative"
-                                onDragOver={(e) => {
-                                    if (!hasFilePayload(e.dataTransfer)) return;
-                                    e.preventDefault();
-                                    e.dataTransfer.dropEffect = "copy";
-                                    setDragOverFileRoot(true);
-                                    setDragOverVersionDocId(null);
-                                }}
-                                onDragLeave={(e) => {
-                                    if (
-                                        !e.currentTarget.contains(
-                                            e.relatedTarget as Node,
-                                        )
-                                    ) {
-                                        setDragOverFileRoot(false);
-                                    }
-                                }}
-                                onDrop={(e) => {
-                                    if (!hasFilePayload(e.dataTransfer)) return;
-                                    e.preventDefault();
-                                    e.stopPropagation();
+                {loading || (serverQueryActive && serverQueryLoading) ? (
+                    <ProjectTableLoading showCreator={showCreator} />
+                ) : (
+                    <div className="flex-1 flex flex-col min-h-0">
+                        <div
+                            className="flex-1 flex flex-col min-h-0 relative"
+                            onDragOver={(e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "copy";
+                                setDragOverFileRoot(true);
+                                setDragOverVersionDocId(null);
+                            }}
+                            onDragLeave={(e) => {
+                                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                                     setDragOverFileRoot(false);
-                                    collectionDragDepthRef.current = 0;
-                                    setIsDraggingCollectionFiles(false);
-                                    setDragOverRoot(false);
-                                    setDragOverFolderId(null);
-                                    setDragOverVersionDocId(null);
-                                    void handleDropCollectionFiles(
-                                        Array.from(e.dataTransfer.files),
-                                    );
-                                }}
-                            >
-                                {dragOverRoot && dragOverFolderId === null && (
-                                    <div className="absolute inset-0 border-2 border-blue-400 pointer-events-none z-[80]" />
-                                )}
-                                {dragOverFileRoot && (
-                                    <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
-                                )}
-
-                                {/* Empty state */}
-                                {docs.length === 0 &&
-                                folders.length === 0 &&
-                                uploadingDroppedFilenames.length === 0 ? (
-                                    <div
-                                        onClick={openAddDocuments}
-                                        className="flex-1 flex cursor-pointer flex-col items-center justify-center py-24 text-center"
-                                    >
-                                        <LibrarySkeuoIcon className="mb-3 h-8 w-8" />
-                                        <p className="text-sm text-gray-400">
-                                            {emptyDropLabel}
-                                        </p>
+                                }
+                            }}
+                            onDrop={async (e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDragOverFileRoot(false);
+                                collectionDragDepthRef.current = 0;
+                                setIsDraggingCollectionFiles(false);
+                                setDragOverRoot(false);
+                                setDragOverFolderId(null);
+                                setDragOverVersionDocId(null);
+                                await handleDroppedCollectionDataTransfer(
+                                    e.dataTransfer,
+                                );
+                            }}
+                        >
+                            {/* Empty state */}
+                            {viewedFolderIsEmpty ? (
+                                <div className="flex flex-1 items-center justify-center py-24 text-center">
+                                    <p className="text-sm text-gray-400">
+                                        Empty folder
+                                    </p>
+                                </div>
+                            ) : docs.length === 0 &&
+                            (serverQueryActive || folders.length === 0) &&
+                            creatingFolderIn === undefined &&
+                            !hasVisibleCollectionUpload ? (
+                                serverQueryActive ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center py-24 text-center">
+                                        <p className="text-sm text-gray-400">No matches found</p>
                                     </div>
                                 ) : (
                                     <div
-                                        className="flex-1 flex flex-col"
-                                        onContextMenu={(e) => {
-                                            e.preventDefault();
-                                            closeRowActionMenus();
-                                            setContextMenu({
-                                                x: e.clientX,
-                                                y: e.clientY,
-                                                folderId: null,
-                                                showFolderActions: false,
-                                            });
-                                        }}
-                                        onClick={() => setContextMenu(null)}
-                                        onDragOver={(e) => {
-                                            if (!hasMovePayload(e.dataTransfer))
-                                                return;
-                                            e.preventDefault();
-                                            setDragOverRoot(true);
-                                            setDragOverVersionDocId(null);
-                                        }}
-                                        onDragLeave={(e) => {
-                                            if (
-                                                !e.currentTarget.contains(
-                                                    e.relatedTarget as Node,
-                                                )
-                                            ) {
-                                                setDragOverRoot(false);
-                                            }
-                                        }}
-                                        onDrop={async (e) => {
-                                            if (!hasMovePayload(e.dataTransfer))
-                                                return;
-                                            e.preventDefault();
-                                            setDragOverRoot(false);
-                                            setDragOverFolderId(null);
-                                            setDragOverVersionDocId(null);
-                                            await handleDropOnFolder(
-                                                null,
-                                                e.dataTransfer,
-                                            );
-                                        }}
+                                        onClick={openAddDocuments}
+                                        className="flex flex-1 cursor-pointer"
                                     >
-                                        {/* Search: flat list; no search: folder tree */}
-                                        {q ? (
-                                            <>
-                                                {renderUploadingDocumentRows(0)}
-                                                {filteredDocs.map((doc) => {
-                                                    const docName =
-                                                        doc.filename;
-                                                    const isProcessing =
-                                                        doc.status ===
-                                                            "pending" ||
-                                                        doc.status ===
-                                                            "processing";
-                                                    const isError =
-                                                        doc.status === "error";
-                                                    const isVersionsOpen =
-                                                        expandedVersionDocIds.has(
-                                                            doc.id,
-                                                        );
-                                                    const versionNumber =
-                                                        currentVersionNumber(
-                                                            doc,
-                                                        );
-                                                    const hasVersions =
-                                                        typeof versionNumber ===
-                                                            "number" &&
-                                                        versionNumber > 1;
-                                                    const isVersionDragOver =
-                                                        dragOverVersionDocId ===
-                                                        doc.id;
-                                                    const isUploadingVersion =
-                                                        uploadingVersionDocIds.has(
-                                                            doc.id,
-                                                        );
-                                                    const isSelected =
-                                                        selectedDocIds.includes(
-                                                            doc.id,
-                                                        );
-                                                    const isDeletingDoc =
-                                                        deletingDocIds.has(
-                                                            doc.id,
-                                                        );
-                                                    if (isDeletingDoc) {
-                                                        return renderDocumentActivityRow(
-                                                            {
-                                                                key: `deleting-doc-${doc.id}`,
-                                                                filename:
-                                                                    doc.filename,
-                                                                fileType:
-                                                                    doc.file_type,
-                                                                depth: 0,
-                                                                statusLabel:
-                                                                    "Deleting...",
-                                                            },
-                                                        );
-                                                    }
-                                                    return (
-                                                        <div key={doc.id}>
-                                                            <div
-                                                                data-document-row
-                                                                draggable={
-                                                                    renamingDocumentId !==
-                                                                    doc.id
-                                                                }
-                                                                onDragStart={(
-                                                                    e,
-                                                                ) => {
-                                                                    if (
-                                                                        renamingDocumentId ===
-                                                                        doc.id
-                                                                    ) {
-                                                                        e.preventDefault();
-                                                                        return;
-                                                                    }
-                                                                    e.dataTransfer.setData(
-                                                                        "application/mike-doc",
-                                                                        doc.id,
-                                                                    );
-                                                                    e.dataTransfer.effectAllowed =
-                                                                        "copyMove";
+                                        <TableEmptyState>
+                                            <EmptyState
+                                                icon={<LibrarySkeuoIcon />}
+                                                title={emptyStateTitle}
+                                                description="Upload documents or drop files and folders here"
+                                                action={
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <PillButtonUI
+                                                            tone="black"
+                                                            size="sm"
+                                                            // Uploading here is
+                                                            // editor-tier, and the
+                                                            // empty state was the
+                                                            // one Upload that
+                                                            // still looked live to
+                                                            // a viewer.
+                                                            disabled={
+                                                                !allowed(
+                                                                    "content.edit",
+                                                                )
+                                                            }
+                                                            aria-disabled={
+                                                                !allowed(
+                                                                    "content.edit",
+                                                                ) || undefined
+                                                            }
+                                                            title={
+                                                                allowed(
+                                                                    "content.edit",
+                                                                )
+                                                                    ? undefined
+                                                                    : "Only an editor can add documents"
+                                                            }
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                openAddDocuments();
+                                                            }}
+                                                        >
+                                                            Upload
+                                                        </PillButtonUI>
+                                                        {emptyStateSecondaryAction && (
+                                                            <PillButtonUI
+                                                                tone="white"
+                                                                size="sm"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    emptyStateSecondaryAction.onClick();
                                                                 }}
-                                                                onDragEnd={() => {
-                                                                    setDragOverRoot(
-                                                                        false,
-                                                                    );
-                                                                    setDragOverFolderId(
-                                                                        null,
-                                                                    );
-                                                                    setDragOverVersionDocId(
-                                                                        null,
-                                                                    );
-                                                                }}
-                                                                onDragOver={(
-                                                                    e,
-                                                                ) =>
-                                                                    handleDocumentVersionDragOver(
-                                                                        e,
-                                                                        doc.id,
-                                                                    )
-                                                                }
-                                                                onDragLeave={
-                                                                    handleDocumentVersionDragLeave
-                                                                }
-                                                                onDrop={(e) =>
-                                                                    handleDocumentVersionDrop(
-                                                                        e,
-                                                                        doc,
-                                                                    )
-                                                                }
-                                                                onClick={() => {
-                                                                    setViewingDocVersion(
-                                                                        null,
-                                                                    );
-                                                                    setViewingDoc(
-                                                                        doc,
-                                                                    );
-                                                                }}
-                                                                onContextMenu={(
-                                                                    e,
-                                                                ) => {
-                                                                    e.preventDefault();
-                                                                    e.stopPropagation();
-                                                                    closeRowActionMenus();
-                                                                    setContextMenu(
-                                                                        {
-                                                                            x: e.clientX,
-                                                                            y: e.clientY,
-                                                                            docId: doc.id,
-                                                                            folderId:
-                                                                                null,
-                                                                            showFolderActions: false,
-                                                                        },
-                                                                    );
-                                                                }}
-                                                                className={`group flex h-10 min-w-max items-center pr-8 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
                                                             >
-                                                                <div
-                                                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
-                                                                >
-                                                                    <div className="flex items-center">
-                                                                        {isProcessing ||
-                                                                        isUploadingVersion ? (
-                                                                            <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
-                                                                        ) : (
-                                                                            <input
-                                                                                type="checkbox"
-                                                                                checked={selectedDocIds.includes(
-                                                                                    doc.id,
-                                                                                )}
-                                                                                onChange={() =>
-                                                                                    setSelectedDocIds(
-                                                                                        (
-                                                                                            prev,
-                                                                                        ) =>
-                                                                                            prev.includes(
-                                                                                                doc.id,
-                                                                                            )
-                                                                                                ? prev.filter(
-                                                                                                      (
-                                                                                                          x,
-                                                                                                      ) =>
-                                                                                                          x !==
-                                                                                                          doc.id,
-                                                                                                  )
-                                                                                                : [
-                                                                                                      ...prev,
-                                                                                                      doc.id,
-                                                                                                  ],
-                                                                                    )
-                                                                                }
-                                                                                onClick={(
-                                                                                    e,
-                                                                                ) =>
-                                                                                    e.stopPropagation()
-                                                                                }
-                                                                                className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
-                                                                            />
-                                                                        )}
-                                                                        <span className="mr-2 shrink-0">
-                                                                            {isError ? (
-                                                                                <AlertCircle className="h-4 w-4 text-red-500" />
-                                                                            ) : (
-                                                                                <DocIcon
-                                                                                    fileType={
-                                                                                        doc.file_type
-                                                                                    }
-                                                                                />
-                                                                            )}
-                                                                        </span>
-                                                                        {renamingDocumentId ===
-                                                                        doc.id ? (
-                                                                            <input
-                                                                                autoFocus
-                                                                                className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none border-b border-gray-300"
-                                                                                value={
-                                                                                    renameDocumentValue
-                                                                                }
-                                                                                onClick={(
-                                                                                    e,
-                                                                                ) =>
-                                                                                    e.stopPropagation()
-                                                                                }
-                                                                                onDragStart={(
-                                                                                    e,
-                                                                                ) => {
-                                                                                    e.preventDefault();
-                                                                                    e.stopPropagation();
-                                                                                }}
-                                                                                onChange={(
-                                                                                    e,
-                                                                                ) =>
-                                                                                    setRenameDocumentValue(
-                                                                                        e
-                                                                                            .target
-                                                                                            .value,
-                                                                                    )
-                                                                                }
-                                                                                onKeyDown={(
-                                                                                    e,
-                                                                                ) => {
-                                                                                    if (
-                                                                                        e.key ===
-                                                                                        "Enter"
-                                                                                    )
-                                                                                        void submitDocumentRename(
-                                                                                            doc.id,
-                                                                                        );
-                                                                                    if (
-                                                                                        e.key ===
-                                                                                        "Escape"
-                                                                                    ) {
-                                                                                        setRenamingDocumentId(
-                                                                                            null,
-                                                                                        );
-                                                                                        setRenameDocumentValue(
-                                                                                            "",
-                                                                                        );
-                                                                                    }
-                                                                                }}
-                                                                                onBlur={() =>
-                                                                                    void submitDocumentRename(
-                                                                                        doc.id,
-                                                                                    )
-                                                                                }
-                                                                            />
-                                                                        ) : (
-                                                                            <span className="text-sm text-gray-800 truncate">
-                                                                                {
-                                                                                    docName
-                                                                                }
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                                <div className="ml-auto w-20 shrink-0 text-xs text-gray-500 uppercase truncate">
-                                                                    {doc.file_type ?? (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-24 shrink-0 text-sm text-gray-500 truncate">
-                                                                    {doc.size_bytes !=
-                                                                    null ? (
-                                                                        formatBytes(
-                                                                            doc.size_bytes,
-                                                                        )
+                                                                {emptyStateSecondaryAction.label}
+                                                            </PillButtonUI>
+                                                        )}
+                                                    </div>
+                                                }
+                                            />
+                                        </TableEmptyState>
+                                    </div>
+                                )
+                            ) : (
+                                <div
+                                    className="flex-1 flex flex-col"
+                                    onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        closeRowActionMenus();
+                                        // A catalog has no actions for the
+                                        // table background.
+                                        if (catalog) return;
+                                        setContextMenu({
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            folderId: null,
+                                            showFolderActions: false,
+                                        });
+                                    }}
+                                    onClick={() => setContextMenu(null)}
+                                    onDragOver={(e) => {
+                                        if (!hasMovePayload(e.dataTransfer)) return;
+                                        e.preventDefault();
+                                        setDragOverRoot(true);
+                                        setDragOverVersionDocId(null);
+                                    }}
+                                    onDragLeave={(e) => {
+                                        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                                            setDragOverRoot(false);
+                                        }
+                                    }}
+                                    onDrop={async (e) => {
+                                        if (!hasMovePayload(e.dataTransfer)) return;
+                                        e.preventDefault();
+                                        setDragOverRoot(false);
+                                        setDragOverFolderId(null);
+                                        setDragOverVersionDocId(null);
+                                        await handleDropOnFolder(
+                                            viewedFolderId,
+                                            e.dataTransfer,
+                                        );
+                                    }}
+                                >
+                                    {/* Search: flat list; no search: folder tree */}
+                                    {q ? (
+                                        <>
+                                            {renderUploadingDocumentRows(
+                                                0,
+                                                viewedFolderId,
+                                            )}
+                                            {filteredDocs.map((doc) => {
+                                                const docName = doc.filename;
+                                                const isProcessing =
+                                                    doc.status === "pending" || doc.status === "processing";
+                                                const isError = doc.status === "error";
+                                                const isVersionsOpen = expandedVersionDocIds.has(doc.id);
+                                                const versionNumber = currentVersionNumber(doc);
+                                                const hasVersions =
+                                                    typeof versionNumber === "number" && versionNumber > 1;
+                                                const isVersionDragOver = dragOverVersionDocId === doc.id;
+                                                const isUploadingVersion = uploadingVersionDocIds.has(doc.id);
+                                                const isSelected = effectiveSelectedDocIdSet.has(doc.id);
+                                                const isDeletingDoc = deletingDocIds.has(doc.id);
+                                                if (isDeletingDoc) {
+                                                    return renderDocumentActivityRow({
+                                                        key: `deleting-doc-${doc.id}`,
+                                                        filename: doc.filename,
+                                                        fileType: doc.file_type,
+                                                        depth: 0,
+                                                        statusLabel: "Deleting...",
+                                                    });
+                                                }
+                                                return (
+                                                    <div key={doc.id}>
+                                                        <div
+                                                            data-document-row
+                                                            data-document-id={doc.id}
+                                                            data-collection-row-key={`document:${doc.id}`}
+                                                            draggable={!catalog && renamingDocumentId !== doc.id}
+                                                            onDragStart={(event) =>
+                                                                handleDocumentDragStart(
+                                                                    event,
+                                                                    doc,
+                                                                )
+                                                            }
+                                                            onDragEnd={() => {
+                                                                setDragOverRoot(false);
+                                                                setDragOverFolderId(null);
+                                                                setDragOverVersionDocId(null);
+                                                            }}
+                                                            onDragOver={(e) => handleDocumentVersionDragOver(e, doc.id)}
+                                                            onDragLeave={handleDocumentVersionDragLeave}
+                                                            onDrop={(e) => handleDocumentVersionDrop(e, doc)}
+                                                            onClick={(event) =>
+                                                                handleDocumentRowClick(
+                                                                    event,
+                                                                    doc,
+                                                                )
+                                                            }
+                                                            onContextMenu={(e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                closeRowActionMenus();
+                                                                setContextMenu({
+                                                                    x: e.clientX,
+                                                                    y: e.clientY,
+                                                                    docId: doc.id,
+                                                                    folderId: null,
+                                                                    showFolderActions: false,
+                                                                });
+                                                            }}
+                                                            className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : LIQUID_GLASS_HOVER_CLASS}`}
+                                                        >
+                                                            <div
+                                                                className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : ""} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
+                                                            >
+                                                                <div className="flex items-center">
+                                                                    {isProcessing || isUploadingVersion ? (
+                                                                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                                     ) : (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div
-                                                                    className="w-20 shrink-0 text-sm text-gray-500 flex items-center gap-1"
-                                                                    onClick={(
-                                                                        e,
-                                                                    ) =>
-                                                                        e.stopPropagation()
-                                                                    }
-                                                                >
-                                                                    {hasVersions ? (
-                                                                        <button
-                                                                            onClick={() =>
-                                                                                void toggleVersions(
-                                                                                    doc.id,
-                                                                                )
-                                                                            }
-                                                                            className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
-                                                                        >
-                                                                            <span>
-                                                                                {
-                                                                                    versionNumber
-                                                                                }
-                                                                            </span>
-                                                                            {isVersionsOpen ? (
-                                                                                <ChevronDown className="h-3 w-3 text-gray-400" />
-                                                                            ) : (
-                                                                                <ChevronRight className="h-3 w-3 text-gray-400" />
-                                                                            )}
-                                                                        </button>
-                                                                    ) : (
-                                                                        <span className="text-gray-300 pl-1">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
-                                                                    {doc.created_at ? (
-                                                                        formatDate(
-                                                                            doc.created_at,
-                                                                        )
-                                                                    ) : (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
-                                                                    {doc.updated_at ? (
-                                                                        formatDate(
-                                                                            doc.updated_at,
-                                                                        )
-                                                                    ) : (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-8 shrink-0 flex justify-end">
-                                                                    {!isProcessing && (
-                                                                        <RowActions
-                                                                            onRename={() => {
-                                                                                setRenameDocumentValue(
-                                                                                    docName,
-                                                                                );
-                                                                                setRenamingDocumentId(
-                                                                                    doc.id,
-                                                                                );
-                                                                            }}
-                                                                            renameLabel="Rename document"
-                                                                            onDownload={() =>
-                                                                                downloadDoc(
-                                                                                    doc.id,
-                                                                                )
-                                                                            }
-                                                                            onShowAllVersions={
-                                                                                hasVersions &&
-                                                                                !isVersionsOpen
-                                                                                    ? () =>
-                                                                                          void toggleVersions(
-                                                                                              doc.id,
-                                                                                          )
-                                                                                    : undefined
-                                                                            }
-                                                                            onUploadNewVersion={() =>
-                                                                                void handleUploadNewVersion(
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={effectiveSelectedDocIdSet.has(doc.id)}
+                                                                            onChange={(event) =>
+                                                                                updateDocumentSelection(
                                                                                     doc,
+                                                                                    event.target.checked,
+                                                                                    (
+                                                                                        event.nativeEvent as MouseEvent
+                                                                                    ).shiftKey,
                                                                                 )
                                                                             }
-                                                                            onDelete={() =>
-                                                                                requestRemoveDoc(
-                                                                                    doc,
-                                                                                )
-                                                                            }
-                                                                            deleteDisabled={isSharedDocument(
-                                                                                doc,
-                                                                            )}
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                            aria-label={`Select ${docName}`}
+                                                                            className={TABLE_CHECKBOX_CLASS}
                                                                         />
+                                                                    )}
+                                                                    <span className="mr-2 shrink-0">
+                                                                        {isError ? (
+                                                                            <AlertCircle className="h-4 w-4 text-red-500" />
+                                                                        ) : (
+                                                                            <DocIcon
+                                                                                fileType={doc.file_type}
+                                                                                warning={textLayerWarning(
+                                                                                    doc.page_count,
+                                                                                    doc.textless_page_count,
+                                                                                )}
+                                                                            />
+                                                                        )}
+                                                                    </span>
+                                                                    {renamingDocumentId === doc.id ? (
+                                                                        <input
+                                                                            autoFocus
+                                                                            className="min-w-0 flex-1 text-xs text-gray-800 bg-transparent outline-none border-b border-gray-300"
+                                                                            value={renameDocumentValue}
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                            onDragStart={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                            }}
+                                                                            onChange={(e) =>
+                                                                                setRenameDocumentValue(e.target.value)
+                                                                            }
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === "Enter")
+                                                                                    void submitDocumentRename(doc.id);
+                                                                                if (e.key === "Escape") {
+                                                                                    setRenamingDocumentId(null);
+                                                                                    setRenameDocumentValue("");
+                                                                                }
+                                                                            }}
+                                                                            onBlur={() =>
+                                                                                void submitDocumentRename(doc.id)
+                                                                            }
+                                                                        />
+                                                                    ) : (
+                                                                        <span className="text-xs text-gray-800 truncate">
+                                                                            {docName}
+                                                                        </span>
                                                                     )}
                                                                 </div>
                                                             </div>
-                                                            {isVersionsOpen && (
-                                                                <DocVersionHistory
-                                                                    docId={
-                                                                        doc.id
-                                                                    }
-                                                                    filename={
-                                                                        docName
-                                                                    }
-                                                                    activeVersionNumber={
-                                                                        versionNumber
-                                                                    }
-                                                                    loading={loadingVersionDocIds.has(
-                                                                        doc.id,
-                                                                    )}
-                                                                    versions={
-                                                                        versionsByDocId.get(
-                                                                            doc.id,
-                                                                        )
-                                                                            ?.versions ??
-                                                                        []
-                                                                    }
-                                                                    currentVersionId={
-                                                                        versionsByDocId.get(
-                                                                            doc.id,
-                                                                        )
-                                                                            ?.currentVersionId ??
-                                                                        null
-                                                                    }
-                                                                    onDownloadVersion={
-                                                                        downloadDocVersion
-                                                                    }
-                                                                    onOpenVersion={(
-                                                                        versionId,
-                                                                        label,
-                                                                    ) => {
-                                                                        setViewingDocVersion(
-                                                                            {
-                                                                                id: versionId,
-                                                                                label,
-                                                                            },
-                                                                        );
-                                                                        setViewingDoc(
-                                                                            doc,
-                                                                        );
-                                                                    }}
-                                                                    onRenameVersion={(
-                                                                        versionId,
-                                                                        filename,
-                                                                    ) =>
-                                                                        handleRenameVersion(
-                                                                            doc.id,
-                                                                            versionId,
-                                                                            filename,
-                                                                        )
-                                                                    }
-                                                                    onExtensionChangeBlocked={(
-                                                                        filename,
-                                                                    ) =>
-                                                                        setDocumentRenameWarning(
-                                                                            extensionChangeWarning(
-                                                                                filename,
-                                                                            ),
-                                                                        )
-                                                                    }
-                                                                />
-                                                            )}
+                                                            <div className="ml-auto w-20 shrink-0 text-xs text-gray-500 lowercase truncate">
+                                                                {doc.file_type ?? (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="w-24 shrink-0 text-xs text-gray-500 truncate">
+                                                                {doc.size_bytes != null ? (
+                                                                    formatBytes(doc.size_bytes)
+                                                                ) : (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div
+                                                                className="w-20 shrink-0 text-xs text-gray-500 flex items-center gap-1"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                {hasVersions ? (
+                                                                    <button
+                                                                        onClick={() => void toggleVersions(doc.id)}
+                                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${LIQUID_GLASS_HOVER_CLASS}`}
+                                                                    >
+                                                                        <span>{versionNumber}</span>
+                                                                        {isVersionsOpen ? (
+                                                                            <ChevronDown className="h-3 w-3 text-gray-400" />
+                                                                        ) : (
+                                                                            <ChevronRight className="h-3 w-3 text-gray-400" />
+                                                                        )}
+                                                                    </button>
+                                                                ) : (
+                                                                    <span className="text-gray-300 pl-1">—</span>
+                                                                )}
+                                                            </div>
+                                                            {renderCreatorCell(doc)}
+                                                            <div className="w-32 shrink-0 text-xs text-gray-500 truncate">
+                                                                {doc.created_at ? (
+                                                                    formatDate(doc.created_at)
+                                                                ) : (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="w-32 shrink-0 text-xs text-gray-500 truncate">
+                                                                {doc.updated_at ? (
+                                                                    formatDate(doc.updated_at)
+                                                                ) : (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="w-8 shrink-0 flex justify-end">
+                                                                {!isProcessing && (
+                                                                    catalog ? (
+                                                                        <RowActions {...catalogDocumentActions(doc)} />
+                                                                    ) : (
+                                                                        <RowActions
+                                                                            onView={() => {
+                                                                                setViewingDocVersion(null);
+                                                                                setViewingDoc(doc);
+                                                                            }}
+                                                                            onRename={() => {
+                                                                                setRenameDocumentValue(docName);
+                                                                                setRenamingDocumentId(doc.id);
+                                                                            }}
+                                                                            renameLabel="Rename document"
+                                                                            onDownload={() => downloadDoc(doc.id)}
+                                                                            onShowAllVersions={
+                                                                                hasVersions && !isVersionsOpen
+                                                                                    ? () => void toggleVersions(doc.id)
+                                                                                    : undefined
+                                                                            }
+                                                                            onUploadNewVersion={() =>
+                                                                                void handleUploadNewVersion(doc)
+                                                                            }
+                                                                            onDelete={() => requestRemoveDoc(doc)}
+                                                                            deleteDisabled={!canDeleteDocument(doc)}
+                                                                        />
+                                                                    )
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                    );
-                                                })}
-                                            </>
+                                                        {isVersionsOpen && (
+                                                            <DocVersionHistory
+                                                                docId={doc.id}
+                                                                showCreator={showCreator}
+                                                                filename={docName}
+                                                                activeVersionNumber={versionNumber}
+                                                                loading={loadingVersionDocIds.has(doc.id)}
+                                                                versions={versionsByDocId.get(doc.id)?.versions ?? []}
+                                                                currentVersionId={
+                                                                    versionsByDocId.get(doc.id)?.currentVersionId ??
+                                                                    null
+                                                                }
+                                                                onDownloadVersion={downloadDocVersion}
+                                                                onOpenVersion={(versionId, label) => {
+                                                                    setViewingDocVersion({
+                                                                        id: versionId,
+                                                                        label,
+                                                                    });
+                                                                    setViewingDoc(doc);
+                                                                }}
+                                                                onRenameVersion={(versionId, filename) =>
+                                                                    handleRenameVersion(doc.id, versionId, filename)
+                                                                }
+                                                                onExtensionChangeBlocked={(filename) =>
+                                                                    setDocumentRenameWarning(
+                                                                        extensionChangeWarning(filename),
+                                                                    )
+                                                                }
+                                                            />
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                            {serverQueryActive && onLoadMoreServerDocuments && (
+                                                <TableLoadMoreRow
+                                                    loading={false}
+                                                    hasMore={serverQueryHasMore}
+                                                    itemCount={filteredDocs.length}
+                                                    loadingMore={serverQueryLoadingMore}
+                                                    hasError={false}
+                                                    onLoadMore={onLoadMoreServerDocuments}
+                                                />
+                                            )}
+                                        </>
+                                    ) : (
+                                        viewedFolder ? (
+                                            renderLevel(viewedFolder.id, 0)
                                         ) : (
                                             renderLevel(null, 0)
-                                        )}
-                                        {/* Spacer — fills remaining height and extends the root drop zone */}
-                                        <div className="flex-1 min-h-16" />
-                                    </div>
-                                )}
+                                        )
+                                    )}
+                                </div>
+                            )}
 
-                                {/* Context menu */}
-                                {contextMenu &&
-                                    (() => {
-                                        const menuDoc = contextMenu.docId
-                                            ? docs.find(
-                                                  (doc) =>
-                                                      doc.id ===
-                                                      contextMenu.docId,
-                                              )
-                                            : null;
-                                        const menuDocVersionNumber = menuDoc
-                                            ? currentVersionNumber(menuDoc)
-                                            : null;
-                                        const menuDocHasVersions =
-                                            typeof menuDocVersionNumber ===
-                                                "number" &&
-                                            menuDocVersionNumber > 1;
-                                        const menuDocVersionsOpen = menuDoc
-                                            ? expandedVersionDocIds.has(
-                                                  menuDoc.id,
-                                              )
-                                            : false;
-                                        const surfaceProps: RowActionMenuSurfaceProps =
-                                            {
-                                                className: "fixed z-[120]",
-                                                style: {
-                                                    top: contextMenu.y,
-                                                    left: contextMenu.x,
-                                                },
-                                                onClick: (e) =>
-                                                    e.stopPropagation(),
-                                            };
-
-                                        return createPortal(
-                                            menuDoc ? (
-                                                <RowActionMenuItems
-                                                    ref={contextMenuRef}
-                                                    surfaceProps={surfaceProps}
-                                                    onClose={() =>
-                                                        setContextMenu(null)
-                                                    }
-                                                    onRename={() => {
-                                                        setRenameDocumentValue(
-                                                            menuDoc.filename,
-                                                        );
-                                                        setRenamingDocumentId(
-                                                            menuDoc.id,
-                                                        );
-                                                    }}
-                                                    renameLabel="Rename document"
-                                                    onDownload={() =>
-                                                        downloadDoc(menuDoc.id)
-                                                    }
-                                                    onShowAllVersions={
-                                                        menuDocHasVersions &&
-                                                        !menuDocVersionsOpen
-                                                            ? () =>
-                                                                  void toggleVersions(
-                                                                      menuDoc.id,
-                                                                  )
-                                                            : undefined
-                                                    }
-                                                    onUploadNewVersion={() =>
-                                                        void handleUploadNewVersion(
-                                                            menuDoc,
-                                                        )
-                                                    }
-                                                    onRemoveFromFolder={
-                                                        menuDoc.folder_id
-                                                            ? () =>
-                                                                  void handleRemoveDocFromFolder(
-                                                                      menuDoc.id,
-                                                                  )
-                                                            : undefined
-                                                    }
-                                                    onDelete={() =>
-                                                        requestRemoveDoc(menuDoc)
-                                                    }
-                                                    deleteDisabled={isSharedDocument(
-                                                        menuDoc,
-                                                    )}
-                                                />
-                                            ) : (
-                                                <RowActionMenuItems
-                                                    ref={contextMenuRef}
-                                                    surfaceProps={surfaceProps}
-                                                    onClose={() =>
-                                                        setContextMenu(null)
-                                                    }
-                                                    onNewSubfolder={() => {
-                                                        setCreatingFolderIn(
-                                                            contextMenu.folderId,
-                                                        );
-                                                        setNewFolderName("");
-                                                        if (
-                                                            contextMenu.folderId
-                                                        ) {
-                                                            setExpandedFolderIds(
-                                                                (prev) =>
-                                                                    new Set([
-                                                                        ...prev,
-                                                                        contextMenu.folderId!,
-                                                                    ]),
-                                                            );
-                                                        }
-                                                    }}
-                                                    newSubfolderLabel={
-                                                        contextMenu.showFolderActions
-                                                            ? "New subfolder inside"
-                                                            : "New subfolder"
-                                                    }
-                                                    onRename={
-                                                        contextMenu.showFolderActions &&
-                                                        contextMenu.folderId
-                                                            ? () => {
-                                                                  const f =
-                                                                      folders.find(
-                                                                          (x) =>
-                                                                              x.id ===
-                                                                              contextMenu.folderId,
-                                                                      );
-                                                                  setRenameFolderValue(
-                                                                      f?.name ??
-                                                                          "",
-                                                                  );
-                                                                  setRenamingFolderId(
-                                                                      contextMenu.folderId!,
-                                                                  );
-                                                              }
-                                                            : undefined
-                                                    }
-                                                    renameLabel="Rename folder"
-                                                    onDelete={
-                                                        contextMenu.showFolderActions &&
-                                                        contextMenu.folderId
-                                                            ? () =>
-                                                                  requestDeleteFolder(
-                                                                      contextMenu.folderId!,
-                                                                  )
-                                                            : undefined
-                                                    }
-                                                    deleteLabel="Delete folder"
-                                                />
-                                            ),
-                                            document.body,
-                                        );
-                                    })()}
-                            </div>
-                            {/* end blue ring wrapper */}
+                            {/* Context menu */}
+                            {contextMenu &&
+                                (() => {
+                                    return (
+                                        <DropdownAtPoint
+                                            point={{
+                                                x: contextMenu.x,
+                                                y: contextMenu.y,
+                                            }}
+                                            onClose={() => setContextMenu(null)}
+                                            className={ROW_ACTION_MENU_CLASS}
+                                            // React events bubble through
+                                            // the portal to the table.
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                        {renderRowActionMenuItems(contextMenu.docId, contextMenu.folderId, contextMenu.showFolderActions, () => setContextMenu(null))}
+                                        </DropdownAtPoint>
+                                    );
+                                })()}
                         </div>
-                    )}
+                        {/* end blue ring wrapper */}
+                    </div>
+                )}
             </TableScrollArea>
 
-            {renderAddDocumentsModal?.(
-                addDocsOpen,
-                () => setAddDocsOpen(false),
-                handleDocsSelected,
-            )}
+            {renderAddDocumentsModal?.(addDocsOpen, () => setAddDocsOpen(false), handleDocsSelected)}
 
             <DocumentSidePanel
                 doc={sidePanelDoc}
+                readOnly={!!catalog}
+                displayUrl={
+                    catalog && sidePanelDoc
+                        ? catalog.resolveDocumentUrl(sidePanelDoc.id).url
+                        : undefined
+                }
+                onAdd={
+                    catalog &&
+                    sidePanelDoc &&
+                    catalog.canAdd?.(sidePanelDoc) !== false
+                        ? (doc) => catalog.onAdd([doc])
+                        : undefined
+                }
                 versionId={viewingDocVersion?.id ?? null}
                 currentVersionId={
-                    sidePanelDoc
-                        ? (versionsByDocId.get(sidePanelDoc.id)
-                              ?.currentVersionId ?? null)
-                        : null
+                    sidePanelDoc ? (versionsByDocId.get(sidePanelDoc.id)?.currentVersionId ?? null) : null
                 }
-                versions={
-                    sidePanelDoc
-                        ? (versionsByDocId.get(sidePanelDoc.id)?.versions ?? [])
-                        : []
-                }
-                versionsLoading={
-                    sidePanelDoc
-                        ? loadingVersionDocIds.has(sidePanelDoc.id)
-                        : false
-                }
+                versions={sidePanelDoc ? (versionsByDocId.get(sidePanelDoc.id)?.versions ?? []) : []}
+                versionsLoading={sidePanelDoc ? loadingVersionDocIds.has(sidePanelDoc.id) : false}
                 onClose={() => {
                     setViewingDoc(null);
                     setViewingDocVersion(null);
                 }}
                 onLoadVersions={(docId) => loadDocumentVersions(docId)}
-                onSelectVersion={(versionId, label) =>
-                    setViewingDocVersion({ id: versionId, label })
-                }
+                onSelectVersion={(versionId, label) => setViewingDocVersion({ id: versionId, label })}
                 onDownloadDocument={downloadDoc}
                 onDownloadVersion={downloadDocVersion}
                 onRenameVersion={handleRenameVersion}
                 onDeleteVersion={handleDeleteVersion}
                 onUploadNewVersion={submitNewVersion}
                 onReplaceVersion={replaceVersionFile}
-                canDelete={!isSharedDocument(sidePanelDoc)}
+                canDelete={canDeleteDocument(sidePanelDoc)}
                 onOwnerOnlyAction={setOwnerOnlyAction}
                 onDelete={async (doc) => {
                     await handleRemoveDoc(doc.id);
                 }}
             />
-
         </div>
     );
 }

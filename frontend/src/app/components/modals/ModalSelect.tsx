@@ -3,18 +3,33 @@
 import { useState } from "react";
 import { ChevronDown, type LucideIcon } from "lucide-react";
 import { cn } from "@/app/lib/utils";
+import { FORM_CONTROL_GLASS_CLASS } from "../ui/form-field";
+import { textButtonUIClassName } from "@/shared/ui/TextButtonUI.styles";
+import {
+    Dropdown,
+    DropdownContent,
+    DropdownItem,
+    DropdownTrigger,
+} from "@/shared/ui/dropdown";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 export type ModalSelectOption =
     | string
     | {
           value: string;
           label: string;
+          /** Muted text displayed inline after the label. */
+          suffix?: string;
           icon?: LucideIcon;
           iconClassName?: string;
       };
 
 interface ModalSelectProps {
     id: string;
+    "aria-label"?: string;
     value: string;
     options: readonly ModalSelectOption[];
     onChange: (value: string) => void;
@@ -24,6 +39,8 @@ interface ModalSelectProps {
     onOpenChange?: (open: boolean) => void;
     className?: string;
     menuClassName?: string;
+    wrapLabels?: boolean;
+    variant?: "glass" | "flat";
 }
 
 function normalizeOption(option: ModalSelectOption) {
@@ -34,6 +51,7 @@ function normalizeOption(option: ModalSelectOption) {
 
 export function ModalSelect({
     id,
+    "aria-label": ariaLabel,
     value,
     options,
     onChange,
@@ -43,6 +61,8 @@ export function ModalSelect({
     onOpenChange,
     className,
     menuClassName,
+    wrapLabels = false,
+    variant = "glass",
 }: ModalSelectProps) {
     const [internalOpen, setInternalOpen] = useState(false);
     const isOpen = open ?? internalOpen;
@@ -63,64 +83,91 @@ export function ModalSelect({
     }
 
     return (
-        <div className="relative">
-            <button
-                id={id}
-                type="button"
-                onClick={() => setOpen(!isOpen)}
-                disabled={disabled}
-                className={cn(
-                    "flex h-10 w-full items-center justify-between rounded-xl border border-white/70 bg-white/55 px-3 text-sm text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-colors hover:bg-white/70 focus:bg-white/70 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60",
-                    className,
-                )}
-                aria-haspopup="listbox"
-                aria-expanded={isOpen}
-            >
-                <span className="flex min-w-0 items-center gap-2">
-                    {selected?.icon && (
-                        <selected.icon
-                            className={cn(
-                                "h-3.5 w-3.5 shrink-0",
-                                selected.iconClassName,
-                            )}
-                        />
+        <Dropdown open={isOpen} onOpenChange={setOpen}>
+            <DropdownTrigger asChild>
+                <button
+                    id={id}
+                    aria-label={ariaLabel}
+                    type="button"
+                    disabled={disabled}
+                    className={cn(
+                        variant === "glass"
+                            ? FORM_CONTROL_GLASS_CLASS
+                            : textButtonUIClassName({
+                                  className: "w-full rounded-xl bg-app-surface-active px-3 text-sm text-gray-700",
+                              }),
+                        "flex h-10 items-center justify-between",
+                        variant === "glass" && LIQUID_GLASS_HOVER_CLASS,
+                        (wrapLabels || selected?.suffix) &&
+                            "h-auto min-h-10 py-2",
+                        isOpen && variant === "glass" &&
+                            LIQUID_GLASS_SELECTED_CLASS,
+                        className,
                     )}
-                    <span
-                        className={cn(
-                            "truncate",
-                            !selected && !hasValue && "text-gray-400",
+                >
+                    <span className="flex min-w-0 items-center gap-2">
+                        {selected?.icon && (
+                            <selected.icon
+                                className={cn(
+                                    "h-3.5 w-3.5 shrink-0",
+                                    selected.iconClassName,
+                                )}
+                            />
                         )}
-                    >
-                        {selected?.label ?? (hasValue ? value : placeholder)}
+                        <span
+                            className={cn(
+                                wrapLabels || selected?.suffix
+                                    ? "min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]"
+                                    : "truncate",
+                                !selected && !hasValue && "text-gray-400",
+                            )}
+                        >
+                            {selected?.label ??
+                                (hasValue ? value : placeholder)}
+                            {selected?.suffix && (
+                                <span className="font-normal text-gray-400">
+                                    {" "}
+                                    {selected.suffix}
+                                </span>
+                            )}
+                        </span>
                     </span>
-                </span>
-                <ChevronDown
-                    className={cn(
-                        "ml-2 h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform",
-                        isOpen && "rotate-180",
-                    )}
-                />
-            </button>
+                    <ChevronDown
+                        className={cn(
+                            "ml-2 h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform",
+                            isOpen && "rotate-180",
+                        )}
+                    />
+                </button>
+            </DropdownTrigger>
             {isOpen && !disabled && (
-                <div
-                    role="listbox"
-                    aria-labelledby={id}
+                <DropdownContent
+                    align="start"
+                    sideOffset={4}
+                    collisionPadding={12}
+                    onEscapeKeyDown={(event) => event.stopPropagation()}
                     className={cn(
-                        "absolute left-0 top-full z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border border-white/70 bg-gray-50/95 p-1 shadow-[0_12px_32px_rgba(15,23,42,0.156),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-2xl",
+                        "max-h-56 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto rounded-2xl p-1",
                         menuClassName,
                     )}
                 >
                     {normalizedOptions.map((option) => (
-                        <button
+                        <DropdownItem
                             key={option.value}
-                            type="button"
-                            role="option"
-                            aria-selected={option.value === value}
-                            onClick={() => handleSelect(option.value)}
+                            textValue={[option.label, option.suffix]
+                                .filter(Boolean)
+                                .join(" ")}
+                            aria-label={
+                                option.suffix
+                                    ? `${option.label} ${option.suffix}`
+                                    : undefined
+                            }
+                            selected={option.value === value}
+                            onSelect={() => handleSelect(option.value)}
                             className={cn(
-                                "flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-all hover:bg-gray-100/70",
+                                "w-full rounded-md py-2 text-left transition-all",
                                 option.value === value
-                                    ? "bg-gray-100 text-gray-900"
+                                    ? "text-gray-900"
                                     : "text-gray-700",
                             )}
                         >
@@ -133,14 +180,26 @@ export function ModalSelect({
                                         )}
                                     />
                                 )}
-                                <span className="truncate">
+                                <span
+                                    className={
+                                        wrapLabels || option.suffix
+                                            ? "min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+                                            : "truncate"
+                                    }
+                                >
                                     {option.label}
+                                    {option.suffix && (
+                                        <span className="font-normal text-gray-400">
+                                            {" "}
+                                            {option.suffix}
+                                        </span>
+                                    )}
                                 </span>
                             </span>
-                        </button>
+                        </DropdownItem>
                     ))}
-                </div>
+                </DropdownContent>
             )}
-        </div>
+        </Dropdown>
     );
 }

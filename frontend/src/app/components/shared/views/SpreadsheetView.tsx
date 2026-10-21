@@ -6,7 +6,13 @@ import LuckyExcel, { type LuckyExcelSheet } from "luckyexcel";
 import type { WorkbookInstance } from "@fortune-sheet/react";
 import type { Cell, Sheet } from "@fortune-sheet/core";
 import "@fortune-sheet/react/dist/index.css";
-import { useFetchSingleDoc } from "@/app/hooks/useFetchSingleDoc";
+import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
+import { normalizeSpreadsheetImages } from "@/app/lib/spreadsheetImages";
+import {
+    SpreadsheetWorkbook,
+    type SpreadsheetSession,
+} from "./SpreadsheetWorkbook";
+import { viewRoundingClass, type ViewRounding } from "./viewRounding";
 
 type HighlightRange = { row: [number, number]; column: [number, number] };
 type WorkbookComponent = typeof import("@fortune-sheet/react").Workbook;
@@ -17,9 +23,12 @@ export type HighlightCell = { sheet?: string; cell?: string };
 interface Props {
     documentId: string;
     versionId?: string | null;
+    displayUrl?: string | null;
+    refetchKey?: number | string;
     /** Cell(s) to select/scroll to (from a spreadsheet citation). */
     highlightCells?: HighlightCell[];
-    rounded?: boolean;
+    rounded?: ViewRounding;
+    active?: boolean;
 }
 
 /** "B" -> 1, "AA" -> 26 (0-based column index). */
@@ -201,24 +210,33 @@ function applyExcelTextOverflow(sheets: LuckyExcelSheet[]): void {
  * CSS background on the header overlay divs, which sits in front of the canvas
  * and hides the labels entirely.
  */
-const HEADER_TINT = "rgba(148, 163, 184, 0.18)";
+function canvasThemeColor(
+    ctx: CanvasRenderingContext2D,
+    property: string,
+): string | null {
+    return (
+        getComputedStyle(ctx.canvas).getPropertyValue(property).trim() || null
+    );
+}
 
 function tintHeaderCell(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    ctx: CanvasRenderingContext2D,
 ): void {
-  ctx.save();
-  ctx.fillStyle = HEADER_TINT;
-  ctx.fillRect(x, y, width, height);
-  ctx.restore();
+    const tint = canvasThemeColor(ctx, "--spreadsheet-header-tint");
+    if (!tint) return;
+    ctx.save();
+    ctx.fillStyle = tint;
+    ctx.fillRect(x, y, width, height);
+    ctx.restore();
 }
 
 /**
  * Renders an Excel workbook as a read-only grid using Fortune-sheet. It fetches
- * the document's raw `.xlsx`/`.xlsm`/`.xls` bytes itself (via /display) and
+ * the document's raw `.xlsx`/`.xlsm`/`.xls` bytes itself (via /file) and
  * converts them to Fortune-sheet data with Luckyexcel, preserving the original
  * styling (fills, fonts, borders, merges).
  *
@@ -229,10 +247,14 @@ function tintHeaderCell(
 export function SpreadsheetView({
     documentId,
     versionId,
+    displayUrl,
+    refetchKey,
     highlightCells,
     rounded = true,
+    active = true,
 }: Props) {
     const workbookRef = useRef<WorkbookInstance>(null);
+    const [session, setSession] = useState<SpreadsheetSession | null>(null);
     // The frame element, used to reach Fortune-sheet's scrollbars for measuring
     // the current scroll offset and viewport size when deciding whether to scroll.
     const containerRef = useRef<HTMLDivElement>(null);
@@ -240,15 +262,19 @@ export function SpreadsheetView({
     // it never re-mounts the Workbook or changes the settings object.
     const highlightRef = useRef<HighlightRange | null>(null);
     const [sheets, setSheets] = useState<Sheet[] | null>(null);
+    const [workbookGeneration, setWorkbookGeneration] = useState(0);
     const [WorkbookComponent, setWorkbookComponent] =
         useState<WorkbookComponent | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    // Fetch the raw workbook bytes. For spreadsheets, /display returns the
-    // original .xlsx/.xlsm/.xls bytes rather than a PDF rendition.
-    const { result, error: fetchError } = useFetchSingleDoc(
+    // Fetch the raw workbook bytes from /file, or from the caller's source
+    // URL (workflow add-on assets). Uncached: a replaced version must reload.
+    const { bytes, error: fetchError } = useFetchDocxBytes(
         documentId,
         versionId,
+        refetchKey,
+        displayUrl,
+        false,
     );
 
     // Fortune-sheet touches browser-only APIs while loading, so keep the import
@@ -276,23 +302,23 @@ export function SpreadsheetView({
     // Fortune-sheet data while preserving styling (fills, fonts, borders,
     // alignment, column widths).
     useEffect(() => {
-        if (!result) return;
-        if (result.type !== "spreadsheet") {
-            setError("This spreadsheet could not be displayed.");
-            return;
-        }
+        if (!bytes) return;
         let cancelled = false;
         setSheets(null);
         setError(null);
 
         try {
-            const file = new File([result.buffer], "spreadsheet.xlsx");
+            const file = new File([bytes], "spreadsheet.xlsx");
             LuckyExcel.transformExcelToLucky(file, (exportJson) => {
                 if (cancelled) return;
                 if (exportJson?.sheets?.length) {
                     applyMergeCells(exportJson.sheets);
                     applyExcelTextOverflow(exportJson.sheets);
+                    for (const sheet of exportJson.sheets) {
+                        sheet.images = normalizeSpreadsheetImages(sheet.images);
+                    }
                     setSheets(exportJson.sheets as unknown as Sheet[]);
+                    setWorkbookGeneration((generation) => generation + 1);
                 } else {
                     setError("This spreadsheet could not be displayed.");
                 }
@@ -305,7 +331,7 @@ export function SpreadsheetView({
         return () => {
             cancelled = true;
         };
-    }, [result]);
+    }, [bytes]);
 
     // Draw the citation highlight on the canvas. Stable identity so the Workbook
     // settings never change; it reads the live target from `highlightRef`. We use
@@ -336,10 +362,19 @@ export function SpreadsheetView({
             }
             const w = info.endX - info.startX;
             const h = info.endY - info.startY;
+            const fill = canvasThemeColor(
+                ctx,
+                "--spreadsheet-highlight-background",
+            );
+            const outline = canvasThemeColor(
+                ctx,
+                "--spreadsheet-highlight-outline",
+            );
+            if (!fill || !outline) return;
             ctx.save();
-            ctx.fillStyle = "rgba(59, 130, 246, 0.16)";
+            ctx.fillStyle = fill;
             ctx.fillRect(info.startX, info.startY, w, h);
-            ctx.strokeStyle = "#3b82f6";
+            ctx.strokeStyle = outline;
             ctx.lineWidth = 2;
             ctx.strokeRect(info.startX + 1, info.startY + 1, w - 2, h - 2);
             ctx.restore();
@@ -372,6 +407,18 @@ export function SpreadsheetView({
         [afterRenderCell],
     );
 
+    // Fortune-sheet paints its grid on canvas, so CSS variable changes need an
+    // explicit repaint when the root dark-mode class changes.
+    useEffect(() => {
+        const repaint = () => window.dispatchEvent(new Event("resize"));
+        const observer = new MutationObserver(repaint);
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ["class"],
+        });
+        return () => observer.disconnect();
+    }, []);
+
     // Activate the cited sheet, bring the cell into view, and repaint the
     // highlight. We only scroll when the cell is off screen (centering it);
     // when it's already visible we leave the viewport put and force a redraw so
@@ -380,7 +427,7 @@ export function SpreadsheetView({
     // position changes, and the synthetic "resize" repaints in place via
     // Fortune-sheet's window resize handler.
     useEffect(() => {
-        if (!sheets) return;
+        if (!active || !sheets) return;
         const target = highlightCells?.[0];
 
         const sheetIndex = target?.sheet
@@ -426,7 +473,7 @@ export function SpreadsheetView({
                 const curLeft = sbX.scrollLeft;
                 const curTop = sbY.scrollTop;
                 const viewW = sbX.clientWidth;
-                const viewH = sbY.clientHeight;
+                const viewH = Math.max(24, sbY.clientHeight);
                 const visible =
                     rect.x >= curLeft &&
                     rect.x + rect.w <= curLeft + viewW &&
@@ -454,9 +501,9 @@ export function SpreadsheetView({
             }
         }, 200);
         return () => window.clearTimeout(timer);
-    }, [sheets, highlightCells, highlightKey]);
+    }, [active, sheets, highlightCells, highlightKey]);
 
-    const frameClass = `fortune-sheet-viewer relative flex flex-col flex-1 min-h-0 overflow-hidden ${rounded ? "rounded-lg" : ""}`;
+    const frameClass = `fortune-sheet-viewer relative flex flex-col flex-1 min-h-0 overflow-hidden ${viewRoundingClass(rounded)}`;
 
     const message =
         error ?? (fetchError ? "Failed to load spreadsheet." : null);
@@ -482,32 +529,35 @@ export function SpreadsheetView({
 
     return (
         <div ref={containerRef} className={frameClass}>
-            <div className="relative min-h-0 flex-1">
-                <WorkbookComponent
-                    ref={workbookRef}
-                    data={sheets}
-                    hooks={hooks}
-                    allowEdit={false}
-                    showToolbar={false}
-                    showFormulaBar={false}
-                />
+            <div className="relative min-h-0 flex-1 flex flex-col">
+                {active && (
+                    <SpreadsheetWorkbook
+                        key={workbookGeneration}
+                        Workbook={WorkbookComponent}
+                        workbookRef={workbookRef}
+                        initialSession={session}
+                        onSessionSave={setSession}
+                        sheets={sheets}
+                        hooks={hooks}
+                    />
+                )}
                 <style jsx global>{`
                     /* The row/col header strips are transparent overlays over
                        the label canvas — leave them so the labels show. Only the
                        corner (no label) gets a matching gray background here; the
                        header strips are tinted on the canvas via render hooks. */
                     .fortune-sheet-viewer .fortune-left-top {
-                        background-color: #eceef2;
+                        background-color: var(--spreadsheet-header-corner);
                     }
 
                     .fortune-sheet-viewer .fortune-row-header-hover,
                     .fortune-sheet-viewer .fortune-col-header-hover {
-                        background-color: rgba(209, 213, 219, 0.65);
+                        background-color: var(--spreadsheet-header-hover);
                     }
 
                     .fortune-sheet-viewer .fortune-row-header-selected,
                     .fortune-sheet-viewer .fortune-col-header-selected {
-                        background-color: rgba(156, 163, 175, 0.28);
+                        background-color: var(--spreadsheet-header-selected);
                     }
                 `}</style>
             </div>

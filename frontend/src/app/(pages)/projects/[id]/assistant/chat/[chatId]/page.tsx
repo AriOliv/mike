@@ -1,10 +1,12 @@
 "use client";
 
+import { useDocumentViewers } from "@/app/hooks/useDocumentViewers";
+import { useDocumentPermissions } from "@/app/hooks/useDocumentPermissions";
+
 import {
     use,
     useCallback,
     useEffect,
-    useLayoutEffect,
     useMemo,
     useReducer,
     useRef,
@@ -12,151 +14,124 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import {
+    ArrowUpRight,
     ChevronLeft,
     ChevronRight,
-    FileText,
-    Loader2,
-    Pencil,
-    Trash2,
-    Upload,
-    X,
+    FolderOpen,
+    FolderPlus,
 } from "lucide-react";
 import {
-    deleteChat,
+    UploadBatchError,
     deleteDocument,
-    getChat,
+    failedUploadMessage,
+    getDocument,
     getProject,
-    uploadProjectDocument,
+    listProjectChats,
+    uploadProjectDocuments,
     createProjectFolder,
     renameProjectFolder,
+    renameProjectDocument,
     deleteProjectFolder,
     moveDocumentToFolder,
     moveSubfolderToFolder,
+    resolveProjectFolderPath,
 } from "@/app/lib/mikeApi";
-import { useAssistantChat } from "@/app/hooks/useAssistantChat";
+import {
+    chatActivityAt,
+    sortChatsByActivity,
+    touchChatActivity,
+} from "@/app/lib/chatActivity";
+import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
+import { useChatRoute } from "@/app/hooks/useChatRoute";
+import {
+    CHAT_DEFAULT,
+    DOCUMENT_MIN,
+    EXPLORER_DEFAULT,
+    fitPanelWidths,
+    fitsWithExplorer,
+    resizeChatSplit,
+    resizePanel,
+    type WorkspacePanelWidths,
+} from "@/app/lib/workspacePanelWidths";
+import {
+    ProjectChatPanel,
+    type ProjectChatPanelHandle,
+} from "@/app/components/projects/ProjectChatPanel";
+import { useProjectPicker } from "@/app/hooks/useProjectPicker";
+import {
+    isExternalFileDrag,
+    isDocumentViewerDrag,
+    isProjectItemDrag,
+} from "@/app/lib/projectDragTypes";
+import { useExplorerDownload } from "@/app/hooks/useExplorerDownload";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { UserMessage } from "@/app/components/assistant/UserMessage";
-import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
-import { ChatInput } from "@/app/components/assistant/ChatInput";
-import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
-import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
-import { PdfView } from "@/app/components/shared/views/PdfView";
-import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
+import {
+    ProjectExplorer,
+    type ProjectExplorerHandle,
+} from "@/app/components/projects/ProjectExplorer";
+import { ProjectMemoryModal } from "@/app/components/projects/ProjectMemoryModal";
+import { ProjectDocumentTabs } from "@/app/components/projects/ProjectDocumentTabs";
+import {
+    ProjectDocumentPanels,
+    type ProjectDocumentTab,
+    type ProjectDocumentAnnotation,
+} from "@/app/components/projects/ProjectDocumentPanels";
+import { useProjectDocumentRefresh } from "@/app/hooks/useProjectDocumentRefresh";
+import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
+import { reorderTabs } from "@/app/lib/reorderTabs";
+import { AddDocumentsModal } from "@/app/components/modals/AddDocumentsModal";
+import { ProjectPickerModal } from "@/app/components/modals/ProjectPickerModal";
+import { DocumentUploadMenu } from "@/app/components/shared/DocumentUploadMenu";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
-import { DocxView } from "@/app/components/shared/views/DocxView";
-import { MikeIcon } from "@/app/components/chat/mike-icon";
-import { useAuth } from "@/app/contexts/AuthContext";
-import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
 import { useSidebar } from "@/app/contexts/SidebarContext";
-import { PageHeader } from "@/app/components/shared/PageHeader";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import type {
-    CitationQuote,
+    Chat,
+    AssistantEvent,
+    PanelDocument,
     Citation,
     Document,
     EditAnnotation,
-    Message,
     Project,
 } from "@/app/components/shared/types";
-import {
-    expandCitationToEntries,
-    isDocxFilename,
-    isSpreadsheetFilename,
-} from "@/app/components/shared/types";
+import { panelDocumentFromCitation, panelDocumentFromCaseEvent, panelDocumentType } from "@/app/components/shared/types";
+import { panelDocumentAtVersion } from "@/app/lib/panelDocumentAtVersion";
+import { resolvePanelDocumentVersionResult } from "@/app/components/assistant/panelDocumentVersion";
+import type { DocumentContentMode } from "@/app/components/shared/DocumentContent";
 import {
     INITIAL_FOLDER_DELETE_DIALOG_STATE,
     clearDeletedDocumentId,
-    clearDeletedDocumentTarget,
     folderDeleteDialogReducer,
     removeDeletedDocumentTabs,
 } from "@/app/lib/folderDeleteState";
+import { can, roleFromLoaded } from "@/app/lib/permissions";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
+import { cn } from "@/app/lib/utils";
+import type { MessageExcerpt } from "@/shared/lib/messageExcerpts";
+import { readDocumentDragPayload } from "@/app/lib/docTableSelection";
+import { userFacingApiError } from "@/app/lib/userFacingError";
+import {
+    moveProjectItemOptimistically,
+    notifyMoveFailure,
+    type ProjectTreeItemKind,
+} from "@/app/lib/projectTreeMoves";
+import {
+    collectDroppedDocumentUploadEntries,
+    documentUploadEntriesFromFiles,
+    documentUploadFolderSegments,
+    type DocumentUploadEntry,
+} from "@/app/lib/documentDirectoryUpload";
+import {
+    SUPPORTED_DOCUMENT_ACCEPT,
+    combineUploadWarnings,
+    formatUnsupportedDocumentWarning,
+    partitionSupportedDocumentFiles,
+} from "@/app/lib/documentUploadValidation";
 
 interface Props {
-    params: Promise<{ id: string; chatId: string }>;
-}
-
-type DocTab = {
-    documentId: string;
-    filename: string;
-    quotes?: CitationQuote[];
-    versionId?: string | null;
-    refetchKey?: number;
-    warning?: string | null;
-    scrollTop?: number;
-};
-
-type EditScrollTarget = {
-    key: string;
-    documentId: string;
-    inserted_text?: string;
-    deleted_text?: string;
-    ins_w_id?: string | null;
-    del_w_id?: string | null;
-};
-
-const ICON_SIZE = 28;
-const GAP = 14;
-const EXPLORER_MIN = 160;
-const EXPLORER_DEFAULT = 280;
-const CHAT_MIN = 320;
-const CHAT_DEFAULT = 420;
-const DEFAULT_ASSISTANT_BOTTOM_PADDING = 116;
-
-function AssistantGreeting({ username }: { username: string }) {
-    const { profile } = useUserProfile();
-    const [loaded, setLoaded] = useState(false);
-    const [iconOffset, setIconOffset] = useState(0);
-    const [textOffset, setTextOffset] = useState(0);
-    const textRef = useRef<HTMLHeadingElement>(null);
-
-    useLayoutEffect(() => {
-        if (!profile || !textRef.current) return;
-        const h1Width = textRef.current.offsetWidth;
-        setIconOffset((h1Width + GAP) / 2);
-        setTextOffset((ICON_SIZE + GAP) / 2);
-    }, [profile]);
-
-    useEffect(() => {
-        if (!iconOffset) return;
-        const t = setTimeout(() => setLoaded(true), 100);
-        return () => clearTimeout(t);
-    }, [iconOffset]);
-
-    return (
-        <div className="flex-1 flex items-center justify-center">
-            <div className="relative flex items-center justify-center h-[28px]">
-                <div
-                    className="absolute h-[30px]"
-                    style={{
-                        left: "50%",
-                        transform: loaded
-                            ? `translateX(calc(-50% - ${iconOffset}px))`
-                            : "translateX(-50%)",
-                        transition:
-                            "transform 900ms cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-                    }}
-                >
-                    <MikeIcon size={ICON_SIZE} />
-                </div>
-                <h1
-                    ref={textRef}
-                    className="absolute text-3xl font-serif font-light text-gray-900 whitespace-nowrap"
-                    style={{
-                        left: "50%",
-                        transform: loaded
-                            ? `translateX(calc(-50% + ${textOffset}px))`
-                            : "translateX(-50%)",
-                        opacity: loaded ? 1 : 0,
-                        transition:
-                            "transform 900ms cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 800ms ease-in-out 300ms",
-                    }}
-                >
-                    Hi, {username}
-                </h1>
-            </div>
-        </div>
-    );
+    params: Promise<{ id: string; chatId?: string }>;
 }
 
 /** Drag-handle divider for resizing panels */
@@ -195,13 +170,13 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
     }, [onDrag]);
 
     return (
-        <div className="relative w-0 shrink-0 z-10">
+        <div className="relative z-10 w-1.5 shrink-0">
             <div
                 onMouseDown={onMouseDown}
-                className="absolute inset-y-0 -left-2 -right-2 cursor-col-resize flex items-stretch justify-center"
+                className="absolute inset-y-0 -left-1 -right-1 flex cursor-col-resize items-stretch justify-center"
             >
                 {isDragging && (
-                    <div className="w-1 bg-blue-500 transition-colors" />
+                    <div className="w-1 bg-blue-600 transition-colors" />
                 )}
             </div>
         </div>
@@ -209,22 +184,34 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
 }
 
 export default function ProjectAssistantChatPage({ params }: Props) {
-    const { id: projectId, chatId } = use(params);
+    const { id: projectId } = use(params);
     const router = useRouter();
 
     const { setSidebarOpen } = useSidebar();
-    const { user } = useAuth();
-    const { profile } = useUserProfile();
-    const username =
-        profile?.displayName?.trim() || user?.email?.split("@")[0] || "there";
+    const explorerDownload = useExplorerDownload();
 
     const [project, setProject] = useState<Project | null>(null);
-    const [chatTitle, setChatTitle] = useState<string | null>(null);
-    const [chatOwnerId, setChatOwnerId] = useState<string | null>(null);
+    const [projectLoaded, setProjectLoaded] = useState(false);
+    const {
+        chatId: activeChatId,
+        openChat,
+        adoptChat,
+        claimCreated,
+        sideChatId,
+        openSideChat,
+        adoptSideChat,
+        closeSideChat,
+    } = useChatRoute(`/projects/${projectId}/assistant/chat`);
+    const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
-    const [chatLoaded, setChatLoaded] = useState(false);
-    const [creatingChat, setCreatingChat] = useState(false);
-    const [deletingChat, setDeletingChat] = useState(false);
+    const [editorGateAction, setEditorGateAction] = useState<string | null>(
+        null,
+    );
+    const [chatActionError, setChatActionError] = useState<{
+        title: string;
+        message: string;
+    } | null>(null);
+    const [projectMemoryOpen, setProjectMemoryOpen] = useState(false);
     const [folderDeleteDialog, dispatchFolderDeleteDialog] = useReducer(
         folderDeleteDialogReducer,
         INITIAL_FOLDER_DELETE_DIALOG_STATE,
@@ -234,58 +221,122 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     const folderDeleteDismissTimerRef = useRef<number | null>(null);
 
     // Panel widths
-    const [explorerWidth, setExplorerWidth] = useState(EXPLORER_DEFAULT);
-    const [chatWidth, setChatWidth] = useState(CHAT_DEFAULT);
+    const [panelWidths, setPanelWidths] = useState<WorkspacePanelWidths>({
+        explorer: EXPLORER_DEFAULT,
+        chat: CHAT_DEFAULT,
+        sideChat: CHAT_DEFAULT,
+    });
+    const explorerWidth = panelWidths.explorer;
+    const sideChatOpen = sideChatId !== null;
+    // "Add to chat" from the explorer or a document tab goes to the chat the
+    // reader last used.
+    const primaryChatPanelRef = useRef<ProjectChatPanelHandle>(null);
+    const sideChatPanelRef = useRef<ProjectChatPanelHandle>(null);
+    // A ref, not state: it is set as a press begins, and a render between the
+    // press and its click would replace the control being clicked (a citation
+    // pill) and lose the click.
+    const activeChatPaneRef = useRef<"primary" | "side">("primary");
+    const addDocToChat = (document: Document) =>
+        (
+            (activeChatPaneRef.current === "side"
+                ? sideChatPanelRef.current
+                : null) ?? primaryChatPanelRef.current
+        )?.addDoc(document);
+    const activatePrimaryChat = useCallback(() => {
+        activeChatPaneRef.current = "primary";
+    }, []);
+    const activateSideChat = useCallback(() => {
+        activeChatPaneRef.current = "side";
+    }, []);
     const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+    const workspaceRef = useRef<HTMLDivElement>(null);
 
     // Upload state
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [uploading, setUploading] = useState(false);
+    const folderInputRef = useRef<HTMLInputElement>(null);
+    const documentViewers = useDocumentViewers();
+    const [deleteTarget, setDeleteTarget] = useState<{ id: string; filename: string } | null>(null);
+    const [deletingDocument, setDeletingDocument] = useState(false);
+    const projectExplorerRef = useRef<ProjectExplorerHandle>(null);
+    const [addDocumentsOpen, setAddDocumentsOpen] = useState(false);
+    const projectPicker = useProjectPicker();
+    const [uploadingDocuments, setUploadingDocuments] = useState<
+        Array<{ clientId: string; filename: string }>
+    >([]);
     const [explorerDragOver, setExplorerDragOver] = useState(false);
-
-    // Tabs
-    const [tabs, setTabs] = useState<DocTab[]>([]);
-    const [activeTabId, setActiveTabId] = useState<string | null>(null);
-    const [activeQuotes, setActiveQuotes] = useState<CitationQuote[] | null>(
+    const [documentDragOver, setDocumentDragOver] = useState(false);
+    const [documentDropError, setDocumentDropError] = useState<string | null>(
         null,
     );
+    const [uploadWarning, setUploadWarning] = useState<string | null>(null);
+
+    // Tabs
+    const [tabs, setTabs] = useState<ProjectDocumentTab[]>([]);
+    const [activeTabId, setActiveTabId] = useState<string | null>(null);
     const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-    const [editScrollTarget, setEditScrollTarget] =
-        useState<EditScrollTarget | null>(null);
-    const [reloadingDocIds, setReloadingDocIds] = useState<Set<string>>(
-        () => new Set(),
-    );
-
+    const [resolvingEdits, setResolvingEdits] = useState<
+        Record<string, string>
+    >({});
+    const [resolvedEditStatuses, setResolvedEditStatuses] = useState<
+        Record<string, "accepted" | "rejected">
+    >({});
+    const openRequest = useRef(0);
     const activeTab = tabs.find((t) => t.documentId === activeTabId) ?? null;
-    const tabBarRef = useRef<HTMLDivElement | null>(null);
-    const tabItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
-
-    const chatInputRef = useRef<ChatInputHandle | null>(null);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
-    const messagesContainerRef = useRef<HTMLDivElement>(null);
-    const latestUserMessageRef = useRef<HTMLDivElement>(null);
-    const [minHeight, setMinHeight] = useState("0px");
-
-    const {
-        setCurrentChatId,
-        newChatMessages,
-        setNewChatMessages,
-        chats,
-        saveChat,
-        renameChat: renameChatInHistory,
-    } = useChatHistoryContext();
-    const [initialMessages] = useState<Message[]>(newChatMessages ?? []);
-    const { messages, isResponseLoading, handleChat, setMessages, cancel } =
-        useAssistantChat({ initialMessages, chatId, projectId });
-    const pendingInitialUserMessageRef = useRef<Message | null>(
-        initialMessages.length === 1 && initialMessages[0].role === "user"
-            ? initialMessages[0]
-            : null,
+    const activeCitation =
+        activeTab?.annotation?.kind === "citation"
+            ? activeTab.annotation.citation
+            : null;
+    const { chats, setSideChatId } = useChatHistoryContext();
+    // The sidebar treats a chat on screen as read, in either panel.
+    useEffect(() => {
+        setSideChatId(sideChatId || null);
+        return () => setSideChatId(null);
+    }, [sideChatId, setSideChatId]);
+    const availableProjectChats = useMemo(() => {
+        const byId = new Map<string, Chat>();
+        for (const chat of projectChats ?? []) byId.set(chat.id, chat);
+        for (const chat of chats ?? []) {
+            if (chat.project_id !== projectId) continue;
+            const existing = byId.get(chat.id);
+            if (
+                !existing ||
+                Date.parse(chatActivityAt(chat) ?? "") >=
+                    Date.parse(chatActivityAt(existing) ?? "")
+            ) {
+                byId.set(chat.id, chat);
+            }
+        }
+        return sortChatsByActivity(Array.from(byId.values()));
+    }, [chats, projectChats, projectId]);
+    const projectChatIds = useMemo(
+        () => availableProjectChats.map((chat) => chat.id),
+        [availableProjectChats],
     );
+    const touchProjectChat = useCallback((chatId: string) => {
+        setProjectChats((current) =>
+            current ? touchChatActivity(current, chatId) : current,
+        );
+    }, []);
+    const {
+        statuses: projectHistoryStatuses,
+        clearStatus: clearProjectHistoryStatus,
+    } = useAssistantHistoryStatuses({
+        activeChatId: activeChatId || null,
+        sideChatId: sideChatId || null,
+        chatIds: projectChatIds,
+        onActivity: touchProjectChat,
+    });
 
-    const hasLoaded = useRef(false);
-    const hasAutoSent = useRef(false);
-    const hasInitialScrolled = useRef(false);
+    const projectRole = roleFromLoaded(project);
+    const canEditContent = can(projectRole, "content.edit");
+    const documentPermissions = useDocumentPermissions(
+        tabs.filter((tab) => !["case", "legislation"].includes(tab.sourceDocument?.type ?? ""))
+            .map((tab) => tab.documentId),
+        canEditContent,
+    );
+    const canManageProject = can(projectRole, "access.manage");
+    // "Add to chat" follows the composer: closed until the role is known.
+    const canSendChat = projectRole === null ? null : canEditContent;
 
     const clearFolderDeleteDismissTimer = useCallback(() => {
         if (folderDeleteDismissTimerRef.current === null) return;
@@ -298,249 +349,198 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     }, [clearFolderDeleteDismissTimer]);
 
     useEffect(() => {
-        if (activeTabId) return;
-        setActiveQuotes(null);
-        setEditScrollTarget(null);
-    }, [activeTabId]);
-
-    useEffect(() => {
         setSidebarOpen(false);
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    useEffect(() => {
-        getProject(projectId)
-            .then(setProject)
-            .catch(() => {});
-    }, [projectId]);
-
-    // Whenever the assistant mutates project documents — creating a new
-    // doc, creating a new version via edit_document, or replicating a doc —
-    // refresh the project so the explorer picks up the new/changed files
-    // without a manual reload. Keyed by completed mutation events only, so
-    // we refetch once the backend has finished persisting the change.
-    const projectMutationSignature = useMemo(() => {
-        const created: string[] = [];
-        const replicated: string[] = [];
-        const editedPerDoc: Record<string, number> = {};
-        for (const msg of messages) {
-            for (const ev of msg.events ?? []) {
-                if ("isStreaming" in ev && ev.isStreaming) continue;
-                if (ev.type === "doc_created" && ev.document_id) {
-                    created.push(
-                        `${ev.document_id}:${ev.version_id ?? ""}:${ev.filename}`,
-                    );
-                    continue;
+    const projectRequestGeneration = useRef(0);
+    const refreshProject = useCallback(
+        async (documentIdToRefresh?: string) => {
+            const generation = ++projectRequestGeneration.current;
+            try {
+                const loaded = await getProject(projectId);
+                if (generation === projectRequestGeneration.current) {
+                    setProject(loaded);
                 }
-                if (ev.type === "doc_replicated") {
-                    for (const c of ev.copies ?? []) {
-                        replicated.push(
-                            `${c.document_id}:${c.version_id}:${c.new_filename}`,
-                        );
-                    }
-                    continue;
+            } catch {
+                // Keep the current workspace usable when a background check fails.
+            } finally {
+                // Settled either way: a failed fetch leaves the role unknown, and
+                // the composer should come back read-only rather than stay hidden.
+                if (generation === projectRequestGeneration.current) {
+                    setProjectLoaded(true);
                 }
-                if (ev.type === "doc_edited") {
-                    editedPerDoc[ev.document_id] = Math.max(
-                        editedPerDoc[ev.document_id] ?? 0,
-                        (ev.version_number as number | null | undefined) ?? 0,
+                if (documentIdToRefresh) {
+                    setTabs((current) =>
+                        current.map((tab) =>
+                            tab.documentId === documentIdToRefresh
+                                ? {
+                                      ...tab,
+                                      refetchKey: (tab.refetchKey ?? 0) + 1,
+                                  }
+                                : tab,
+                        ),
                     );
                 }
             }
-        }
-        return [
-            `created=${created.sort().join(",")}`,
-            `replicated=${replicated.sort().join(",")}`,
-            `edited=${Object.entries(editedPerDoc)
-                .map(([k, v]) => `${k}=${v}`)
-                .sort()
-                .join(",")}`,
-        ].join("|");
-    }, [messages]);
+        },
+        [projectId],
+    );
+    useEffect(() => {
+        return () => {
+            projectRequestGeneration.current += 1;
+        };
+    }, [projectId]);
+    useProjectDocumentRefresh(refreshProject, activeTabId);
 
     useEffect(() => {
-        if (!projectMutationSignature) return;
-        getProject(projectId)
-            .then(setProject)
-            .catch(() => {});
-    }, [projectMutationSignature, projectId]);
-
-    useEffect(() => {
-        setCurrentChatId(chatId);
-    }, [chatId, setCurrentChatId]);
-
-    useEffect(() => {
-        if (hasLoaded.current) return;
-        hasLoaded.current = true;
-        getChat(chatId)
-            .then(({ chat, messages: loaded }) => {
-                setChatTitle(chat.title);
-                setChatOwnerId(chat.user_id ?? null);
-                if (loaded.length > 0) setMessages(loaded);
+        let cancelled = false;
+        listProjectChats(projectId)
+            .then((loaded) => {
+                if (!cancelled) setProjectChats(loaded);
             })
-            .catch(() => router.replace(`/projects/${projectId}/assistant`))
-            .finally(() => setChatLoaded(true));
-    }, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        const match = chats?.find((c) => c.id === chatId);
-        if (match?.title) setChatTitle(match.title);
-    }, [chats, chatId]);
-
-    useEffect(() => {
-        const pendingMessage = pendingInitialUserMessageRef.current;
-        if (
-            pendingMessage &&
-            !hasAutoSent.current &&
-            !isResponseLoading &&
-            messages.length === 1
-        ) {
-            hasAutoSent.current = true;
-            pendingInitialUserMessageRef.current = null;
-            setNewChatMessages(null);
-            void handleChat(pendingMessage);
-        }
-    }, [messages.length, isResponseLoading, handleChat, setNewChatMessages]);
-
-    const scrollLatestUserToTop = useCallback(() => {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                const container = messagesContainerRef.current;
-                const element = latestUserMessageRef.current;
-                if (!container || !element) return;
-                container.scrollTo({
-                    top: element.offsetTop - 24,
-                    behavior: "smooth",
-                });
+            .catch(() => {
+                if (!cancelled) setProjectChats([]);
             });
-        });
-    }, []);
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
 
     useEffect(() => {
-        const last = messages[messages.length - 1];
-        if (last?.role === "user") scrollLatestUserToTop();
-    }, [messages, scrollLatestUserToTop]);
-
-    useEffect(() => {
-        if (!chatLoaded || hasInitialScrolled.current || messages.length === 0)
-            return;
-        const container = messagesContainerRef.current;
-        const el = latestUserMessageRef.current;
-        if (!container || !el) return;
-        hasInitialScrolled.current = true;
-        setTimeout(() => {
-            container.scrollTo({
-                top: el.offsetTop - 16,
-                behavior: "auto",
-            });
-        }, 100);
-    }, [chatLoaded, messages.length]);
-
-    useEffect(() => {
-        if (isResponseLoading) scrollLatestUserToTop();
-    }, [isResponseLoading, scrollLatestUserToTop]);
-
-    useEffect(() => {
-        const userEl = latestUserMessageRef.current;
-        const containerEl = messagesContainerRef.current;
-        if (!userEl || !containerEl) return;
-        const messageGap = window.innerWidth < 768 ? 24 : 32;
-        setMinHeight(
-            `${Math.max(
-                0,
-                containerEl.clientHeight -
-                    messageGap * 3 -
-                    userEl.offsetHeight -
-                    DEFAULT_ASSISTANT_BOTTOM_PADDING,
-            )}px`,
-        );
-    }, [messages.length]);
-
-    useEffect(() => {
-        if (!activeTabId) return;
-        const el = tabItemRefs.current[activeTabId];
-        if (!el) return;
-        el.scrollIntoView({
-            behavior: "smooth",
-            block: "nearest",
-            inline: "nearest",
-        });
-    }, [activeTabId, tabs.length]);
+        void refreshProject();
+    }, [refreshProject]);
 
     // ── Tabs ──────────────────────────────────────────────────────────────────
     function openTab(
         docId: string,
         filename: string,
-        quotes?: CitationQuote[],
+        annotation?: ProjectDocumentAnnotation,
         versionId?: string | null,
+        fileType?: string | null,
+        sourceDocument?: PanelDocument,
     ) {
+        openRequest.current += 1;
         setTabs((prev) => {
             const existing = prev.find((t) => t.documentId === docId);
             if (existing) {
-                if (
-                    versionId !== undefined &&
-                    existing.versionId !== versionId
-                ) {
-                    return prev.map((t) =>
-                        t.documentId === docId ? { ...t, versionId } : t,
-                    );
-                }
-                return prev;
+                const versionChanged =
+                    versionId !== undefined && existing.versionId !== versionId;
+                return prev.map((tab) =>
+                    tab.documentId === docId
+                        ? {
+                              ...tab,
+                              filename,
+                              versionId:
+                                  versionId === undefined
+                                      ? tab.versionId
+                                      : versionId,
+                              fileType: fileType ?? tab.fileType,
+                              sourceDocument:
+                                  sourceDocument ??
+                                  (versionChanged
+                                      ? undefined
+                                      : tab.sourceDocument),
+                              annotation,
+                              warning: versionChanged ? null : tab.warning,
+                          }
+                        : tab,
+                );
             }
             return [
                 ...prev,
-                { documentId: docId, filename, quotes, versionId },
+                {
+                    documentId: docId,
+                    filename,
+                    versionId,
+                    fileType,
+                    sourceDocument,
+                    annotation,
+                },
             ];
         });
         setActiveTabId(docId);
-        setActiveQuotes(quotes && quotes.length ? quotes : null);
         setSelectedDocId(docId);
     }
 
     function closeTab(docId: string) {
-        setTabs((prev) => {
-            const next = prev.filter((t) => t.documentId !== docId);
-            if (activeTabId === docId) {
-                const idx = prev.findIndex((t) => t.documentId === docId);
-                const fallback = next[idx] ?? next[idx - 1] ?? null;
-                setActiveTabId(fallback?.documentId ?? null);
-                setActiveQuotes(null);
-                setSelectedDocId(fallback?.documentId ?? null);
-            }
-            return next;
-        });
+        openRequest.current += 1;
+        if (activeTabId === docId) {
+            const idx = tabs.findIndex((tab) => tab.documentId === docId);
+            const fallback =
+                idx < 0 ? null : (tabs[idx + 1] ?? tabs[idx - 1] ?? null);
+            setActiveTabId(fallback?.documentId ?? null);
+            setSelectedDocId(fallback?.documentId ?? null);
+        }
+        setTabs((prev) => prev.filter((tab) => tab.documentId !== docId));
     }
 
     function switchTab(docId: string) {
+        openRequest.current += 1;
         setActiveTabId(docId);
-        setActiveQuotes(null);
         setSelectedDocId(docId);
     }
 
     // ── Handlers ──────────────────────────────────────────────────────────────
-    const handleSubmit = useCallback(
-        (message: Message) => {
-            if (!activeTab) return handleChat(message);
-            return handleChat(message, {
-                displayedDoc: {
-                    filename: activeTab.filename,
-                    documentId: activeTab.documentId,
-                },
-            });
-        },
-        [activeTab, handleChat],
-    );
-
     const handleDocClick = (doc: Document) => {
-        openTab(doc.id, doc.filename);
+        openTab(doc.id, doc.filename, undefined, null, doc.file_type);
     };
 
-    const handleCitationClick = (citation: Citation) => {
-        if (citation.kind === "case") return;
-        openTab(
-            citation.document_id,
-            citation.filename,
-            expandCitationToEntries(citation),
+    const handleCloseAnnotation = (documentId: string) => {
+        openRequest.current += 1;
+        setTabs((current) =>
+            current.map((tab) =>
+                tab.documentId === documentId
+                    ? { ...tab, annotation: undefined }
+                    : tab,
+            ),
         );
+    };
+
+    const handleCitationClick = async (
+        citation: Citation,
+        showQuotes = true,
+    ) => {
+        if (showQuotes && activeCitation === citation && activeTab) {
+            handleCloseAnnotation(activeTab.documentId);
+            return;
+        }
+        const request = ++openRequest.current;
+        const result = await resolvePanelDocumentVersionResult(
+            panelDocumentFromCitation(citation, showQuotes),
+        );
+        if (request !== openRequest.current) return;
+        if (result.status !== "resolved") {
+            setDocumentDropError(
+                result.status === "denied"
+                    ? "This document is no longer available."
+                    : "This document could not be opened. Please try again.",
+            );
+            return;
+        }
+        const document = result.document;
+        openTab(
+            document.document_id,
+            document.title,
+            showQuotes ? { kind: "citation", citation } : undefined,
+            document.version_id,
+            document.type,
+            document,
+        );
+    };
+
+    const handleCaseClick = (
+        event: Extract<AssistantEvent, { type: "case_citation" }>,
+    ) => {
+        const document = panelDocumentFromCaseEvent(event);
+        if (document)
+            openTab(
+                document.document_id,
+                document.title,
+                undefined,
+                null,
+                document.type,
+                document,
+            );
     };
 
     const handleOpenDocument = (args: {
@@ -549,143 +549,373 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         versionId: string | null;
         versionNumber: number | null;
     }) => {
-        openTab(args.documentId, args.filename, undefined, args.versionId);
-    };
-
-    const handleEditViewClick = (ann: EditAnnotation, filename: string) => {
-        openTab(ann.document_id, filename, undefined, ann.version_id ?? null);
-        setEditScrollTarget({
-            key: `${ann.edit_id}-${Date.now()}`,
-            documentId: ann.document_id,
-            inserted_text: ann.inserted_text,
-            deleted_text: ann.deleted_text,
-            ins_w_id: ann.ins_w_id ?? null,
-            del_w_id: ann.del_w_id ?? null,
-        });
-    };
-
-    const handleEditResolved = (_args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => {
-        // Re-render after accept/reject is disabled while we verify the
-        // client-side optimistic mutation works on its own. Re-enable by
-        // bumping versionId + refetchKey on the matching tab and marking
-        // it reloading like before.
-        void _args;
-    };
-
-    const patchTab = (documentId: string, patch: Partial<DocTab>) => {
-        setTabs((prev) =>
-            prev.map((t) =>
-                t.documentId === documentId ? { ...t, ...patch } : t,
-            ),
+        openTab(
+            args.documentId,
+            args.filename,
+            undefined,
+            args.versionId,
+            undefined,
+            {
+                document_id: args.documentId,
+                title: args.filename,
+                type: panelDocumentType(args.filename),
+                version_id: args.versionId,
+                version_number: args.versionNumber,
+                quotes: [],
+                metadata: [],
+            },
         );
     };
 
-    const handleEditError = (args: { documentId: string; message: string }) => {
+    const handleEditViewClick = (
+        ann: EditAnnotation,
+        filename: string,
+        changeNumber?: number,
+    ) => {
+        const edit = {
+            ...ann,
+            status: resolvedEditStatuses[ann.edit_id] ?? ann.status,
+        };
+        openTab(
+            ann.document_id,
+            filename,
+            { kind: "edit", edit, changeNumber },
+            ann.version_id ?? null,
+            undefined,
+            {
+                document_id: ann.document_id,
+                title: filename,
+                type: panelDocumentType(filename),
+                version_id: ann.version_id,
+                version_number: ann.version_number,
+                metadata: [],
+                quotes: [],
+            },
+        );
+    };
+
+    const patchTab = useCallback(
+        (documentId: string, patch: Partial<ProjectDocumentTab>) => {
+            setTabs((prev) =>
+                prev.map((t) =>
+                    t.documentId === documentId ? { ...t, ...patch } : t,
+                ),
+            );
+        },
+        [],
+    );
+
+    const finishResolvingEdit = (editId: string) =>
+        setResolvingEdits((current) => {
+            const next = { ...current };
+            delete next[editId];
+            return next;
+        });
+    const handleEditResolveStart = (args: {
+        editId: string;
+        documentId: string;
+    }) => {
+        setResolvingEdits((current) => ({
+            ...current,
+            [args.editId]: args.documentId,
+        }));
+    };
+    const handleEditError = (args: {
+        editId: string;
+        documentId: string;
+        message: string;
+    }) => {
+        finishResolvingEdit(args.editId);
         patchTab(args.documentId, { warning: args.message });
     };
 
-    const dismissTabWarning = (documentId: string) => {
-        patchTab(documentId, { warning: null });
-    };
+    const dismissTabWarning = useCallback(
+        (documentId: string) => {
+            patchTab(documentId, { warning: null });
+        },
+        [patchTab],
+    );
 
-    const handleTabScrollChange = (documentId: string, scrollTop: number) => {
-        patchTab(documentId, { scrollTop });
-    };
-
-    const handleDocxReady = (documentId: string) => {
-        setReloadingDocIds((prev) => {
-            if (!prev.has(documentId)) return prev;
-            const next = new Set(prev);
-            next.delete(documentId);
-            return next;
-        });
-    };
-
-    const handleChatDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        const docId = e.dataTransfer.getData("application/mike-doc");
-        if (!docId) return;
-        const doc = project?.documents?.find((d) => d.id === docId);
-        if (doc) chatInputRef.current?.addDoc(doc);
-    };
-
-    // ── Chat actions ──────────────────────────────────────────────────────────
-    async function handleNewChat() {
-        setCreatingChat(true);
-        try {
-            const id = await saveChat(projectId);
-            if (id) router.push(`/projects/${projectId}/assistant/chat/${id}`);
-        } finally {
-            setCreatingChat(false);
-        }
-    }
-
-    async function handleDeleteChat() {
-        if (chatOwnerId && user?.id && chatOwnerId !== user.id) {
-            setOwnerOnlyAction("delete this chat");
-            return;
-        }
-        setDeletingChat(true);
-        try {
-            await deleteChat(chatId);
-            router.push(`/projects/${projectId}/assistant`);
-        } finally {
-            setDeletingChat(false);
-        }
-    }
-
-    async function handleRenameChat() {
-        if (chatOwnerId && user?.id && chatOwnerId !== user.id) {
-            setOwnerOnlyAction("rename this chat");
-            return;
-        }
-        const nextTitle = window.prompt(
-            "Rename chat",
-            chatTitle ?? "Untitled New Chat",
+    const handleEditResolved: NonNullable<
+        Extract<DocumentContentMode, { kind: "edit" }>["onResolved"]
+    > = (args) => {
+        finishResolvingEdit(args.editId);
+        setResolvedEditStatuses((current) => ({
+            ...current,
+            [args.editId]: args.status,
+        }));
+        setTabs((current) =>
+            current.map((tab) =>
+                tab.annotation?.kind === "edit" &&
+                tab.annotation.edit.edit_id === args.editId
+                    ? {
+                          ...tab,
+                          annotation: {
+                              ...tab.annotation,
+                              edit: {
+                                  ...tab.annotation.edit,
+                                  status: args.status,
+                              },
+                          },
+                      }
+                    : tab,
+            ),
         );
-        const trimmed = nextTitle?.trim();
-        if (!trimmed || trimmed === chatTitle) return;
-        setChatTitle(trimmed);
-        await renameChatInHistory(chatId, trimmed);
-    }
+        invalidateDocxBytes(args.documentId);
+        // Apply metadata and the forced refresh together to avoid downloading twice.
+        void refreshProject(args.documentId);
+    };
 
     // ── Upload ────────────────────────────────────────────────────────────────
-    async function uploadFiles(files: File[]) {
-        if (!files.length) return;
-        setUploading(true);
-        try {
-            const uploaded = await Promise.all(
-                files.map((f) => uploadProjectDocument(projectId, f)),
+    function addUploadedDocuments(documents: Document[]) {
+        if (documents.length === 0) return;
+        setProject((current) => {
+            if (!current) return current;
+            const nextDocuments = [...(current.documents ?? [])];
+            const knownIds = new Set(
+                nextDocuments.map((document) => document.id),
             );
-            setProject((prev) => {
-                if (!prev) return prev;
-                return {
-                    ...prev,
-                    documents: [...(prev.documents ?? []), ...uploaded],
-                };
-            });
+            for (const document of documents) {
+                if (knownIds.has(document.id)) continue;
+                knownIds.add(document.id);
+                nextDocuments.push(document);
+            }
+            return { ...current, documents: nextDocuments };
+        });
+    }
+
+    function addResolvedFolders(folders: NonNullable<Project["folders"]>) {
+        if (folders.length === 0) return;
+        setProject((current) => {
+            if (!current) return current;
+            const nextFolders = [...(current.folders ?? [])];
+            const knownIds = new Set(nextFolders.map((folder) => folder.id));
+            for (const folder of folders) {
+                if (knownIds.has(folder.id)) continue;
+                knownIds.add(folder.id);
+                nextFolders.push(folder);
+            }
+            return { ...current, folders: nextFolders };
+        });
+    }
+
+    async function uploadEntries(
+        selectedEntries: DocumentUploadEntry[],
+        openInViewer = false,
+    ) {
+        if (!selectedEntries.length) return;
+        if (!canEditContent) {
+            // Only accuse somebody of lacking a role once we know they do.
+            if (projectRole) {
+                setEditorGateAction("upload documents to this project");
+            }
+            return;
+        }
+
+        // A drop or a folder selection carries whatever was on disk, and
+        // `accept` cannot constrain either. Filter to the types the converter
+        // can read before spending an upload session (or creating folders) on
+        // files the server is guaranteed to refuse.
+        const { supported, unsupported } = partitionSupportedDocumentFiles(
+            selectedEntries.map((entry) => entry.file),
+        );
+        const supportedFiles = new Set(supported);
+        const entries = selectedEntries.filter((entry) =>
+            supportedFiles.has(entry.file),
+        );
+        const unsupportedWarning = formatUnsupportedDocumentWarning(unsupported);
+        setUploadWarning(unsupportedWarning);
+        if (!entries.length) return;
+
+        const pendingUploads = entries.map((entry) => ({
+            clientId: crypto.randomUUID(),
+            filename: entry.file.name,
+            entry,
+        }));
+        const pendingIds = new Set(
+            pendingUploads.map((upload) => upload.clientId),
+        );
+        setUploadingDocuments((current) => [
+            ...current,
+            ...pendingUploads.map(({ clientId, filename }) => ({
+                clientId,
+                filename,
+            })),
+        ]);
+
+        try {
+            const folderIdByPath = new Map<string, string>();
+            const folderPaths = Array.from(
+                new Map(
+                    entries.flatMap((entry) => {
+                        const segments = documentUploadFolderSegments(entry);
+                        return segments.map((_, index) => {
+                            const path = segments.slice(0, index + 1);
+                            return [path.join("/"), path] as const;
+                        });
+                    }),
+                ).values(),
+            ).sort((left, right) => left.length - right.length);
+
+            for (const path of folderPaths) {
+                const pathKey = path.join("/");
+                const parentPath = path.slice(0, -1);
+                const parentFolderId =
+                    parentPath.length === 0
+                        ? null
+                        : (folderIdByPath.get(parentPath.join("/")) ?? null);
+                if (parentPath.length > 0 && !parentFolderId) {
+                    throw new Error("Upload folder parent was not resolved");
+                }
+
+                let resolution = await resolveProjectFolderPath(
+                    projectId,
+                    [path.at(-1)!],
+                    parentFolderId,
+                    parentPath.length > 0 ? "reuse" : undefined,
+                );
+                if (resolution.conflict) {
+                    resolution = await resolveProjectFolderPath(
+                        projectId,
+                        [path.at(-1)!],
+                        parentFolderId,
+                        "rename",
+                    );
+                }
+                if (resolution.conflict) {
+                    throw new Error("Upload folder path conflicted");
+                }
+                folderIdByPath.set(pathKey, resolution.folder_id);
+                addResolvedFolders(resolution.folders);
+            }
+
+            const outcomes = await uploadProjectDocuments(
+                projectId,
+                pendingUploads.map(({ clientId, entry }) => {
+                    const folderSegments = documentUploadFolderSegments(entry);
+                    return {
+                        file: entry.file,
+                        clientId,
+                        folderId:
+                            folderSegments.length === 0
+                                ? null
+                                : (folderIdByPath.get(
+                                      folderSegments.join("/"),
+                                  ) ?? null),
+                    };
+                }),
+                {
+                    onProgress: (progress) => {
+                        if (
+                            progress.status === "completed" ||
+                            progress.status === "error"
+                        ) {
+                            setUploadingDocuments((current) =>
+                                current.filter(
+                                    (upload) =>
+                                        upload.clientId !== progress.clientId,
+                                ),
+                            );
+                        }
+                        if (
+                            progress.status === "completed" &&
+                            progress.result
+                        ) {
+                            addUploadedDocuments([progress.result]);
+                        }
+                    },
+                },
+            );
+            const uploaded = outcomes.flatMap((outcome) =>
+                outcome.status === "completed" && outcome.result
+                    ? [outcome.result]
+                    : [],
+            );
+            addUploadedDocuments(uploaded);
+            if (openInViewer) uploaded.forEach(handleDocClick);
+            // Per-file outcomes, not an all-or-nothing batch: the files that
+            // landed stay in the tree and the ones that did not are named.
+            // Dropping the failures silently is what made a partly-failed bulk
+            // upload look like it simply did nothing (#8).
+            if (uploaded.length < outcomes.length) {
+                setUploadWarning(
+                    combineUploadWarnings(
+                        unsupportedWarning,
+                        failedUploadMessage(outcomes),
+                    ),
+                );
+            }
         } catch (err) {
             console.error("Upload failed:", err);
+            setUploadWarning(
+                combineUploadWarnings(
+                    unsupportedWarning,
+                    err instanceof UploadBatchError
+                        ? failedUploadMessage(err.outcomes)
+                        : userFacingApiError(
+                              err,
+                              "Files could not be uploaded. Please try again.",
+                          ),
+                ),
+            );
         } finally {
-            setUploading(false);
-            if (fileInputRef.current) fileInputRef.current.value = "";
+            setUploadingDocuments((current) =>
+                current.filter((upload) => !pendingIds.has(upload.clientId)),
+            );
         }
+    }
+
+    function uploadFiles(files: File[]) {
+        return uploadEntries(documentUploadEntriesFromFiles(files));
+    }
+
+    function selectProject() {
+        if (!projectPicker.selectedId) return;
+        router.push(`/projects/${projectPicker.selectedId}/assistant/chat`);
     }
 
     const handleExplorerFileDrop = async (e: React.DragEvent) => {
         e.preventDefault();
         setExplorerDragOver(false);
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length) {
-            await uploadFiles(files);
-        }
+        const entries = await collectDroppedDocumentUploadEntries(
+            e.dataTransfer,
+        );
+        await uploadEntries(entries);
         // Internal doc/folder moves are handled inside ProjectExplorer (stopPropagation)
+    };
+
+    const handleDocumentDrop = async (event: React.DragEvent) => {
+        if (!isDocumentViewerDrag(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDocumentDragOver(false);
+        setDocumentDropError(null);
+        try {
+            const ids = readDocumentDragPayload(event.dataTransfer);
+            if (ids.length > 0) {
+                const documents = await Promise.all(
+                    ids.map(
+                        (id) =>
+                            project?.documents?.find(
+                                (document) => document.id === id,
+                            ) ?? getDocument(id),
+                    ),
+                );
+                documents.forEach(handleDocClick);
+            } else if (isExternalFileDrag(event.dataTransfer)) {
+                const entries = await collectDroppedDocumentUploadEntries(
+                    event.dataTransfer,
+                );
+                await uploadEntries(entries, true);
+            }
+        } catch (error) {
+            setDocumentDropError(
+                userFacingApiError(
+                    error,
+                    "These files could not be opened. Please try again.",
+                ),
+            );
+        }
     };
 
     // ── Folder handlers ───────────────────────────────────────────────────────
@@ -716,6 +946,29 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                       ),
                   }
                 : prev,
+        );
+    };
+
+    const handleRenameDoc = async (docId: string, filename: string) => {
+        const updated = await renameProjectDocument(projectId, docId, filename);
+        setProject((current) =>
+            current
+                ? {
+                      ...current,
+                      documents: (current.documents ?? []).map((document) =>
+                          document.id === docId
+                              ? { ...document, ...updated }
+                              : document,
+                      ),
+                  }
+                : current,
+        );
+        setTabs((current) =>
+            current.map((tab) =>
+                tab.documentId === docId
+                    ? { ...tab, filename: updated.filename }
+                    : tab,
+            ),
         );
     };
 
@@ -775,11 +1028,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                 },
             });
         },
-        [
-            clearFolderDeleteDismissTimer,
-            folderDeleteImpact,
-            project?.folders,
-        ],
+        [clearFolderDeleteDismissTimer, folderDeleteImpact, project?.folders],
     );
 
     const confirmDeletePendingFolder = async () => {
@@ -811,22 +1060,13 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                     : currentProject,
             );
             setTabs((currentTabs) =>
-                removeDeletedDocumentTabs(
-                    currentTabs,
-                    deletedDocumentIds,
-                ),
+                removeDeletedDocumentTabs(currentTabs, deletedDocumentIds),
             );
             setActiveTabId((currentId) =>
                 clearDeletedDocumentId(currentId, deletedDocumentIds),
             );
             setSelectedDocId((currentId) =>
                 clearDeletedDocumentId(currentId, deletedDocumentIds),
-            );
-            setEditScrollTarget((currentTarget) =>
-                clearDeletedDocumentTarget(
-                    currentTarget,
-                    deletedDocumentIds,
-                ),
             );
             dispatchFolderDeleteDialog({
                 type: "complete",
@@ -850,46 +1090,79 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         }
     };
 
-    const handleMoveDoc = async (
-        docId: string,
-        targetFolderId: string | null,
-    ) => {
-        setProject((prev) =>
-            prev
-                ? {
-                      ...prev,
-                      documents: (prev.documents ?? []).map((d) =>
-                          d.id === docId
-                              ? { ...d, folder_id: targetFolderId }
-                              : d,
-                      ),
-                  }
-                : prev,
-        );
-        await moveDocumentToFolder(projectId, docId, targetFolderId);
-    };
+    // Optimistic: the tree moves at once, and a failed request puts only
+    // that item back and rethrows so the drop target can report it.
+    const handleMoveDoc = (docId: string, targetFolderId: string | null) =>
+        moveProjectItemOptimistically({
+            project,
+            setProject,
+            kind: "doc",
+            id: docId,
+            targetFolderId,
+            request: () =>
+                moveDocumentToFolder(projectId, docId, targetFolderId),
+        });
 
-    const handleMoveFolder = async (
+    const handleMoveFolder = (
         folderId: string,
         targetFolderId: string | null,
-    ) => {
-        setProject((prev) =>
-            prev
-                ? {
-                      ...prev,
-                      folders: (prev.folders ?? []).map((f) =>
-                          f.id === folderId
-                              ? { ...f, parent_folder_id: targetFolderId }
-                              : f,
-                      ),
-                  }
-                : prev,
-        );
-        await moveSubfolderToFolder(projectId, folderId, targetFolderId);
+    ) =>
+        moveProjectItemOptimistically({
+            project,
+            setProject,
+            kind: "folder",
+            id: folderId,
+            targetFolderId,
+            request: () =>
+                moveSubfolderToFolder(projectId, folderId, targetFolderId),
+        });
+
+    // The explorer reports failures on its own drop targets; this is the
+    // panel's root drop target, outside it.
+    const moveToRoot = async (kind: ProjectTreeItemKind, id: string) => {
+        const move = kind === "doc" ? handleMoveDoc : handleMoveFolder;
+        try {
+            await move(id, null);
+        } catch (error) {
+            notifyMoveFailure(kind, id, error, () => moveToRoot(kind, id));
+        }
+    };
+
+    const requestDeleteDoc = async (docId: string) => {
+        if (!canEditContent) return;
+        setDeleteTarget({
+            id: docId,
+            filename: tabs.find((tab) => tab.documentId === docId)?.filename
+                ?? project?.documents?.find((document) => document.id === docId)?.filename
+                ?? "this file",
+        });
     };
 
     const handleDeleteDoc = async (docId: string) => {
-        await deleteDocument(docId);
+        if (!canEditContent || deletingDocument) return;
+        setDeletingDocument(true);
+        try {
+            const document = await getDocument(docId);
+            if (document.can_delete !== true) {
+                setDocumentDropError("You do not have permission to delete this file.");
+                return;
+            }
+            await deleteDocument(docId);
+        } catch (err) {
+            // Keep the file and its live draft intact if deletion fails.
+            console.error("Delete failed:", err);
+            setDocumentDropError(
+                userFacingApiError(
+                    err,
+                    "This file could not be deleted. Please try again.",
+                ),
+            );
+            return;
+        } finally {
+            setDeletingDocument(false);
+        }
+        documentViewers.discardDeleted([docId]);
+        setDeleteTarget(null);
         setProject((prev) =>
             prev
                 ? {
@@ -903,525 +1176,630 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         setTabs((prev) => prev.filter((t) => t.documentId !== docId));
         if (activeTabId === docId) {
             setActiveTabId(null);
-            setActiveQuotes(null);
             setSelectedDocId(null);
-            setEditScrollTarget(null);
         }
     };
 
     // ── Resize handlers ───────────────────────────────────────────────────────
-    const onExplorerDividerDrag = useCallback((dx: number) => {
-        setExplorerWidth((w) => Math.max(EXPLORER_MIN, w + dx));
+    const panelLayout = useMemo(
+        () => ({ explorerCollapsed, sideChatOpen }),
+        [explorerCollapsed, sideChatOpen],
+    );
+
+    const onExplorerDividerDrag = useCallback(
+        (dx: number) => {
+            setPanelWidths((current) =>
+                resizePanel(
+                    current,
+                    "explorer",
+                    current.explorer + dx,
+                    workspaceRef.current?.clientWidth,
+                    panelLayout,
+                ),
+            );
+        },
+        [panelLayout],
+    );
+
+    const onChatDividerDrag = useCallback(
+        (dx: number) => {
+            setPanelWidths((current) =>
+                resizePanel(
+                    current,
+                    "chat",
+                    current.chat - dx,
+                    workspaceRef.current?.clientWidth,
+                    panelLayout,
+                ),
+            );
+        },
+        [panelLayout],
+    );
+
+    const onChatSplitDividerDrag = useCallback((dx: number) => {
+        setPanelWidths((current) => resizeChatSplit(current, dx));
     }, []);
 
-    const onChatDividerDrag = useCallback((dx: number) => {
-        setChatWidth((w) => Math.max(CHAT_MIN, w - dx));
-    }, []);
+    // The document view gives up width as panels open or the window narrows,
+    // but never its minimum: the explorer and chats shrink to make room.
+    useEffect(() => {
+        const workspace = workspaceRef.current;
+        if (!workspace) return;
+
+        const fitPanels = () => {
+            if (workspace.clientWidth <= 0) return;
+            setPanelWidths((current) =>
+                fitPanelWidths(current, workspace.clientWidth, panelLayout),
+            );
+        };
+
+        fitPanels();
+        if (typeof ResizeObserver === "undefined") {
+            window.addEventListener("resize", fitPanels);
+            return () => window.removeEventListener("resize", fitPanels);
+        }
+
+        const observer = new ResizeObserver(fitPanels);
+        observer.observe(workspace);
+        return () => observer.disconnect();
+    }, [panelLayout]);
+
+    // A passage the reader asked about in the side chat, held until that
+    // chat's composer is on the page (opening the side chat if need be).
+    const [sideChatExcerpt, setSideChatExcerpt] = useState<{
+        id: number;
+        excerpt: MessageExcerpt;
+    } | null>(null);
+    const clearSideChatExcerpt = useCallback(
+        () => setSideChatExcerpt(null),
+        [],
+    );
+    // Counted apart from the held passage: that is cleared once the side
+    // chat takes it, and an id that started over would look to that chat
+    // like the passage it already has.
+    const sideChatExcerptCount = useRef(0);
+    function askInSideChat(excerpt: MessageExcerpt) {
+        if (sideChatId === null) handleOpenSideChat();
+        sideChatExcerptCount.current += 1;
+        setSideChatExcerpt({ id: sideChatExcerptCount.current, excerpt });
+    }
+
+    function handleOpenSideChat() {
+        // Two chats, the explorer and a readable document do not fit a
+        // narrow workspace; the explorer is the one that folds away.
+        const workspaceWidth = workspaceRef.current?.clientWidth;
+        if (workspaceWidth && !fitsWithExplorer(workspaceWidth, true)) {
+            setExplorerCollapsed(true);
+        }
+        openSideChat("");
+    }
+
+    function handleCloseSideChat() {
+        activatePrimaryChat();
+        closeSideChat();
+    }
+
+    // The document on screen rides along with a message as context.
+    const displayedDoc = useMemo(
+        () =>
+            !activeTab || activeTab.sourceDocument?.type === "case"
+                ? null
+                : {
+                      filename: activeTab.filename,
+                      documentId: activeTab.documentId,
+                  },
+        [activeTab],
+    );
+    const reportChatActionError = useCallback(
+        (error: { title: string; message: string }) =>
+            setChatActionError(error),
+        [],
+    );
+    const chatPanelProps = {
+        projectId,
+        project,
+        projectLoaded,
+        claimCreated,
+        chats: availableProjectChats,
+        chatsLoading: projectChats === null,
+        setProjectChats,
+        responseStatuses: projectHistoryStatuses,
+        onClearResponseStatus: clearProjectHistoryStatus,
+        displayedDoc,
+        activeCitation,
+        resolvingEdits,
+        resolvedEditStatuses,
+        onDocClick: handleDocClick,
+        onCitationClick: handleCitationClick,
+        onCaseClick: handleCaseClick,
+        onOpenDocument: handleOpenDocument,
+        onEditViewClick: handleEditViewClick,
+        onEditResolveStart: handleEditResolveStart,
+        onEditResolved: handleEditResolved,
+        onEditError: handleEditError,
+        onProjectMutated: refreshProject,
+        onOpenMemory: () => setProjectMemoryOpen(true),
+        onEditorGate: setEditorGateAction,
+        onOwnerGate: setOwnerOnlyAction,
+        onActionError: reportChatActionError,
+    };
 
     return (
-        <div className="flex flex-col h-full">
-            {/* Page header */}
-            <PageHeader
-                shrink
-                breadcrumbs={[
-                    {
-                        label: "Projects",
-                        onClick: () => router.push("/projects"),
-                    },
-                    project
-                        ? {
-                              label: project.name,
-                              onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
-                              title: "Back to project",
-                          }
-                        : {
-                              loading: true,
-                              skeletonClassName: "w-32",
-                              onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
-                              title: "Back to project",
-                          },
-                    chatLoaded
-                        ? {
-                              label: chatTitle ?? "Untitled New Chat",
-                          }
-                        : {
-                              loading: true,
-                              skeletonClassName: "w-40",
-                          },
-                ]}
-                actions={[
-                    {
-                        type: "new",
-                        onClick: handleNewChat,
-                        loading: creatingChat,
-                        title: "New chat",
-                    },
-                    {
-                        type: "custom",
-                        render: (
-                            <HeaderActionsMenu
-                                items={[
-                                    {
-                                        label: "Rename",
-                                        icon: Pencil,
-                                        onSelect: () =>
-                                            void handleRenameChat(),
-                                    },
-                                    {
-                                        label: deletingChat
-                                            ? "Deleting..."
-                                            : "Delete",
-                                        icon: Trash2,
-                                        onSelect: () =>
-                                            void handleDeleteChat(),
-                                        disabled: deletingChat,
-                                        variant: "danger",
-                                    },
-                                ]}
-                            />
-                        ),
-                    },
-                ]}
-            />
+        <div
+            ref={workspaceRef}
+            className="my-2 ml-2 mr-3 flex h-[calc(100dvh-1rem)] min-h-0 md:my-3 md:h-[calc(100dvh-1.5rem)]"
+            onDragOver={(event) => {
+                if (isExternalFileDrag(event.dataTransfer)) {
+                    event.preventDefault();
+                }
+            }}
+            onDrop={(event) => {
+                if (isExternalFileDrag(event.dataTransfer)) {
+                    event.preventDefault();
+                }
+            }}
+        >
+            {/* LEFT: Project Explorer */}
+            {!explorerCollapsed && (
+                <>
+                    <div
+                        style={{ width: explorerWidth }}
+                        className={cn(
+                            "flex shrink-0 flex-col overflow-hidden rounded-l-2xl rounded-r-lg",
+                            LIQUID_GLASS_FLAT_CLASS,
+                        )}
+                        onDragOver={(e) => {
+                            e.preventDefault();
+                            // Only show the upload overlay for external file drags, not internal moves
+                            if (
+                                isExternalFileDrag(e.dataTransfer) &&
+                                !isProjectItemDrag(e.dataTransfer)
+                            )
+                                setExplorerDragOver(true);
+                        }}
+                        onDragLeave={(e) => {
+                            if (
+                                !e.currentTarget.contains(
+                                    e.relatedTarget as Node,
+                                )
+                            )
+                                setExplorerDragOver(false);
+                        }}
+                        onDrop={handleExplorerFileDrop}
+                    >
+                        {/* Explorer header */}
+                        <div className="flex h-12 shrink-0 items-center justify-between px-3">
+                            <span className="text-xs text-gray-700">
+                                Explorer
+                            </span>
+                            <div className="flex items-center gap-1">
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept={SUPPORTED_DOCUMENT_ACCEPT}
+                                    multiple
+                                    className="hidden"
+                                    onChange={(event) => {
+                                        const files = Array.from(
+                                            event.target.files ?? [],
+                                        );
+                                        event.target.value = "";
+                                        void uploadFiles(files);
+                                    }}
+                                />
+                                <input
+                                    ref={folderInputRef}
+                                    type="file"
+                                    accept={SUPPORTED_DOCUMENT_ACCEPT}
+                                    multiple
+                                    className="hidden"
+                                    {...{
+                                        webkitdirectory: "",
+                                        directory: "",
+                                    }}
+                                    onChange={(event) => {
+                                        const entries =
+                                            documentUploadEntriesFromFiles(
+                                                event.target.files ?? [],
+                                            );
+                                        event.target.value = "";
+                                        void uploadEntries(entries);
+                                    }}
+                                />
+                                <DocumentUploadMenu
+                                    onSavedFiles={() =>
+                                        setAddDocumentsOpen(true)
+                                    }
+                                    onUploadFiles={() =>
+                                        fileInputRef.current?.click()
+                                    }
+                                    onUploadFolder={() =>
+                                        folderInputRef.current?.click()
+                                    }
+                                    disabled={!canEditContent}
+                                />
+                                <HeaderActionsMenu
+                                    title="Explorer actions"
+                                    triggerClassName="h-6 w-6 text-gray-500 hover:text-gray-900"
+                                    items={[
+                                        {
+                                            label: "Select project",
+                                            icon: FolderOpen,
+                                            onSelect: () =>
+                                                void projectPicker.openPicker(),
+                                        },
+                                        {
+                                            label: "New subfolder",
+                                            icon: FolderPlus,
+                                            onSelect: () =>
+                                                projectExplorerRef.current?.createRootFolder(),
+                                            disabled: !canEditContent,
+                                        },
+                                        {
+                                            label: "Go to project page",
+                                            icon: ArrowUpRight,
+                                            onSelect: () =>
+                                                router.push(
+                                                    `/projects/${projectId}`,
+                                                ),
+                                        },
+                                    ]}
+                                />
+                                <button
+                                    onClick={() => setExplorerCollapsed(true)}
+                                    title="Collapse explorer"
+                                    className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                                >
+                                    <ChevronLeft className="h-3.5 w-3.5" />
+                                </button>
+                            </div>
+                        </div>
 
-            {/* Three-panel body */}
-            <div className="flex flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
-                {/* LEFT: Project Explorer */}
-                {!explorerCollapsed && (
-                    <>
+                        {/* Drop overlay */}
                         <div
-                            style={{ width: explorerWidth }}
-                            className="shrink-0 flex flex-col border-r border-gray-200"
+                            className={cn(
+                                "relative h-full flex-1 overflow-y-auto rounded-bl-2xl rounded-br-lg",
+                                explorerDragOver &&
+                                    "bg-blue-50 ring-2 ring-inset ring-blue-400",
+                            )}
                             onDragOver={(e) => {
                                 e.preventDefault();
-                                // Only show the upload overlay for external file drags, not internal moves
-                                const isInternal =
-                                    Array.from(e.dataTransfer.types).includes(
-                                        "application/mike-doc",
-                                    ) ||
-                                    Array.from(e.dataTransfer.types).includes(
-                                        "application/mike-folder",
-                                    );
-                                if (!isInternal) setExplorerDragOver(true);
                             }}
-                            onDragLeave={(e) => {
-                                if (
-                                    !e.currentTarget.contains(
-                                        e.relatedTarget as Node,
-                                    )
-                                )
-                                    setExplorerDragOver(false);
-                            }}
-                            onDrop={handleExplorerFileDrop}
-                        >
-                            {/* Explorer header */}
-                            <div className="h-10 flex items-center justify-between px-3 border-b border-gray-200 shrink-0">
-                                <span className="text-xs text-gray-700">
-                                    Explorer
-                                </span>
-                                <div className="flex items-center gap-1">
-                                    <input
-                                        ref={fileInputRef}
-                                        type="file"
-                                        accept=".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt"
-                                        multiple
-                                        className="hidden"
-                                        onChange={(e) =>
-                                            uploadFiles(
-                                                Array.from(
-                                                    e.target.files ?? [],
-                                                ),
-                                            )
-                                        }
-                                    />
-                                    <button
-                                        onClick={() =>
-                                            fileInputRef.current?.click()
-                                        }
-                                        disabled={uploading}
-                                        title="Upload documents"
-                                        className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                                    >
-                                        {uploading ? (
-                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                        ) : (
-                                            <Upload className="h-3.5 w-3.5" />
-                                        )}
-                                    </button>
-                                    <button
-                                        onClick={() =>
-                                            setExplorerCollapsed(true)
-                                        }
-                                        title="Collapse explorer"
-                                        className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                                    >
-                                        <ChevronLeft className="h-3.5 w-3.5" />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Drop overlay */}
-                            <div
-                                className={`flex-1 overflow-y-auto relative h-full ${explorerDragOver ? "bg-blue-50" : ""}`}
-                                onDragOver={(e) => {
-                                    e.preventDefault();
-                                }}
-                                onDrop={async (e) => {
-                                    e.preventDefault();
-                                    const docId = e.dataTransfer.getData(
-                                        "application/mike-doc",
-                                    );
-                                    const folderId = e.dataTransfer.getData(
-                                        "application/mike-folder",
-                                    );
-                                    if (docId) {
-                                        e.stopPropagation();
-                                        await handleMoveDoc(docId, null);
-                                    } else if (folderId) {
-                                        e.stopPropagation();
-                                        await handleMoveFolder(folderId, null);
-                                    }
-                                    // External file drops are not stopped — they bubble to handleExplorerFileDrop
-                                }}
-                            >
-                                {explorerDragOver && (
-                                    <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-                                        <p className="text-xs text-blue-500 font-medium">
-                                            Drop to upload
-                                        </p>
-                                    </div>
-                                )}
-                                <ProjectExplorer
-                                    projectName={project?.name}
-                                    documents={project?.documents ?? []}
-                                    folders={project?.folders ?? []}
-                                    selectedDocId={selectedDocId}
-                                    onDocClick={handleDocClick}
-                                    onCreateFolder={handleCreateFolder}
-                                    onRenameFolder={handleRenameFolder}
-                                    onDeleteFolder={requestDeleteFolder}
-                                    onDeleteDoc={handleDeleteDoc}
-                                    onMoveDoc={handleMoveDoc}
-                                    onMoveFolder={handleMoveFolder}
-                                />
-                            </div>
-                        </div>
-                        <Divider onDrag={onExplorerDividerDrag} />
-                    </>
-                )}
-
-                {/* Collapsed explorer toggle */}
-                {explorerCollapsed && (
-                    <div className="shrink-0 flex flex-col border-r border-gray-200">
-                        <div className="h-10 flex items-center justify-center border-b border-gray-200 shrink-0 px-1">
-                            <button
-                                onClick={() => setExplorerCollapsed(false)}
-                                title="Expand explorer"
-                                className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                            >
-                                <ChevronRight className="h-3.5 w-3.5" />
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* CENTER: Document Panel */}
-                <div className="flex-1 flex flex-col min-w-0 border-r border-gray-200">
-                    {/* Tab bar */}
-                    <div
-                        ref={tabBarRef}
-                        className="h-10 flex items-end border-b border-gray-200 shrink-0 overflow-x-auto min-w-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-                    >
-                        {tabs.length === 0 ? (
-                            <span className="px-4 self-center text-xs text-gray-700">
-                                Document Viewer
-                            </span>
-                        ) : (
-                            tabs.map((tab) => {
-                                const isActive = tab.documentId === activeTabId;
-                                const ext = tab.filename
-                                    .split(".")
-                                    .pop()
-                                    ?.toLowerCase();
-                                const iconColor =
-                                    ext === "pdf"
-                                        ? "text-red-500"
-                                        : ext === "doc" || ext === "docx"
-                                          ? "text-blue-500"
-                                          : "text-gray-400";
-                                // Pull the doc's latest_version_number out
-                                // of the project state so the tab shows V#
-                                // whenever the doc has been edited.
-                                const versionNumber = (
-                                    project?.documents ?? []
-                                ).find((d) => d.id === tab.documentId)
-                                    ?.latest_version_number as
-                                    | number
-                                    | null
-                                    | undefined;
-                                const showVersionBadge =
-                                    typeof versionNumber === "number" &&
-                                    Number.isFinite(versionNumber) &&
-                                    versionNumber > 1;
-                                return (
-                                    <div
-                                        key={tab.documentId}
-                                        ref={(el) => {
-                                            tabItemRefs.current[
-                                                tab.documentId
-                                            ] = el;
-                                        }}
-                                        onClick={() =>
-                                            switchTab(tab.documentId)
-                                        }
-                                        className={`group flex items-center gap-1.5 px-3 h-full border-r border-gray-200 cursor-pointer shrink-0 max-w-[260px] transition-colors ${
-                                            isActive
-                                                ? "bg-gray-100"
-                                                : "bg-white hover:bg-gray-50"
-                                        }`}
-                                    >
-                                        <FileText
-                                            className={`h-3.5 w-3.5 shrink-0 ${iconColor}`}
-                                        />
-                                        <span
-                                            className={`text-xs truncate ${isActive ? "text-gray-900 font-medium" : "text-gray-500"}`}
-                                        >
-                                            {tab.filename}
-                                        </span>
-                                        {showVersionBadge && (
-                                            <span
-                                                className={`shrink-0 inline-flex items-center rounded border px-1 py-px text-[9px] font-medium ${
-                                                    isActive
-                                                        ? "border-gray-200 bg-white text-gray-600"
-                                                        : "border-gray-200 bg-gray-50 text-gray-500"
-                                                }`}
-                                            >
-                                                V{versionNumber}
-                                            </span>
-                                        )}
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                closeTab(tab.documentId);
-                                            }}
-                                            className={`shrink-0 transition-colors ${isActive ? "text-gray-500 hover:text-gray-700" : "text-gray-300 hover:text-gray-600"}`}
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    </div>
+                            onDrop={async (e) => {
+                                e.preventDefault();
+                                const docId = e.dataTransfer.getData(
+                                    "application/mike-doc",
                                 );
-                            })
-                        )}
-                    </div>
-                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                        {activeTab ? (
-                            isDocxFilename(activeTab.filename) ? (
-                                <DocxView
-                                    key={activeTab.documentId}
-                                    documentId={activeTab.documentId}
-                                    versionId={activeTab.versionId}
-                                    refetchKey={activeTab.refetchKey}
-                                    quotes={activeQuotes ?? undefined}
-                                    highlightEdit={
-                                        editScrollTarget &&
-                                        editScrollTarget.documentId ===
-                                            activeTab.documentId
-                                            ? editScrollTarget
-                                            : null
-                                    }
-                                    onReady={() =>
-                                        handleDocxReady(activeTab.documentId)
-                                    }
-                                    warning={activeTab.warning ?? null}
-                                    onWarningDismiss={() =>
-                                        dismissTabWarning(activeTab.documentId)
-                                    }
-                                    initialScrollTop={
-                                        activeTab.scrollTop ?? null
-                                    }
-                                    onScrollChange={(top) =>
-                                        handleTabScrollChange(
-                                            activeTab.documentId,
-                                            top,
-                                        )
-                                    }
-                                    rounded={false}
-                                />
-                            ) : isSpreadsheetFilename(activeTab.filename) ? (
-                                <SpreadsheetView
-                                    key={activeTab.documentId}
-                                    documentId={activeTab.documentId}
-                                    versionId={activeTab.versionId}
-                                    rounded={false}
-                                />
-                            ) : (
-                                <PdfView
-                                    key={activeTab.documentId}
-                                    doc={{ document_id: activeTab.documentId }}
-                                    quotes={activeQuotes ?? undefined}
-                                    rounded={false}
-                                />
-                            )
-                        ) : (
-                            <div className="flex items-center justify-center h-full px-8 bg-gray-100">
-                                <div className="text-center space-y-3">
-                                    <p className="font-serif text-gray-700 text-xl">
-                                        Click on a document to display here.
-                                    </p>
-                                    <p className="font-serif text-base text-gray-500">
-                                        Pro tip: Drag a document from the
-                                        Project Explorer to the Assistant to
-                                        direct it to read or edit.
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <Divider onDrag={onChatDividerDrag} />
-
-                {/* RIGHT: Assistant Panel */}
-                <div
-                    style={{ width: chatWidth }}
-                    className="relative shrink-0 flex flex-col"
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={handleChatDrop}
-                >
-                    <div className="h-10 flex items-center px-4 border-b border-gray-200 shrink-0">
-                        <span className="text-xs text-gray-700">
-                            Project Assistant
-                        </span>
-                    </div>
-
-                    {/* Messages / greeting / shimmer */}
-                    {!chatLoaded ? (
-                        <div className="flex-1 px-4 py-4 space-y-4">
-                            <div className="flex justify-end">
-                                <div className="bg-gray-100 rounded-2xl p-4 w-3/4">
-                                    <div className="h-3 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded w-full" />
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                {[1, 2, 3].map((i) => (
-                                    <div
-                                        key={i}
-                                        className={`h-3 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded ${i === 3 ? "w-4/6" : "w-full"}`}
-                                    />
-                                ))}
-                            </div>
-                        </div>
-                    ) : messages.length === 0 ? (
-                        <div className="flex-1 flex flex-col min-h-0">
-                            <AssistantGreeting username={username} />
-                        </div>
-                    ) : (
-                        <div
-                            ref={messagesContainerRef}
-                            className="flex-1 overflow-y-auto px-4 pt-6 md:pt-8 space-y-6 md:space-y-8 min-h-0"
-                            style={{
-                                paddingBottom: DEFAULT_ASSISTANT_BOTTOM_PADDING,
-                                scrollbarGutter: "stable",
-                            }}
-                        >
-                            {(() => {
-                                const lastUserIdx = messages
-                                    .map((m) => m.role)
-                                    .lastIndexOf("user");
-                                const lastAssistantIdx = messages
-                                    .map((m) => m.role)
-                                    .lastIndexOf("assistant");
-                                return messages.map((msg, i) =>
-                                    msg.role === "user" ? (
-                                        <div
-                                            key={i}
-                                            ref={
-                                                i === lastUserIdx
-                                                    ? latestUserMessageRef
-                                                    : null
-                                            }
-                                        >
-                                            <UserMessage
-                                                content={msg.content ?? ""}
-                                                files={msg.files}
-                                                workflow={msg.workflow}
-                                            />
-                                        </div>
-                                    ) : (
-                                        <AssistantMessage
-                                            key={i}
-                                            events={msg.events}
-                                            isStreaming={
-                                                i === messages.length - 1 &&
-                                                isResponseLoading
-                                            }
-                                            isError={!!msg.error}
-                                            citations={msg.citations}
-                                            citationStatus={
-                                                msg.citationStatus
-                                            }
-                                            onCitationClick={
-                                                handleCitationClick
-                                            }
-                                            minHeight={
-                                                i === lastAssistantIdx
-                                                    ? minHeight
-                                                    : "0px"
-                                            }
-                                            onEditViewClick={
-                                                handleEditViewClick
-                                            }
-                                            onOpenDocument={handleOpenDocument}
-                                            onEditResolved={handleEditResolved}
-                                            onEditError={handleEditError}
-                                            isDocReloading={(docId) =>
-                                                reloadingDocIds.has(docId)
-                                            }
-                                        />
-                                    ),
+                                const folderId = e.dataTransfer.getData(
+                                    "application/mike-folder",
                                 );
-                            })()}
-                            <div ref={messagesEndRef} />
-                        </div>
-                    )}
-
-                    {/* ChatInput */}
-                    <div className="absolute bottom-2 left-0 right-0 z-30 w-full md:bottom-3">
-                        <div className="pointer-events-none absolute -bottom-2 left-4 right-4 z-0 h-7 bg-white/50 backdrop-blur-[1px] md:-bottom-3" />
-                        <div className="relative z-20 w-full px-4">
-                            <ChatInput
-                                ref={chatInputRef}
-                                onSubmit={handleSubmit}
-                                onCancel={cancel}
-                                isLoading={isResponseLoading}
-                                hideAddDocButton
-                                projectId={projectId}
-                                onDocumentsUploaded={(documents) =>
-                                    setProject((prev) =>
-                                        prev
-                                            ? {
-                                                  ...prev,
-                                                  documents: [
-                                                      ...(prev.documents ?? []),
-                                                      ...documents,
-                                                  ],
-                                              }
-                                            : prev,
-                                    )
+                                if (docId) {
+                                    e.stopPropagation();
+                                    await moveToRoot("doc", docId);
+                                } else if (folderId) {
+                                    e.stopPropagation();
+                                    await moveToRoot("folder", folderId);
                                 }
+                                // External file drops are not stopped — they bubble to handleExplorerFileDrop
+                            }}
+                        >
+                            {explorerDragOver && (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                                    <p className="text-xs text-blue-500 font-medium">
+                                        Drop to upload
+                                    </p>
+                                </div>
+                            )}
+                            <ProjectExplorer
+                                ref={projectExplorerRef}
                                 projectName={project?.name}
-                                projectCmNumber={project?.cm_number}
+                                documents={project?.documents ?? []}
+                                folders={project?.folders ?? []}
+                                selectedDocId={selectedDocId}
+                                onDocClick={handleDocClick}
+                                onDownloadDoc={
+                                    explorerDownload.downloadDocument
+                                }
+                                onDownloadFolder={
+                                    explorerDownload.downloadFolder
+                                }
+                                downloading={explorerDownload.downloading}
+                                onAddToChat={(document) =>
+                                    addDocToChat(document)
+                                }
+                                addToChatDisabled={!canSendChat}
+                                onCreateFolder={
+                                    canEditContent
+                                        ? handleCreateFolder
+                                        : undefined
+                                }
+                                onRenameFolder={handleRenameFolder}
+                                onRenameDoc={handleRenameDoc}
+                                onDeleteFolder={requestDeleteFolder}
+                                onDeleteDoc={canEditContent ? requestDeleteDoc : undefined}
+                                onMoveDoc={handleMoveDoc}
+                                onMoveFolder={handleMoveFolder}
+                                uploadingDocuments={uploadingDocuments}
                             />
                         </div>
                     </div>
+                    <Divider onDrag={onExplorerDividerDrag} />
+                </>
+            )}
+
+            {/* Collapsed explorer toggle */}
+            {explorerCollapsed && (
+                <div
+                    className={cn(
+                        "flex shrink-0 flex-col overflow-hidden rounded-l-2xl rounded-r-lg",
+                        LIQUID_GLASS_FLAT_CLASS,
+                    )}
+                >
+                    <div className="flex h-12 shrink-0 items-center justify-center px-1">
+                        <button
+                            onClick={() => setExplorerCollapsed(false)}
+                            title="Expand explorer"
+                            className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                        >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                    </div>
                 </div>
+            )}
+            {explorerCollapsed && (
+                <div className="w-1.5 shrink-0" aria-hidden="true" />
+            )}
+
+            {/* CENTER: Document Panel */}
+            <div
+                role="region"
+                aria-label="Document viewer"
+                style={{ minWidth: DOCUMENT_MIN }}
+                className={cn(
+                    "relative flex flex-1 flex-col overflow-hidden rounded-lg",
+                    LIQUID_GLASS_FLAT_CLASS,
+                )}
+                onDragOverCapture={(event) => {
+                    if (!isDocumentViewerDrag(event.dataTransfer)) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.dataTransfer.dropEffect = "copy";
+                    setDocumentDragOver(true);
+                }}
+                onDragLeave={(event) => {
+                    if (
+                        !event.currentTarget.contains(
+                            event.relatedTarget as Node,
+                        )
+                    ) {
+                        setDocumentDragOver(false);
+                    }
+                }}
+                onDropCapture={handleDocumentDrop}
+            >
+                {documentDragOver && (
+                    <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-lg bg-white/50 backdrop-blur-md">
+                        <p className="font-serif text-xl text-gray-900">
+                            Drop files here to open
+                        </p>
+                    </div>
+                )}
+                <ProjectDocumentTabs
+                    onAddToChat={(document) =>
+                        addDocToChat(document)
+                    }
+                    addToChatDisabled={!canSendChat}
+                    onDownloadDoc={(document) => documentViewers.download(document.id, document.id, tabs.find((tab) => tab.documentId === document.id)?.versionId, document.filename)}
+                    downloading={explorerDownload.downloading}
+                    onRenameDoc={handleRenameDoc}
+                    onDeleteDoc={requestDeleteDoc}
+                    documentPermissions={documentPermissions}
+                    tabs={tabs}
+                    documents={project?.documents ?? []}
+                    activeTabId={activeTabId}
+                    onActivate={switchTab}
+                    onClose={(id) => documentViewers.requestClose([id], () => closeTab(id))}
+                    onReorder={(draggedId, targetId, position) =>
+                        setTabs((current) =>
+                            reorderTabs(
+                                current,
+                                draggedId,
+                                targetId,
+                                position,
+                                (tab) => tab.documentId,
+                            ),
+                        )
+                    }
+                />
+                <ProjectDocumentPanels
+                    canEdit={canEditContent}
+                    documentPermissions={documentPermissions}
+                    onDownloadReady={documentViewers.registerDownload}
+                    onCloseGuardReady={documentViewers.registerCloseGuard}
+                    tabs={tabs}
+                    documents={project?.documents ?? []}
+                    activeTabId={activeTabId}
+                    onVersionChange={(documentId, version) => documentViewers.requestClose([documentId], () => {
+                        openRequest.current += 1;
+                        setTabs((current) =>
+                            current.map((tab) => {
+                                if (tab.documentId !== documentId) return tab;
+                                const document = panelDocumentAtVersion(
+                                    tab.sourceDocument ?? {
+                                        document_id: documentId,
+                                        title: tab.filename,
+                                        type: panelDocumentType(tab.filename),
+                                        metadata: [],
+                                        quotes: [],
+                                    },
+                                    version,
+                                );
+                                return {
+                                    ...tab,
+                                    filename: document.title,
+                                    fileType: document.type,
+                                    versionId: version.id,
+                                    sourceDocument: document,
+                                    annotation: undefined,
+                                    warning: null,
+                                };
+                            }),
+                        );
+                    })}
+                    onCloseAnnotation={handleCloseAnnotation}
+                    isDocumentReloading={(documentId) =>
+                        Object.values(resolvingEdits).includes(documentId)
+                    }
+                    isEditReloading={(editId) => !!resolvingEdits[editId]}
+                    onEditResolveStart={handleEditResolveStart}
+                    onEditResolved={handleEditResolved}
+                    onEditError={handleEditError}
+                    onWarningDismiss={dismissTabWarning}
+                />
             </div>
-            <OwnerOnlyPopup
+
+            {documentViewers.confirmation}
+            <ConfirmPopup
+                open={!!deleteTarget}
+                title="Delete file?"
+                message={`Delete “${deleteTarget?.filename ?? "this file"}” and its versions, including any unsaved edits? This cannot be undone.`}
+                confirmLabel="Delete file"
+                confirmVariant="danger"
+                confirmStatus={deletingDocument ? "loading" : "idle"}
+                confirmDisabled={!canEditContent}
+                onCancel={() => { if (!deletingDocument) setDeleteTarget(null); }}
+                onConfirm={() => { if (deleteTarget) void handleDeleteDoc(deleteTarget.id); }}
+            />
+            <Divider onDrag={onChatDividerDrag} />
+
+            {/* RIGHT: Assistant panel, and a second chat beside it */}
+            <ProjectChatPanel
+                {...chatPanelProps}
+                ref={primaryChatPanelRef}
+                chatId={activeChatId}
+                openChat={openChat}
+                adoptChat={adoptChat}
+                hiddenChatId={sideChatId}
+                width={panelWidths.chat}
+                roundedClassName={
+                    sideChatOpen ? "rounded-lg" : "rounded-l-lg rounded-r-2xl"
+                }
+                onActivate={activatePrimaryChat}
+                onOpenSideChat={sideChatOpen ? undefined : handleOpenSideChat}
+                onCloseSideChat={sideChatOpen ? handleCloseSideChat : undefined}
+                onAskInSideChat={askInSideChat}
+            />
+            {sideChatId !== null && (
+                <>
+                    <Divider onDrag={onChatSplitDividerDrag} />
+                    <ProjectChatPanel
+                        {...chatPanelProps}
+                        ref={sideChatPanelRef}
+                        isSideChat
+                        incomingExcerpt={sideChatExcerpt}
+                        onIncomingExcerptAdded={clearSideChatExcerpt}
+                        chatId={sideChatId}
+                        openChat={openSideChat}
+                        adoptChat={adoptSideChat}
+                        hiddenChatId={activeChatId || null}
+                        width={panelWidths.sideChat}
+                        roundedClassName="rounded-l-lg rounded-r-2xl"
+                        onActivate={activateSideChat}
+                        onClose={handleCloseSideChat}
+                    />
+                </>
+            )}
+            {project && (
+                <AddDocumentsModal
+                    open={addDocumentsOpen}
+                    onClose={() => setAddDocumentsOpen(false)}
+                    onSelect={(documents) => addUploadedDocuments(documents)}
+                    breadcrumb={[
+                        "Projects",
+                        project.name +
+                            (project.cm_number
+                                ? ` (${project.cm_number})`
+                                : ""),
+                        "Add Documents",
+                    ]}
+                    projectId={projectId}
+                    uploadStateId={`project-chat:${projectId}`}
+                />
+            )}
+            <WarningPopup
+                open={!!projectPicker.error}
+                onClose={projectPicker.clearError}
+                title="Projects could not be loaded"
+                message={projectPicker.error ?? ""}
+            />
+            <WarningPopup
+                open={!!uploadWarning}
+                onClose={() => setUploadWarning(null)}
+                title="Some files were not uploaded"
+                message={uploadWarning ?? ""}
+            />
+            <WarningPopup
+                open={!!documentDropError}
+                onClose={() => setDocumentDropError(null)}
+                title="Files could not be opened"
+                message={documentDropError ?? ""}
+            />
+            <ProjectPickerModal
+                open={projectPicker.open}
+                onClose={projectPicker.closePicker}
+                projects={projectPicker.projects ?? []}
+                loading={projectPicker.loading}
+                selectedId={projectPicker.selectedId}
+                onSelect={projectPicker.setSelectedId}
+                breadcrumbs={["IDE", "Select project"]}
+                primaryAction={{
+                    label: "Select project",
+                    type: "button",
+                    onClick: selectProject,
+                    disabled: !projectPicker.selectedId,
+                }}
+            />
+            <ProjectMemoryModal
+                key={projectId}
+                open={projectMemoryOpen}
+                onClose={() => setProjectMemoryOpen(false)}
+                projectId={projectId}
+                projectName={project?.name ?? null}
+                projectLoading={!project}
+                canEdit={canEditContent}
+                canManage={canManageProject}
+                onMemoryEnabledChange={(enabled) =>
+                    setProject((current) =>
+                        current && current.memory_enabled !== enabled
+                            ? { ...current, memory_enabled: enabled }
+                            : current,
+                    )
+                }
+            />
+            <WarningPopup
+                open={!!explorerDownload.error}
+                title="Download failed"
+                message={explorerDownload.error}
+                onClose={explorerDownload.clearError}
+            />
+            <PermissionDeniedPopup
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
+                contacts={project?.admin_contacts}
                 onClose={() => setOwnerOnlyAction(null)}
+            />
+            <PermissionDeniedPopup
+                open={!!editorGateAction}
+                action={editorGateAction ?? undefined}
+                requiredRole="editor"
+                contacts={project?.admin_contacts}
+                onClose={() => setEditorGateAction(null)}
+            />
+            <WarningPopup
+                open={!!chatActionError}
+                title={chatActionError?.title}
+                message={chatActionError?.message}
+                onClose={() => setChatActionError(null)}
             />
             <ConfirmPopup
                 open={!!pendingDeleteFolder}
@@ -1463,6 +1841,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                     ) : undefined
                 }
                 confirmLabel="Delete"
+                confirmVariant="danger"
                 confirmStatus={
                     pendingDeleteFolderStatus === "deleting"
                         ? "loading"

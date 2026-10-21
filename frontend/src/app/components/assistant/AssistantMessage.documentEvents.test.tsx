@@ -1,0 +1,284 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { AssistantMessage } from "./AssistantMessage";
+import type { AssistantEvent } from "../shared/types";
+
+describe("AssistantMessage document events", () => {
+    it("opens every identified event document in the document panel", () => {
+        const onOpenDocument = vi.fn();
+        const events: AssistantEvent[] = [
+            {
+                type: "doc_read",
+                filename: "read.docx",
+                document_id: "document-read",
+                version_id: "version-read",
+                version_number: 2,
+            },
+            {
+                type: "doc_find",
+                filename: "searched.pdf",
+                document_id: "document-find",
+                version_id: "version-find",
+                version_number: 5,
+                query: "termination",
+                total_matches: 2,
+            },
+            {
+                type: "doc_created",
+                filename: "created.docx",
+                document_id: "document-created",
+                version_id: "version-created",
+                version_number: 3,
+                download_url: "",
+            },
+            {
+                type: "doc_replicated",
+                filename: "template.docx",
+                count: 2,
+                copies: [
+                    {
+                        new_filename: "copy-one.docx",
+                        document_id: "document-copy-one",
+                        version_id: "version-copy-one",
+                    },
+                    {
+                        new_filename: "copy-two.docx",
+                        document_id: "document-copy-two",
+                        version_id: "version-copy-two",
+                    },
+                ],
+            },
+            {
+                type: "doc_edited",
+                filename: "edited.docx",
+                document_id: "document-edited",
+                version_id: "version-edited",
+                version_number: 4,
+                download_url: "",
+                annotations: [],
+            },
+        ];
+
+        render(
+            <AssistantMessage
+                events={events}
+                onOpenDocument={onOpenDocument}
+            />,
+        );
+
+        const editedButton = screen.getByRole("button", {
+            name: "edited.docx",
+        });
+        expect(
+            editedButton.querySelector(
+                'img[src*="/icons/file-types/word.svg"]',
+            ),
+        ).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "read.docx" }));
+        fireEvent.click(
+            screen.getByRole("button", { name: "searched.pdf" }),
+        );
+        fireEvent.click(
+            screen.getByRole("button", { name: "created.docx" }),
+        );
+        fireEvent.click(
+            screen.getByRole("button", { name: "copy-one.docx" }),
+        );
+        fireEvent.click(
+            screen.getByRole("button", { name: "copy-two.docx" }),
+        );
+        fireEvent.click(editedButton);
+
+        expect(onOpenDocument.mock.calls).toEqual([
+            [
+                {
+                    documentId: "document-read",
+                    filename: "read.docx",
+                    versionId: "version-read",
+                    versionNumber: 2,
+                },
+            ],
+            [
+                {
+                    documentId: "document-find",
+                    filename: "searched.pdf",
+                    versionId: "version-find",
+                    versionNumber: 5,
+                },
+            ],
+            [
+                {
+                    documentId: "document-created",
+                    filename: "created.docx",
+                    versionId: "version-created",
+                    versionNumber: 3,
+                },
+            ],
+            [
+                {
+                    documentId: "document-copy-one",
+                    filename: "copy-one.docx",
+                    versionId: "version-copy-one",
+                    versionNumber: 1,
+                },
+            ],
+            [
+                {
+                    documentId: "document-copy-two",
+                    filename: "copy-two.docx",
+                    versionId: "version-copy-two",
+                    versionNumber: 1,
+                },
+            ],
+            [
+                {
+                    documentId: "document-edited",
+                    filename: "edited.docx",
+                    versionId: "version-edited",
+                    versionNumber: 4,
+                },
+            ],
+        ]);
+    });
+
+    it("opens the edit wrapper as a plain document but keeps individual edit context", () => {
+        const onOpenDocument = vi.fn();
+        const onEditViewClick = vi.fn();
+        const events: AssistantEvent[] = [
+            {
+                type: "doc_edited",
+                filename: "agreement.docx",
+                document_id: "document-1",
+                version_id: "version-2",
+                version_number: 2,
+                download_url: "",
+                annotations: [
+                    {
+                        edit_id: "edit-1",
+                        document_id: "document-1",
+                        version_id: "version-2",
+                        version_number: 2,
+                        change_id: "change-1",
+                        deleted_text: "old one",
+                        inserted_text: "new one",
+                        status: "pending",
+                    },
+                    {
+                        edit_id: "edit-2",
+                        document_id: "document-1",
+                        version_id: "version-2",
+                        version_number: 2,
+                        change_id: "change-2",
+                        deleted_text: "old two",
+                        inserted_text: "new two",
+                        status: "pending",
+                    },
+                ],
+            },
+        ];
+
+        render(
+            <AssistantMessage
+                events={events}
+                onOpenDocument={onOpenDocument}
+                onEditViewClick={onEditViewClick}
+            />,
+        );
+
+        const viewButtons = screen.getAllByRole("button", { name: "View" });
+        fireEvent.click(viewButtons[0]);
+        expect(onOpenDocument).toHaveBeenCalledWith({
+            documentId: "document-1",
+            filename: "agreement.docx",
+            versionId: "version-2",
+            versionNumber: 2,
+        });
+        expect(onEditViewClick).not.toHaveBeenCalled();
+
+        fireEvent.click(viewButtons[1]);
+        expect(onEditViewClick).toHaveBeenCalledWith(
+            expect.objectContaining({ edit_id: "edit-1" }),
+            "agreement.docx",
+            1,
+        );
+    });
+
+    it("offers the edits and documents a subagent made", () => {
+        render(
+            <AssistantMessage
+                events={[
+                    {
+                        type: "delegation",
+                        delegation_id: "d1",
+                        title: "Tidy the lease",
+                        task: "Fix the defined terms in lease.docx.",
+                        status: "completed",
+                        model: "claude-haiku-4-5",
+                        effort: "standard",
+                        events: [
+                            {
+                                type: "doc_edited",
+                                filename: "lease.docx",
+                                document_id: "document-1",
+                                version_id: "version-2",
+                                version_number: 2,
+                                download_url: "/documents/document-1/download",
+                                annotations: [
+                                    {
+                                        edit_id: "edit-1",
+                                        document_id: "document-1",
+                                        version_id: "version-2",
+                                        version_number: 2,
+                                        change_id: "change-1",
+                                        deleted_text: "Lessee",
+                                        inserted_text: "Tenant",
+                                        status: "pending",
+                                    },
+                                ],
+                            },
+                            {
+                                type: "doc_created",
+                                filename: "summary.docx",
+                                document_id: "document-2",
+                                download_url: "/documents/document-2/download",
+                            },
+                        ],
+                    },
+                    { type: "content", text: "Done." },
+                ]}
+            />,
+        );
+
+        expect(screen.getByText("Tenant")).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Download lease.docx" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Download summary.docx" }),
+        ).toBeInTheDocument();
+    });
+});
+
+it("renders a saved document search in the pre-response timeline", () => {
+    render(<AssistantMessage events={[
+        { type: "doc_search", search_id: "search-1", scope: "templates", query: "assignment", offset: 0, match_count: 3, next_offset: null },
+        { type: "content", text: "I found three relevant templates." },
+    ]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Completed in 1 step" }));
+    expect(screen.getByText(/the template library for/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Searched the template library/ }));
+    expect(screen.getByText("3 matches")).toBeVisible();
+});
+
+it("shows the specific failure reason from saved search history", () => {
+    const error = "Document search is unavailable because the server's database needs an update. Please contact your administrator.";
+    render(<AssistantMessage events={[
+        { type: "doc_search", search_id: "search-1", scope: "library", query: "assignment", offset: 0, error_code: "schema_out_of_date", error },
+        { type: "content", text: "I could not search your documents." },
+    ]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Completed in 1 step" }));
+    fireEvent.click(screen.getByRole("button", { name: /Search failed in/ }));
+    expect(screen.getByText(error)).toBeVisible();
+    expect(screen.queryByText("0 matches")).not.toBeInTheDocument();
+});

@@ -1,0 +1,18 @@
+# BuildKit per-Dockerfile ignore (context is the repo root — see Dockerfile).
+# Keep the context lean: the build reads frontend/ and packages/contracts only,
+# so the other applications are excluded outright.
+**/node_modules
+**/.next
+**/.open-next
+**/out
+**/dist
+**/build
+.git
+backend
+word-addin
+desktop
+docs
+e2e
+**/.env
+**/.env.*
+**/*.log

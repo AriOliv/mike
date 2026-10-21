@@ -1,16 +1,18 @@
 import type { Workflow } from "../shared/types";
+import {
+    slashCommandQueryFromValue,
+    withoutSlashCommand,
+    workflowSlashCommandFromTitle,
+} from "@/shared/ui/WorkflowSlashCommandUI";
 
-const WORKFLOW_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export { withoutSlashCommand };
 
 export function workflowSlashCommand(workflow: Workflow): string | null {
-    const name = workflow.metadata.name;
-    return name && WORKFLOW_NAME_PATTERN.test(name) ? `/${name}` : null;
+    return workflowSlashCommandFromTitle(workflow.metadata.title);
 }
 
 export function slashCommandQuery(value: string): string | null {
-    const trimmed = value.trim();
-    if (!/^\/\S*$/.test(trimmed)) return null;
-    return trimmed.toLowerCase();
+    return slashCommandQueryFromValue(value);
 }
 
 export function matchingSlashWorkflows(

@@ -1,0 +1,131 @@
+# CI: Word add-in typecheck + hermetic Playwright e2e (chromium AND webkit).
+#
+# The add-in's e2e suite is fully hermetic (static-served production bundle,
+# in-page Office shim, every backend call intercepted — see
+# word-addin/playwright.config.ts), so no Supabase/API/secrets are needed here.
+#
+# WebKit is a first-class project, not extra coverage: the add-in's real host
+# on Word for Mac is WKWebView, which ignores `overflow-anchor: none` and
+# re-anchors scrollTop when a descendant resizes, while Chromium honours the
+# opt-out. The scroll-pinning assertions in e2e/chat-layout.spec.ts only bite
+# under webkit — a chromium-only run would silently pass with the scroll fix
+# reverted.
+#
+# Every PR runs this gate: shared UI, auth and API changes can affect the add-in.
+# Pushes to main retain a path filter to avoid unrelated post-merge runs.
+name: Word add-in
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "word-addin/**"
+      - "frontend/src/shared/**"
+      - "frontend/public/icons/**"
+      - "packages/**"
+      - ".github/workflows/word-addin.yml"
+  # Run on every PR, including stacked auth/API changes consumed by Word.
+  pull_request:
+  # Nightly development-stress run (see the job below). Offset from e2e.yml's
+  # 03:47 so the two stress suites don't compete for runners.
+  schedule:
+    - cron: "17 4 * * *"
+
+# Don't pile up runs on rapid pushes to the same PR; pushes to main each get
+# their own group (keyed by sha) and are never cancelled.
+concurrency:
+  group: word-addin-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  streaming-development:
+    name: Development stress (chromium + webkit)
+    # ~18-24 min against ~8 for the production job, so it stays off the PR
+    # path: it runs on push to main, nightly, on manual dispatch, and on PRs
+    # labelled `stress` (takes effect on the next push; see e2e.yml for why
+    # there is no `labeled` trigger).
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'stress')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: word-addin
+    env:
+      WORD_E2E_DEVELOPMENT: "1"
+      REACT_STRESS: "1"
+      E2E_WORKERS: "4"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: word-addin/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      # Production React omits the passive-update-depth warning. Exercise the
+      # real development bundle too, using the same hermetic Office/API mocks.
+      - run: npx playwright test --retries=0 --trace=retain-on-failure
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: word-addin-streaming-development
+          path: word-addin/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  playwright:
+    name: Typecheck and Playwright (chromium + webkit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Hermetic specs (per-page Office shim and API mocks) on the runner's
+      # 4 vCPUs; see word-addin/playwright.config.ts.
+      E2E_WORKERS: "4"
+    defaults:
+      run:
+        working-directory: word-addin
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: word-addin/package-lock.json
+
+      # Same silent-merge-corruption guard as ci.yml: git's line-level merge
+      # can splice package(-lock).json into invalid JSON without a conflict,
+      # and npm's own error for that is misleading.
+      - name: Validate package.json and lockfile parse
+        run: node -e "for (const f of ['package.json','package-lock.json']) JSON.parse(require('fs').readFileSync(f, 'utf8'))"
+
+      - run: npm ci
+
+      # Covers both the app bundle (tsconfig.json) and the e2e suite +
+      # playwright.config.ts (tsconfig.e2e.json).
+      - run: npm run typecheck
+
+      # Both engines: webkit is the browser the assertions were written for
+      # (see header), chromium guards the honours-overflow-anchor path.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      # Runs BOTH projects. playwright.config.ts owns the build/serve
+      # orchestration: its webServer command runs `build:e2e` (typecheck +
+      # production webpack bundle with fixed REACT_APP_* values) and then
+      # static-serves dist/ over plain HTTP, so this single step builds,
+      # serves, and tests.
+      - name: Run Playwright (chromium + webkit)
+        run: npx playwright test
+
+      # always() (not !cancelled()) so traces/screenshots still upload when
+      # the job is cancelled by the timeout — exactly when they're needed.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: word-addin-playwright-results
+          path: word-addin/test-results/
+          retention-days: 14
+          if-no-files-found: ignore

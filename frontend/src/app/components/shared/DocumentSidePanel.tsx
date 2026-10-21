@@ -4,30 +4,40 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
     AlertCircle,
+    AlertTriangle,
     Check,
     Download,
     Eye,
     Loader2,
     Pencil,
+    Plus,
     Trash2,
     Upload,
-    X,
 } from "lucide-react";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
+import { DocumentPaneTitle } from "@/app/components/shared/DocumentPaneTitle";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { DocxView } from "@/app/components/shared/views/DocxView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
-import { PillButton } from "@/app/components/ui/pill-button";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { CloseButton } from "@/shared/ui/CloseButton";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import type { Document } from "@/app/components/shared/types";
-import {
-    isDocxFilename,
-    isSpreadsheetFilename,
-} from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
-import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import {
+    UserVisibleError,
+    describeError,
+    notifyError,
+} from "@/app/lib/userFacingError";
+import { resolveDocumentViewType } from "@/app/lib/documentViewType";
+import { textLayerWarning } from "@/app/lib/textLayerWarning";
+import {
+    LIQUID_FLOAT_PANEL_SURFACE_CLASS,
+    LIQUID_GLASS_FLAT_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/app/components/ui/liquid-surface";
 import { formatBytes } from "@/app/components/projects/ProjectPageParts";
 
 const MIN_DOC_COLUMN_WIDTH = 420;
@@ -39,6 +49,8 @@ const MAX_PANEL_WIDTH = 1180;
 
 interface DocumentSidePanelProps {
     doc: Document | null;
+    displayUrl?: string | null;
+    readOnly?: boolean;
     versionId?: string | null;
     currentVersionId?: string | null;
     versions: DocumentVersion[];
@@ -72,10 +84,15 @@ interface DocumentSidePanelProps {
     canDelete?: boolean;
     onOwnerOnlyAction?: (action: string) => void;
     onDelete: (doc: Document) => Promise<void> | void;
+    /** Read-only panels only: copies the document into the caller's collection. */
+    onAdd?: (doc: Document) => void;
+    addLabel?: string;
 }
 
 export function DocumentSidePanel({
     doc,
+    displayUrl,
+    readOnly = false,
     versionId,
     currentVersionId,
     versions,
@@ -83,6 +100,7 @@ export function DocumentSidePanel({
     onClose,
     onLoadVersions,
     onSelectVersion,
+    onDownloadDocument,
     onDownloadVersion,
     onRenameVersion,
     onDeleteVersion,
@@ -91,6 +109,8 @@ export function DocumentSidePanel({
     canDelete = true,
     onOwnerOnlyAction,
     onDelete,
+    onAdd,
+    addLabel = "Add",
 }: DocumentSidePanelProps) {
     const [mounted, setMounted] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -99,7 +119,6 @@ export function DocumentSidePanel({
     const [nameDraft, setNameDraft] = useState("");
     const [savingName, setSavingName] = useState(false);
     const [nameError, setNameError] = useState<string | null>(null);
-    const [extensionWarningOpen, setExtensionWarningOpen] = useState(false);
     const [deletingVersionId, setDeletingVersionId] = useState<string | null>(
         null,
     );
@@ -127,6 +146,9 @@ export function DocumentSidePanel({
         "document",
     );
     const panelRef = useRef<HTMLDivElement>(null);
+    // Menus and popups opened from the panel portal outside its DOM, but their
+    // events still propagate through the panel's React tree.
+    const panelEvents = useRef(new WeakSet<Event>());
     const fileInputRef = useRef<HTMLInputElement>(null);
     const replaceFileInputRef = useRef<HTMLInputElement>(null);
     const dragStartX = useRef(0);
@@ -151,14 +173,16 @@ export function DocumentSidePanel({
     useEffect(() => {
         if (!doc) return;
         setUploadError(null);
-        void onLoadVersions(doc.id);
-    }, [doc?.id]);
+        if (!readOnly) void onLoadVersions(doc.id);
+        // The selected document is the fetch identity; callers commonly pass
+        // an inline adapter for onLoadVersions.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [doc?.id, readOnly]);
 
     useEffect(() => {
         setEditingName(false);
         setNameDraft("");
         setNameError(null);
-        setExtensionWarningOpen(false);
         setReplaceTargetVersion(null);
         setReplaceFile(null);
         setReplaceConfirmOpen(false);
@@ -172,7 +196,8 @@ export function DocumentSidePanel({
             const target = event.target;
             if (
                 !(target instanceof Node) ||
-                panelRef.current?.contains(target)
+                panelRef.current?.contains(target) ||
+                panelEvents.current.has(event)
             ) {
                 return;
             }
@@ -189,11 +214,16 @@ export function DocumentSidePanel({
                 return;
             }
 
+            // A failure notice for this panel (Retry, Contact support) renders
+            // outside it; clicking one must not close the panel underneath.
             if (
-                extensionWarningOpen ||
-                replaceConfirmOpen ||
-                confirmDeleteDocumentOpen
+                target instanceof Element &&
+                target.closest('[aria-label="Notifications"]')
             ) {
+                return;
+            }
+
+            if (replaceConfirmOpen || confirmDeleteDocumentOpen) {
                 return;
             }
 
@@ -209,7 +239,6 @@ export function DocumentSidePanel({
     }, [
         confirmDeleteDocumentOpen,
         doc,
-        extensionWarningOpen,
         mounted,
         onClose,
         replaceConfirmOpen,
@@ -220,7 +249,13 @@ export function DocumentSidePanel({
     const activeDoc = doc;
     const documentId = activeDoc.id;
     const newVersionAccept = ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt";
-    const orderedVersions = [...versions].reverse();
+    // Latest first: by version number, then by upload time.
+    const orderedVersions = [...versions].sort(
+        (a, b) =>
+            (b.version_number ?? -Infinity) -
+                (a.version_number ?? -Infinity) ||
+            b.created_at.localeCompare(a.created_at),
+    );
     const activeVersionCount = versions.filter(
         (version) => version.deleted_at == null,
     ).length;
@@ -235,11 +270,10 @@ export function DocumentSidePanel({
         selectedVersion != null
             ? fileTypeForVersion(selectedVersion, doc.file_type)
             : doc.file_type;
-    const selectedFileTypeKey = selectedFileType?.toLowerCase() ?? "";
-    const selectedIsDocx =
-        isDocxFilename(selectedFilename) ||
-        selectedFileTypeKey === "docx" ||
-        selectedFileTypeKey === "doc";
+    const selectedViewType = resolveDocumentViewType({
+        filename: selectedFilename,
+        fileType: selectedFileType,
+    });
     const selectedSizeBytes =
         selectedVersion?.size_bytes === undefined
             ? doc.size_bytes
@@ -248,6 +282,12 @@ export function DocumentSidePanel({
         selectedVersion?.page_count === undefined
             ? doc.page_count
             : selectedVersion.page_count;
+    const selectedTextLayerWarning = textLayerWarning(
+        selectedPageCount,
+        selectedVersion?.textless_page_count === undefined
+            ? doc.textless_page_count
+            : selectedVersion.textless_page_count,
+    );
     const selectedVersionNumber =
         selectedVersion?.version_number ?? doc.active_version_number ?? null;
     const selectedUploadedAt = selectedVersion?.created_at ?? doc.created_at;
@@ -268,7 +308,15 @@ export function DocumentSidePanel({
             return;
         }
         if (hasExtensionChange(selectedFilename, trimmed)) {
-            setExtensionWarningOpen(true);
+            notifyError(
+                new UserVisibleError(
+                    selectedExtension
+                        ? `File extensions cannot be changed here. Keep ${selectedExtension} at the end of the name.`
+                        : "File extensions cannot be changed here.",
+                    { kind: "validation" },
+                ),
+                { action: "rename this version" },
+            );
             return;
         }
         if (trimmed === selectedFilename) {
@@ -283,8 +331,12 @@ export function DocumentSidePanel({
             await onRenameVersion(documentId, selectedVersionId, trimmed);
             setEditingName(false);
         } catch (err) {
-            console.error("rename version failed", err);
-            setNameError("Could not save name.");
+            setNameError(
+                describeError(err, {
+                    action: "rename this version",
+                    fallback: "Could not save the new name. Try again.",
+                }).message,
+            );
         } finally {
             setSavingName(false);
         }
@@ -299,8 +351,13 @@ export function DocumentSidePanel({
         try {
             await onUploadNewVersion(doc, file, file.name);
         } catch (err) {
-            console.error("upload new version failed", err);
-            setUploadError("Could not upload the new version.");
+            setUploadError(
+                describeError(err, {
+                    action: "upload a new version",
+                    fallback:
+                        "The new version could not be uploaded. Try again.",
+                }).message,
+            );
         } finally {
             setUploading(false);
         }
@@ -315,7 +372,11 @@ export function DocumentSidePanel({
         try {
             await onDeleteVersion(documentId, versionIdToDelete);
         } catch (err) {
-            console.error("delete version failed", err);
+            notifyError(err, {
+                action: "delete this version",
+                onRetry: () => void handleDeleteVersion(versionIdToDelete),
+                supportNote: `Document: ${selectedFilename}`,
+            });
         } finally {
             setDeletingVersionId(null);
         }
@@ -354,8 +415,12 @@ export function DocumentSidePanel({
             setReplaceTargetVersion(null);
             setReplaceFile(null);
         } catch (err) {
-            console.error("replace version failed", err);
-            setUploadError("Could not replace this version.");
+            setUploadError(
+                describeError(err, {
+                    action: "replace this version",
+                    fallback: "This version could not be replaced. Try again.",
+                }).message,
+            );
         } finally {
             setReplacingVersionId(null);
         }
@@ -374,8 +439,12 @@ export function DocumentSidePanel({
                 onClose();
             }, 650);
         } catch (err) {
-            console.error("delete document failed", err);
             setDeleteDocumentStatus("idle");
+            notifyError(err, {
+                action: "delete this document",
+                onRetry: requestDeleteDocument,
+                supportNote: `Document: ${selectedFilename}`,
+            });
         } finally {
             setDeletingDocument(false);
         }
@@ -458,28 +527,22 @@ export function DocumentSidePanel({
     return createPortal(
         <div
             ref={panelRef}
+            onPointerDownCapture={(event) =>
+                panelEvents.current.add(event.nativeEvent)
+            }
             className={cn(
                 "fixed z-[190] flex flex-col",
-                LIQUID_PANEL_SURFACE_CLASS,
+                LIQUID_FLOAT_PANEL_SURFACE_CLASS,
                 "inset-3 md:left-auto overflow-hidden",
             )}
             style={isMobile ? undefined : { width: panelWidth }}
         >
             <div
                 onMouseDown={handlePanelResizeMouseDown}
-                className="absolute inset-y-0 left-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-blue-400/60 md:block"
+                className="absolute inset-y-0 left-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-blue-600/60 active:bg-blue-600 md:block"
                 title="Resize document view"
             />
-            <div className="mx-3 flex min-h-11 shrink-0 items-center justify-between gap-3 py-2 md:h-11 md:py-0">
-                <div className="flex min-w-0 items-center gap-2">
-                    <FileTypeIcon
-                        fileType={selectedFileType ?? selectedFilename}
-                        className="h-4 w-4"
-                    />
-                    <div className="min-w-0 truncate text-sm font-medium text-gray-700">
-                        {selectedFilename}
-                    </div>
-                </div>
+            <div className="flex shrink-0 justify-end px-3 py-2 md:absolute md:right-3 md:top-3 md:z-20 md:p-0">
                 <div className="flex shrink-0 items-center gap-1.5">
                     <div className="flex h-7 items-center rounded-full bg-gray-200/70 p-0.5 md:hidden">
                         <button
@@ -488,7 +551,7 @@ export function DocumentSidePanel({
                             className={cn(
                                 "h-6 rounded-full px-2 text-[11px] font-medium transition-colors",
                                 mobilePane === "document"
-                                    ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                                    ? `${LIQUID_GLASS_SUBTLE_CLASS} text-gray-900`
                                     : "text-gray-500 hover:text-gray-800",
                             )}
                         >
@@ -500,21 +563,14 @@ export function DocumentSidePanel({
                             className={cn(
                                 "h-6 rounded-full px-2 text-[11px] font-medium transition-colors",
                                 mobilePane === "details"
-                                    ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                                    ? `${LIQUID_GLASS_SUBTLE_CLASS} text-gray-900`
                                     : "text-gray-500 hover:text-gray-800",
                             )}
                         >
                             Details
                         </button>
                     </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/55 text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),inset_0_-1px_0_rgba(255,255,255,0.55),0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-colors hover:bg-white/75 hover:text-gray-700"
-                        aria-label="Close"
-                    >
-                        <X className="h-3.5 w-3.5" />
-                    </button>
+                    <CloseButton onClick={onClose} label="Close panel" />
                 </div>
             </div>
 
@@ -528,30 +584,44 @@ export function DocumentSidePanel({
             >
                 <section
                     className={cn(
-                        "min-h-0 min-w-0 p-3 pt-0 md:flex md:pr-0",
+                        "min-h-0 min-w-0 flex-col md:flex",
                         mobilePane === "document" ? "flex" : "hidden",
                     )}
                 >
-                    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                        {isSpreadsheetFilename(selectedFilename) ? (
+                    <DocumentPaneTitle
+                        filename={selectedFilename}
+                        fileType={selectedFileType}
+                        versionNumber={selectedVersionNumber}
+                    />
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                        {selectedViewType === "spreadsheet" ? (
                             <SpreadsheetView
+                                rounded="top-right"
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
+                                displayUrl={displayUrl}
                             />
-                        ) : selectedIsDocx ? (
+                        ) : selectedViewType === "docx" ? (
                             <DocxView
+                                rounded="top-right"
+                                // A read-only preview: no EigenPal editing toolbar.
+                                toolbarVisible={false}
+                                filename={doc.filename}
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
+                                displayUrl={displayUrl}
                             />
                         ) : (
                             <PdfView
+                                rounded="top-right"
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 doc={{
                                     document_id: doc.id,
                                     version_id: selectedVersionId,
                                 }}
+                                displayUrl={displayUrl}
                             />
                         )}
                     </div>
@@ -561,14 +631,14 @@ export function DocumentSidePanel({
                     onMouseDown={handleResizeMouseDown}
                     className={cn(
                         "relative z-10 hidden w-1.5 -translate-x-1/2 cursor-col-resize transition-colors md:block",
-                        "bg-transparent hover:bg-blue-400/60",
+                        "bg-transparent hover:bg-blue-600/60 active:bg-blue-600",
                     )}
                     title="Resize document panel"
                 />
 
                 <aside
                     className={cn(
-                        "mx-5 mt-2 min-h-0 flex-col",
+                        "mt-2 mr-3 ml-5 min-h-0 flex-col md:mt-11",
                         mobilePane === "details" ? "flex" : "hidden md:flex",
                     )}
                 >
@@ -623,7 +693,7 @@ export function DocumentSidePanel({
                                 <div className="min-w-0 flex-1 truncate text-xs leading-6 text-gray-800">
                                     {selectedFilename}
                                 </div>
-                                {selectedVersionId && (
+                                {selectedVersionId && !readOnly && (
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -666,7 +736,7 @@ export function DocumentSidePanel({
                                         : "—"
                                 }
                             />
-                            <DataRow label="Owner" value={ownerLabel} />
+                            <DataRow label="Uploaded by" value={ownerLabel} />
                             <DataRow
                                 label="Uploaded"
                                 value={
@@ -683,19 +753,21 @@ export function DocumentSidePanel({
                                         : "—"
                                 }
                             />
+                            {selectedTextLayerWarning && (
+                                <p className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+                                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                                    {selectedTextLayerWarning}
+                                </p>
+                            )}
                         </div>
                     </div>
 
-                    <div className="mb-2 shrink-0 text-xs font-medium text-gray-900">
-                        Versions
-                    </div>
-                    <div
-                        className={cn(
-                            "flex min-h-0 flex-1 flex-col overflow-visible rounded-xl",
-                            "bg-[#eceef1] px-2",
-                        )}
-                    >
-                        <div className="min-h-0 flex-1 overflow-y-auto py-2">
+                    {!readOnly && (
+                        <>
+                            <div className="mb-2 mt-4 shrink-0 text-xs font-medium text-gray-900">
+                                Versions
+                            </div>
+                    <div className="-mx-2 min-h-0 flex-1 overflow-y-auto px-2 py-2">
                             {versionsLoading && versions.length === 0 ? (
                                 <div className="space-y-1.5">
                                     {Array.from({
@@ -713,23 +785,27 @@ export function DocumentSidePanel({
                                     No version history.
                                 </div>
                             ) : (
-                                <div className="space-y-1.5">
-                                    {uploading && <VersionUploadSkeleton />}
-                                    {orderedVersions.map((version) => {
-                                        const title = versionTitleFor(version);
-                                        const filename =
-                                            versionFilenameFor(version);
-                                        const selected =
-                                            selectedVersionId === version.id;
-                                        const deleted =
-                                            version.deleted_at != null;
-                                        const versionDeleting =
-                                            deletingVersionId === version.id;
-                                        const versionReplacing =
-                                            replacingVersionId === version.id;
-                                        return (
-                                            <div
-                                                key={version.id}
+                                    <div className="space-y-1.5">
+                                        {uploading && <VersionUploadSkeleton />}
+                                        {orderedVersions.map((version) => {
+                                            const title =
+                                                versionTitleFor(version);
+                                            const filename =
+                                                versionFilenameFor(version);
+                                            const selected =
+                                                selectedVersionId ===
+                                                version.id;
+                                            const deleted =
+                                                version.deleted_at != null;
+                                            const versionDeleting =
+                                                deletingVersionId ===
+                                                version.id;
+                                            const versionReplacing =
+                                                replacingVersionId ===
+                                                version.id;
+                                            return (
+                                                <div
+                                                    key={version.id}
                                                 role="button"
                                                 tabIndex={0}
                                                 onClick={() => {
@@ -739,13 +815,14 @@ export function DocumentSidePanel({
                                                         filename,
                                                     );
                                                 }}
-                                                onKeyDown={(event) => {
-                                                    if (deleted) return;
-                                                    if (
-                                                        event.key !== "Enter" &&
-                                                        event.key !== " "
-                                                    )
-                                                        return;
+                                                    onKeyDown={(event) => {
+                                                        if (deleted) return;
+                                                        if (
+                                                            event.key !==
+                                                                "Enter" &&
+                                                            event.key !== " "
+                                                        )
+                                                            return;
                                                     event.preventDefault();
                                                     onSelectVersion(
                                                         version.id,
@@ -754,7 +831,7 @@ export function DocumentSidePanel({
                                                 }}
                                                 aria-disabled={deleted}
                                                 className={cn(
-                                                    "group relative flex w-full flex-col overflow-hidden rounded-lg border border-white/70 bg-white px-3 py-2 shadow-[0_1px_4px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.72)] backdrop-blur-xl transition-all hover:bg-white",
+                                                    `group relative flex w-full flex-col overflow-hidden rounded-lg px-3 py-2 ${LIQUID_GLASS_FLAT_CLASS} ${LIQUID_GLASS_HOVER_CLASS} transition-all`,
                                                     deleted
                                                         ? "cursor-not-allowed opacity-55"
                                                         : "cursor-pointer",
@@ -797,13 +874,14 @@ export function DocumentSidePanel({
                                                               ).toLocaleString()
                                                             : "—"}
                                                     </div>
-                                                    <div
-                                                        className={cn(
-                                                            "flex h-5 shrink-0 items-center gap-0.5 transition-opacity",
-                                                            deleted || selected
-                                                                ? "opacity-100"
-                                                                : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                                                        )}
+                                                        <div
+                                                            className={cn(
+                                                                "flex h-5 shrink-0 items-center gap-0.5 transition-opacity",
+                                                                deleted ||
+                                                                    selected
+                                                                    ? "opacity-100"
+                                                                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                                                            )}
                                                     >
                                                         {deleted ? (
                                                             <span className="text-[11px] font-medium text-gray-800">
@@ -881,7 +959,7 @@ export function DocumentSidePanel({
                                                                     title={
                                                                         canDelete
                                                                             ? "Delete version"
-                                                                            : "Only the document owner can delete versions"
+                                                                            : "Only the person who uploaded this document can delete its versions"
                                                                     }
                                                                 >
                                                                     {versionDeleting ? (
@@ -897,10 +975,11 @@ export function DocumentSidePanel({
                                             </div>
                                         );
                                     })}
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
 
                     {uploadError && (
                         <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-gray-900">
@@ -913,11 +992,40 @@ export function DocumentSidePanel({
                         className={cn(
                             "flex shrink-0 items-center justify-between py-3",
                             "bg-white/25",
+                            // No versions list fills the column, so the
+                            // actions are pinned to the bottom themselves.
+                            readOnly && "mt-auto",
                         )}
                     >
-                        <input
-                            ref={fileInputRef}
-                            type="file"
+                        {readOnly ? (
+                            <>
+                                <PillButtonUI
+                                    tone="white"
+                                    size="normal"
+                                    onClick={() =>
+                                        void onDownloadDocument(doc.id)
+                                    }
+                                    className={onAdd ? undefined : "ml-auto"}
+                                >
+                                    <Download className="h-3.5 w-3.5 shrink-0" />
+                                    Download
+                                </PillButtonUI>
+                                {onAdd && (
+                                    <PillButtonUI
+                                        tone="blue"
+                                        size="normal"
+                                        onClick={() => onAdd(doc)}
+                                    >
+                                        <Plus className="h-3.5 w-3.5 shrink-0" />
+                                        {addLabel}
+                                    </PillButtonUI>
+                                )}
+                            </>
+                        ) : (
+                            <>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
                             accept={newVersionAccept}
                             className="hidden"
                             onChange={handleUpload}
@@ -929,55 +1037,42 @@ export function DocumentSidePanel({
                             className="hidden"
                             onChange={handleReplaceFileInputChange}
                         />
-                        <PillButton
+                        <PillButtonUI
                             tone="danger"
-                            size="sm"
+                            size="normal"
                             onClick={requestDeleteDocument}
                             disabled={deletingDocument}
+                            loading={deletingDocument}
                             className={cn(
-                                "h-8 px-3",
                                 !canDelete &&
                                     "cursor-not-allowed opacity-45 active:scale-100",
                             )}
                             title={
                                 canDelete
                                     ? "Delete document"
-                                    : "Only the document owner can delete this document"
+                                    : "Only the person who uploaded this document can delete it"
                             }
                         >
-                            {deletingDocument ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                            ) : (
-                                <Trash2 className="h-3.5 w-3.5 shrink-0" />
-                            )}
+                            <Trash2 className="h-3.5 w-3.5 shrink-0" />
                             Delete
-                        </PillButton>
-                        <PillButton
-                            tone="blue"
-                            size="sm"
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={uploading}
-                            className="h-8 px-3"
-                        >
-                            {uploading ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                            ) : (
-                                <Upload className="h-3.5 w-3.5 shrink-0" />
-                            )}
-                            Upload new version
-                        </PillButton>
+                        </PillButtonUI>
+                                <PillButtonUI
+                                    tone="blue"
+                                    size="normal"
+                                    onClick={() =>
+                                        fileInputRef.current?.click()
+                                    }
+                                    disabled={uploading}
+                                    loading={uploading}
+                                >
+                                    <Upload className="h-3.5 w-3.5 shrink-0" />
+                                    Upload new version
+                                </PillButtonUI>
+                            </>
+                        )}
                     </div>
                 </aside>
             </div>
-            <WarningPopup
-                open={extensionWarningOpen}
-                onClose={() => setExtensionWarningOpen(false)}
-                message={
-                    selectedExtension
-                        ? `File extensions cannot be changed here. Keep ${selectedExtension} at the end of the name.`
-                        : "File extensions cannot be changed here."
-                }
-            />
             <ConfirmPopup
                 open={replaceConfirmOpen}
                 title="Replace version?"
@@ -998,6 +1093,7 @@ export function DocumentSidePanel({
                 title="Delete document?"
                 message={`${selectedFilename} has ${versions.length} versions. Deleting this document will delete all of its versions.`}
                 confirmLabel="Delete"
+                confirmVariant="danger"
                 confirmStatus={
                     deleteDocumentStatus === "deleting"
                         ? "loading"
@@ -1029,7 +1125,7 @@ function DataRow({ label, value }: { label: string; value: string }) {
 
 function VersionUploadSkeleton() {
     return (
-        <div className="rounded-lg border border-white/70 bg-white px-3 py-2 shadow-[0_1px_4px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.72)]">
+        <div className={`rounded-lg px-3 py-2 ${LIQUID_GLASS_FLAT_CLASS}`}>
             <div className="animate-pulse space-y-2">
                 <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-1 items-center gap-1.5">

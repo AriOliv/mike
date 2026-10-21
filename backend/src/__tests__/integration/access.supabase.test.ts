@@ -20,32 +20,69 @@ maybeDescribe("Supabase access integration", () => {
             auth: { persistSession: false },
         });
         const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const ownerId = crypto.randomUUID();
-        const reviewerId = crypto.randomUUID();
+        const ownerEmail = `owner-${suffix}@example.com`;
+        const reviewerEmail = `reviewer-${suffix}@example.com`;
+        let ownerId = "";
+        let reviewerId = "";
         const sharedProjectId = crypto.randomUUID();
         const privateProjectId = crypto.randomUUID();
         const sharedDocId = crypto.randomUUID();
         const privateDocId = crypto.randomUUID();
 
         try {
+            const owner = await admin.auth.admin.createUser({
+                email: ownerEmail,
+                password: "StackTest1!",
+                email_confirm: true,
+            });
+            if (owner.error || !owner.data.user) {
+                throw owner.error ?? new Error("Could not create owner");
+            }
+            ownerId = owner.data.user.id;
+
+            const reviewer = await admin.auth.admin.createUser({
+                email: reviewerEmail,
+                password: "StackTest1!",
+                email_confirm: true,
+            });
+            if (reviewer.error || !reviewer.data.user) {
+                throw reviewer.error ?? new Error("Could not create reviewer");
+            }
+            reviewerId = reviewer.data.user.id;
+
+            // Sharing is a `project_access_grants` row keyed on lowercase
+            // email. Only the shared project receives a grant.
             const projectsInsert = await admin.from("projects").insert([
                 {
                     id: sharedProjectId,
                     user_id: ownerId,
                     name: `shared-${suffix}`,
-                    shared_with: [`reviewer-${suffix}@example.com`],
                 },
                 {
                     id: privateProjectId,
                     user_id: ownerId,
                     name: `private-${suffix}`,
-                    shared_with: [],
                 },
             ]);
             if (projectsInsert.error) {
                 throw new Error(
                     `Could not seed projects: ${projectsInsert.error.message}`,
                     { cause: projectsInsert.error },
+                );
+            }
+
+            const grantInsert = await admin
+                .from("project_access_grants")
+                .insert({
+                    project_id: sharedProjectId,
+                    email: reviewerEmail,
+                    role: "editor",
+                    created_by: ownerId,
+                });
+            if (grantInsert.error) {
+                throw new Error(
+                    `Could not seed access grant: ${grantInsert.error.message}`,
+                    { cause: grantInsert.error },
                 );
             }
 
@@ -73,7 +110,7 @@ maybeDescribe("Supabase access integration", () => {
             await expect(
                 listAccessibleProjectIds(
                     reviewerId,
-                    `reviewer-${suffix}@example.com`,
+                    reviewerEmail,
                     admin as any,
                 ),
             ).resolves.toContain(sharedProjectId);
@@ -82,7 +119,7 @@ maybeDescribe("Supabase access integration", () => {
                 filterAccessibleDocumentIds(
                     [sharedDocId, privateDocId],
                     reviewerId,
-                    `reviewer-${suffix}@example.com`,
+                    reviewerEmail,
                     admin as any,
                 ),
             ).resolves.toEqual([sharedDocId]);
@@ -92,6 +129,8 @@ maybeDescribe("Supabase access integration", () => {
                 .from("projects")
                 .delete()
                 .in("id", [sharedProjectId, privateProjectId]);
+            if (reviewerId) await admin.auth.admin.deleteUser(reviewerId);
+            if (ownerId) await admin.auth.admin.deleteUser(ownerId);
         }
     });
 });
