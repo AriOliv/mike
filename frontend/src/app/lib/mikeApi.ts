@@ -4611,6 +4611,7 @@ export interface RequestTriage {
     suggested_at?: string;
     decision?: "accepted" | "edited" | "rejected" | null;
     decided_at?: string;
+    decided_by?: string;
 }
 
 export interface LegalRequest {
@@ -4666,6 +4667,7 @@ export interface RequestListItem {
     assignee_id: string | null;
     assignee_name: string | null;
     suggested_assignee_name: string | null;
+    triaged: boolean;
     triage_pending: boolean;
     channel: string;
     project_id: string | null;
@@ -4729,7 +4731,7 @@ export async function assignRequest(id: string, assigneeId: string | null): Prom
 export async function decideRequestTriage(
     id: string,
     body: {
-        decision: "accepted" | "edited" | "rejected";
+        decision: "accepted" | "edited" | "rejected" | "reopened";
         kind?: RequestKind;
         counterparty?: string | null;
         assignee_id?: string | null;

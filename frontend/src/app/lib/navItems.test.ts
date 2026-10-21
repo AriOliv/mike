@@ -4,6 +4,7 @@ import { NAV_MAIN, NAV_MORE, isNavItemActive } from "./navItems";
 describe("navItems", () => {
     it("lists the Legal workstation first, in Portuguese", () => {
         expect(NAV_MAIN.map((item) => item.label)).toEqual([
+            "Pedidos",
             "Esteira",
             "Prazos",
             "Perguntar",
@@ -28,7 +29,7 @@ describe("navItems", () => {
     });
 
     it("marks an item active on its page and the pages under it", () => {
-        const esteira = NAV_MAIN[0];
+        const esteira = NAV_MAIN.find((item) => item.href === "/pipeline")!;
         expect(isNavItemActive(esteira, "/pipeline")).toBe(true);
         expect(isNavItemActive(esteira, "/pipeline/abc")).toBe(true);
         expect(isNavItemActive(esteira, "/pipeline-old")).toBe(false);

@@ -26,6 +26,7 @@ export type NavItem = {
 };
 
 export const NAV_MAIN: readonly NavItem[] = [
+    { href: "/pedidos", label: "Pedidos", icon: "chat" },
     { href: "/pipeline", label: "Esteira", icon: "folder" },
     { href: "/radar", label: "Prazos", icon: "workflow" },
     { href: "/acervo", label: "Perguntar", icon: "library" },

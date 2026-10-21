@@ -71,7 +71,7 @@ export function RequestForm({
             reset();
             onCreated(request);
         } catch (err) {
-            notifyError(err, { action: "send your request", onRetry: () => submit() });
+            notifyError(err, { lang: "pt", action: "enviar seu pedido", onRetry: () => submit() });
         } finally {
             setBusy(false);
         }

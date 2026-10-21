@@ -25,12 +25,12 @@ import {
     formatDate,
     requestPlan,
     slaText,
-    STATUS_LABEL,
-    statusChip,
+    requestChip,
 } from "@/app/lib/requests";
 import { notifyError } from "@/app/lib/userFacingError";
 import { showToast } from "@/app/components/ui/toast";
 import { RequestConversation } from "./RequestConversation";
+import { ExternalChip } from "./ExternalChip";
 import { TriageSuggestion, type TriageDecision } from "./TriageSuggestion";
 
 const FIELD =
@@ -86,7 +86,7 @@ export function RequestPanel({
                 if (!cancelled) setEvents(activity);
             } catch (err) {
                 if (!cancelled)
-                    notifyError(err, { action: "open this request", onRetry: () => setReloadKey((k) => k + 1) });
+                    notifyError(err, { lang: "pt", action: "abrir este pedido", onRetry: () => setReloadKey((k) => k + 1) });
             }
         })();
         return () => {
@@ -94,16 +94,35 @@ export function RequestPanel({
         };
     }, [requestId, reloadKey]);
 
-    async function run(label: string, action: () => Promise<LegalRequest>, done?: string) {
+    /**
+     * Runs a change, refreshes the panel and confirms with a toast. A change
+     * that can be taken back offers Desfazer for 10 s instead of asking first.
+     */
+    async function run(
+        label: string,
+        action: () => Promise<LegalRequest>,
+        done?: string,
+        undo?: () => Promise<LegalRequest>,
+    ) {
         setBusy(label);
         try {
             const updated = await action();
             setRequest(updated);
             if (updated.project_id) setEvents(await getCardActivity(updated.project_id, 30).catch(() => events));
             onChanged();
-            if (done) showToast({ tone: "success", message: done });
+            if (done)
+                showToast({
+                    tone: "success",
+                    message: done,
+                    ...(undo
+                        ? {
+                              durationMs: 10_000,
+                              actions: [{ label: "Desfazer", onClick: () => run("desfazer", undo, "Desfeito.") }],
+                          }
+                        : {}),
+                });
         } catch (err) {
-            notifyError(err, { action: label });
+            notifyError(err, { lang: "pt", action: label });
         } finally {
             setBusy(null);
         }
@@ -124,12 +143,30 @@ export function RequestPanel({
 
     const r = request;
     const open = r.status !== "entregue" && r.status !== "cancelado";
+    const reopen = async () => {
+        const reopened = await decideRequestTriage(r.id, { decision: "reopened" });
+        // The decision may have handed the request to someone: hand it back.
+        if ((reopened.assignee_id ?? null) !== (r.assignee_id ?? null)) return assignRequest(r.id, r.assignee_id ?? null);
+        return reopened;
+    };
     const decide = (d: TriageDecision) =>
         run(
-            "decide the triage",
+            "decidir a triagem",
             () => decideRequestTriage(r.id, d),
             d.decision === "rejected" ? "Triagem recusada." : "Triagem aplicada.",
+            reopen,
         );
+    const assign = (assigneeId: string | null) => {
+        const previous = r.assignee_id ?? null;
+        return run(
+            "trocar o responsável",
+            () => assignRequest(r.id, assigneeId),
+            "Responsável atualizado.",
+            () => assignRequest(r.id, previous),
+        );
+    };
+    const focusAssignee = () => document.getElementById(`assignee-${r.id}`)?.focus();
+    const chip = requestChip(r.status, { triaged: !!r.triage, pending: !!r.triage && !r.triage.decision });
 
     return (
         <DetailPanel
@@ -151,7 +188,7 @@ export function RequestPanel({
                 ) : null
             }
             fields={[
-                { label: "Status", value: <StatusChip status={statusChip(r.status)} label={STATUS_LABEL[r.status]} /> },
+                { label: "Status", value: <StatusChip status={chip.status} label={chip.label} /> },
                 {
                     label: "Prazo",
                     value: `${formatDate(r.due_at)} · ${slaText(r.sla, r.due_at)}`,
@@ -161,13 +198,12 @@ export function RequestPanel({
                     label: "Responsável",
                     value: (
                         <select
+                            id={`assignee-${r.id}`}
                             aria-label="Responsável"
                             className={FIELD + " py-1"}
                             value={r.assignee_id ?? ""}
                             disabled={!open || busy !== null}
-                            onChange={(e) =>
-                                run("assign this request", () => assignRequest(r.id, e.target.value || null), "Responsável atualizado.")
-                            }
+                            onChange={(e) => assign(e.target.value || null)}
                         >
                             <option value="">Sem responsável</option>
                             {team.map((m) => (
@@ -214,13 +250,20 @@ export function RequestPanel({
                             currentKind={r.kind}
                             team={team}
                             canDecide={!!r.can_decide && open}
+                            decidedBy={team.find((m) => m.id === r.triage?.decided_by)?.name}
                             busy={busy === "decide the triage"}
                             onDecide={decide}
+                            onReopen={() => run("reabrir a triagem", reopen, "Triagem reaberta.")}
                         />
                     ) : (
                         <StatusChip status="rodando" label="Fazendo a triagem…" />
                     )}
-                    <AgentPlan className="mt-5" title="Plano" steps={requestPlan(r)} />
+                    <AgentPlan
+                        className="mt-5"
+                        title="Plano"
+                        steps={requestPlan(r)}
+                        onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
+                    />
 
                     <Section title="Conversa com o solicitante">
                         <RequestConversation
@@ -229,7 +272,7 @@ export function RequestPanel({
                             disabled={busy !== null}
                             onSend={(body, kind) =>
                                 run(
-                                    "send the message",
+                                    "enviar a mensagem",
                                     () => postRequestMessage(r.id, body, kind),
                                     kind === "question" ? "Pergunta enviada. O prazo fica pausado." : "Recado enviado.",
                                 )
@@ -252,14 +295,14 @@ export function RequestPanel({
                                             <span className="break-all text-gray-900">{p.email}</span>
                                             <span className="block text-gray-500">
                                                 {p.label ? `${p.label} · ` : ""}
-                                                {p.role === "external" ? "Externo" : "Só acompanha"} · até {formatDate(p.expires_at)}
+                                                {p.role === "external" ? <ExternalChip /> : "Só acompanha"} · até {formatDate(p.expires_at)}
                                             </span>
                                         </div>
                                         <button
                                             type="button"
                                             aria-label={`Remover acesso de ${p.email}`}
                                             onClick={() =>
-                                                run("remove this access", () => revokeRequestParticipant(r.id, p.id), "Acesso removido.")
+                                                run("remover este acesso", () => revokeRequestParticipant(r.id, p.id), "Acesso removido.")
                                             }
                                             className="rounded p-1 text-gray-400 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                                         >
@@ -274,7 +317,7 @@ export function RequestPanel({
                                 onSubmit={(e) => {
                                     e.preventDefault();
                                     void run(
-                                        "invite this person",
+                                        "convidar esta pessoa",
                                         () =>
                                             inviteRequestParticipant(r.id, {
                                                 email: inviteEmail.trim(),
@@ -309,7 +352,7 @@ export function RequestPanel({
                                     Vê só este pedido (status, conversa e entrega), nunca o card nem a carteira. Expira em 90 dias.
                                 </p>
                                 <div className="flex gap-2">
-                                    <PillButtonUI tone="black" size="xs" type="submit" loading={busy === "invite this person"}>
+                                    <PillButtonUI tone="black" size="xs" type="submit" loading={busy === "convidar esta pessoa"}>
                                         Convidar
                                     </PillButtonUI>
                                     <PillButtonUI tone="white" size="xs" onClick={() => setInviteOpen(false)}>
@@ -337,7 +380,7 @@ export function RequestPanel({
                                 onSubmit={(e) => {
                                     e.preventDefault();
                                     void run(
-                                        "deliver this request",
+                                        "entregar este pedido",
                                         () => deliverRequest(r.id, { message: deliverText.trim() }),
                                         "Entregue. Quem pediu recebeu por e-mail.",
                                     ).then(() => setDeliverOpen(false));
@@ -361,7 +404,7 @@ export function RequestPanel({
                                         size="xs"
                                         type="submit"
                                         disabled={!deliverText.trim()}
-                                        loading={busy === "deliver this request"}
+                                        loading={busy === "entregar este pedido"}
                                     >
                                         <Send aria-hidden="true" className="h-3 w-3" />
                                         Pode enviar

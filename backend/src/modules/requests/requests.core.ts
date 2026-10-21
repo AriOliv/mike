@@ -528,6 +528,8 @@ export type RequestListItem = {
     assignee_id: string | null;
     assignee_name: string | null;
     suggested_assignee_name: string | null;
+    /** The triage agent has finished (a suggestion exists, decided or not). */
+    triaged: boolean;
     triage_pending: boolean;
     channel: string;
     project_id: string | null;
@@ -668,6 +670,7 @@ export async function listRequests(
             assignee_id: role ? r.assignee_id : null,
             assignee_name: r.assignee_id ? (nameOf.get(r.assignee_id) ?? null) : null,
             suggested_assignee_name: role && triage && !triage.decision ? (triage.assignee_name ?? null) : null,
+            triaged: !!triage,
             triage_pending: !!role && !!triage && !triage.decision,
             channel: String(r.source?.channel ?? "form"),
             project_id: role ? r.project_id : null,
@@ -823,8 +826,28 @@ export async function decideTriage(
     const triage = row.triage as Record<string, unknown> | null;
     if (!triage) return failure("conflict", "A triagem ainda não terminou.");
     const decision = body.decision;
+    if (decision === "reopened") {
+        // Desfazer: the suggestion goes back to undecided. Values already
+        // applied stay (the assignee has its own undo); the log keeps both.
+        if (!triage.decision) return getTeamView(db, caller, requestId);
+        const { decision: _d, decided_by: _b, decided_at: _a, edited: _e, reject_reason: _r, ...rest } = triage;
+        const reopened = await updateRow(db, row.id, { triage: { ...rest, decision: null } });
+        if (!reopened.ok) return reopened;
+        if (row.project_id) {
+            await recordCardEvent(db, {
+                projectId: row.project_id,
+                orgId: row.org_id,
+                actorType: "user",
+                actorId: caller.userId,
+                actorName: await teamCallerName(db, caller),
+                action: "triage.reopened",
+                before: { decision: triage.decision },
+            });
+        }
+        return getTeamView(db, caller, requestId);
+    }
     if (decision !== "accepted" && decision !== "edited" && decision !== "rejected") {
-        return failure("validation", "decision must be accepted, edited or rejected");
+        return failure("validation", "decision must be accepted, edited, rejected or reopened");
     }
 
     const applied: Record<string, unknown> = {};

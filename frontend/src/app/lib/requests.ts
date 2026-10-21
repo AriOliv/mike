@@ -36,19 +36,31 @@ export const STATUS_LABEL: Record<RequestStatus, string> = {
     cancelado: "Cancelado",
 };
 
-/** The StatusChip state each request status reads as. */
-export function statusChip(status: RequestStatus): "a_fazer" | "rodando" | "em_andamento" | "bloqueado" | "concluido" {
+export type RequestChip = {
+    status: "a_fazer" | "rodando" | "pronto" | "em_andamento" | "aguardando" | "concluido";
+    label: string;
+};
+
+/**
+ * How a request's state reads on a StatusChip. "rodando" only while the
+ * triage agent is actually working; once its suggestion waits for a person
+ * it is "pronto". Waiting on the requester is amber "aguardando", never red:
+ * it is not the team's problem.
+ */
+export function requestChip(status: RequestStatus, triage: { triaged: boolean; pending: boolean }): RequestChip {
     switch (status) {
         case "novo":
-            return "a_fazer";
+            return { status: "a_fazer", label: STATUS_LABEL.novo };
         case "em_triagem":
-            return "rodando";
+            if (triage.pending) return { status: "pronto", label: "Triagem pronta" };
+            if (triage.triaged) return { status: "em_andamento", label: STATUS_LABEL.em_triagem };
+            return { status: "rodando", label: "Fazendo a triagem…" };
         case "em_andamento":
-            return "em_andamento";
+            return { status: "em_andamento", label: STATUS_LABEL.em_andamento };
         case "aguardando_solicitante":
-            return "bloqueado";
+            return { status: "aguardando", label: STATUS_LABEL.aguardando_solicitante };
         default:
-            return "concluido";
+            return { status: "concluido", label: STATUS_LABEL[status] };
     }
 }
 
@@ -71,9 +83,9 @@ export function stepIndex(step: RequesterStep): number {
     return STEP_LABELS.findIndex((s) => s.step === step);
 }
 
-/** "vence em 2 d", "vence hoje", "atrasado 1 d", "pausado", "encerrado". */
+/** "vence em 2 d", "vence em 5 h", "atrasado 1 d", "pausado", "encerrado". */
 export function slaText(sla: RequestSla, dueAt: string, now: number = Date.now()): string {
-    if (sla === "pausado") return "pausado · aguardando resposta";
+    if (sla === "pausado") return "pausado";
     if (sla === "encerrado") return "encerrado";
     const ms = Date.parse(dueAt) - now;
     const hours = Math.round(Math.abs(ms) / 3_600_000);

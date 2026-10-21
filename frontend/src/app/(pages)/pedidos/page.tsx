@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Diamond, Inbox, Plus, Users } from "lucide-react";
+import { Diamond, Inbox, Plus } from "lucide-react";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { StatTiles } from "@/app/components/ui/stat-tiles";
 import { StatusChip } from "@/app/components/ui/status-chip";
@@ -24,6 +24,7 @@ import {
 import { RequestForm } from "@/app/components/requests/RequestForm";
 import { RequestPanel } from "@/app/components/requests/RequestPanel";
 import { RequestSteps } from "@/app/components/requests/RequestSteps";
+import { ExternalChip } from "@/app/components/requests/ExternalChip";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { listRequests, type RequestList, type RequestListItem } from "@/app/lib/mikeApi";
 import {
@@ -33,8 +34,7 @@ import {
     slaText,
     slaTone,
     sortQueue,
-    STATUS_LABEL,
-    statusChip,
+    requestChip,
     type QueueFilter,
     type QueueTab,
 } from "@/app/lib/requests";
@@ -73,7 +73,8 @@ export default function PedidosPage() {
                 if (cancelled) return;
                 setFailed(true);
                 notifyError(err, {
-                    action: "load the requests",
+                    lang: "pt",
+                    action: "carregar os pedidos",
                     onRetry: () => setReloadKey((k) => k + 1),
                     dedupeKey: "requests-list",
                 });
@@ -346,6 +347,11 @@ export default function PedidosPage() {
     );
 }
 
+function RowChip({ item }: { item: RequestListItem }) {
+    const chip = requestChip(item.status, { triaged: item.triaged, pending: item.triage_pending });
+    return <StatusChip status={chip.status} label={chip.label} />;
+}
+
 function stepOf(item: RequestListItem) {
     if (item.status === "entregue" || item.status === "cancelado") return "concluido" as const;
     if (item.status === "novo" || item.status === "em_triagem") return "recebido" as const;
@@ -382,9 +388,7 @@ function QueueRow({
                     {item.external ? (
                         <>
                             {" · "}
-                            <span className="inline-flex items-center gap-0.5 text-gray-600">
-                                <Users aria-hidden="true" className="h-3 w-3" /> Externo
-                            </span>
+                            <ExternalChip />
                         </>
                     ) : null}
                 </span>
@@ -395,7 +399,7 @@ function QueueRow({
                 {slaText(item.sla, item.due_at)}
             </TableCell>
             <TableCell className="w-44">
-                <StatusChip status={statusChip(item.status)} label={STATUS_LABEL[item.status]} />
+                <RowChip item={item} />
             </TableCell>
             <TableCell className="w-48">
                 {item.assignee_name ? (

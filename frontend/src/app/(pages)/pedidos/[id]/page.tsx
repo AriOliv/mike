@@ -41,7 +41,7 @@ export default function PedidoPage({ params }: Props) {
             .catch((err) => {
                 if (cancelled) return;
                 if (err instanceof MikeApiError && err.status === 404) setMissing(true);
-                else notifyError(err, { action: "open this request", onRetry: () => setReloadKey((k) => k + 1) });
+                else notifyError(err, { lang: "pt", action: "abrir este pedido", onRetry: () => setReloadKey((k) => k + 1) });
             });
         return () => {
             cancelled = true;
@@ -172,7 +172,7 @@ export default function PedidoPage({ params }: Props) {
                                 try {
                                     setRequest(await postRequestMessage(r.id, body));
                                 } catch (err) {
-                                    notifyError(err, { action: "send your answer" });
+                                    notifyError(err, { lang: "pt", action: "enviar sua resposta" });
                                     throw err;
                                 }
                             }}

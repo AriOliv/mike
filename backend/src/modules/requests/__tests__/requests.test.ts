@@ -375,6 +375,18 @@ describe("the team works the request", () => {
         ]);
     });
 
+    it("reopens a decided triage (Desfazer) and logs it", async () => {
+        const w = world();
+        const view = await triaged(w);
+        expect(await decideTriage(w.db, HEAD, view.id, { decision: "reopened" })).toMatchObject({ ok: true });
+        await decideTriage(w.db, HEAD, view.id, { decision: "rejected", reason: "duplicado" });
+        const reopened = await decideTriage(w.db, HEAD, view.id, { decision: "reopened" });
+        expect(reopened).toMatchObject({ ok: true, data: { triage: { decision: null } } });
+        if (!reopened.ok) return;
+        expect(reopened.data.triage).not.toHaveProperty("reject_reason");
+        expect(w.table("card_events").at(-1)).toMatchObject({ action: "triage.reopened", before: { decision: "rejected" } });
+    });
+
     it("editing applies the Head's values instead of the agent's", async () => {
         const w = world();
         const view = await triaged(w);

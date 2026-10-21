@@ -7,7 +7,7 @@ import {
     slaText,
     slaTone,
     sortQueue,
-    statusChip,
+    requestChip,
     stepIndex,
 } from "./requests";
 
@@ -29,6 +29,7 @@ function item(over: Partial<RequestListItem>): RequestListItem {
         assignee_id: null,
         assignee_name: null,
         suggested_assignee_name: null,
+        triaged: false,
         triage_pending: false,
         channel: "form",
         project_id: "p",
@@ -69,17 +70,21 @@ function request(over: Partial<LegalRequest>): LegalRequest {
 
 describe("words", () => {
     it("maps statuses onto chips and steps onto positions", () => {
-        expect(statusChip("novo")).toBe("a_fazer");
-        expect(statusChip("em_triagem")).toBe("rodando");
-        expect(statusChip("em_andamento")).toBe("em_andamento");
-        expect(statusChip("aguardando_solicitante")).toBe("bloqueado");
-        expect(statusChip("entregue")).toBe("concluido");
+        const none = { triaged: false, pending: false };
+        expect(requestChip("novo", none)).toEqual({ status: "a_fazer", label: "Novo" });
+        expect(requestChip("em_triagem", none)).toEqual({ status: "rodando", label: "Fazendo a triagem…" });
+        expect(requestChip("em_triagem", { triaged: true, pending: true })).toEqual({ status: "pronto", label: "Triagem pronta" });
+        expect(requestChip("em_triagem", { triaged: true, pending: false })).toEqual({ status: "em_andamento", label: "Em triagem" });
+        expect(requestChip("em_andamento", none)).toEqual({ status: "em_andamento", label: "Em análise" });
+        expect(requestChip("aguardando_solicitante", none)).toEqual({ status: "aguardando", label: "Aguardando solicitante" });
+        expect(requestChip("entregue", none)).toEqual({ status: "concluido", label: "Entregue" });
+        expect(requestChip("cancelado", none)).toEqual({ status: "concluido", label: "Cancelado" });
         expect(stepIndex("assinatura")).toBe(2);
         expect(formatDate("2026-10-21T01:00:00Z")).toBe("20/10/2026");
     });
 
     it("says how the SLA stands in a few words", () => {
-        expect(slaText("pausado", "", now)).toBe("pausado · aguardando resposta");
+        expect(slaText("pausado", "", now)).toBe("pausado");
         expect(slaText("encerrado", "", now)).toBe("encerrado");
         expect(slaText("no_prazo", "2026-10-22T12:00:00Z", now)).toBe("vence em 2 d");
         expect(slaText("estourando", "2026-10-20T17:00:00Z", now)).toBe("vence em 5 h");
