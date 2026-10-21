@@ -4558,27 +4558,88 @@ export async function updatePipelineCard(
     });
 }
 
-// ── Acervo: questions across the whole corpus ───────────────────────────────
+// ── Acervo ("Perguntar"): questions across the whole corpus ────────────────
 export interface AcervoSource {
+    /** The inline marker number used in the answer: [n]. */
+    n: number;
     project_id: string | null;
+    document_id: string | null;
     contract: string;
     ref: string | null;
+    quote: string;
+    /** The quote was found in the contract text by the server, not just claimed. */
+    verified: boolean;
+    start_char: number | null;
+    end_char: number | null;
+}
+
+/** Why a contract's row reads hit/miss: read in depth, found by the search,
+ * still being indexed, or left out by the search budget. */
+export type AcervoMatchBasis = "lido" | "busca" | "pendente" | "nao_buscado";
+
+export interface AcervoMatch {
+    project_id: string;
+    contract: string;
+    counterparty: string | null;
+    contract_type: string | null;
+    hit: boolean;
     quote: string | null;
+    verified: boolean;
+    basis: AcervoMatchBasis;
+}
+
+export interface AcervoCoverage {
+    total_versions: number;
+    indexed_versions: number;
+    pending_versions: number;
+    failed_versions: number;
+    versions_needing_ocr: number;
+    contracts_pending: number;
+    contracts_not_searched: number;
+}
+
+export interface AcervoLawSource {
+    n: number;
+    title: string;
+    url: string;
+    quote: string;
+    verified: boolean;
 }
 
 export interface AcervoAnswer {
     answer: string;
+    /** True only when at least one source was verified in the text. */
     found: boolean;
     sources: AcervoSource[];
     /** how many contracts were actually read to produce the answer */
     searched: number;
+    total: number;
+    matches: AcervoMatch[];
+    /** The question asks for a list or a count. */
+    aggregate: boolean;
+    coverage: AcervoCoverage;
+    terms: string[];
+    /** A configured search service can look up official legislation. */
+    law_available: boolean;
+    law_sources: AcervoLawSource[];
 }
 
-export async function askAcervo(question: string): Promise<AcervoAnswer> {
+export type AcervoScope =
+    | "todos"
+    | { counterparty?: string; contract_type?: string; project_ids?: string[] };
+
+export async function askAcervo(
+    question: string,
+    options: { scope?: AcervoScope; includeLaw?: boolean } = {},
+): Promise<AcervoAnswer> {
     return apiRequest("/acervo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({
+            question,
+            ...(options.scope ? { scope: options.scope } : {}),
+            ...(options.includeLaw ? { include_law: true } : {}),
+        }),
     });
 }
 

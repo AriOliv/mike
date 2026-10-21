@@ -82,6 +82,19 @@ describe("acervo and contract analysis", () => {
         expect(jsonBody()).toEqual({ question: "foro?" });
     });
 
+    it("sends the scope and the legislation flag only when given", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ answer: "", found: false, sources: [], searched: 0 }));
+        await askAcervo("foro?", { scope: { counterparty: "Acme" }, includeLaw: true });
+        expect(jsonBody()).toEqual({
+            question: "foro?",
+            scope: { counterparty: "Acme" },
+            include_law: true,
+        });
+
+        await askAcervo("foro?", { scope: "todos", includeLaw: false });
+        expect(jsonBody()).toEqual({ question: "foro?", scope: "todos" });
+    });
+
     it("reads and extracts a contract's terms", async () => {
         fetchMock.mockResolvedValue(jsonResponse(null));
         await expect(getContractTerms("p1")).resolves.toBeNull();
