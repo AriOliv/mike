@@ -53,6 +53,10 @@ type TokenRow = {
 const COLUMNS =
     "id, org_id, user_id, kind, name, token_prefix, scopes, expires_at, revoked_at, last_used_at, last_client, can_act_as, created_at";
 
+// A token is randomBytes(32), 256 bits, not a password a person chose: a fast
+// hash is the standard for high-entropy secrets (as GitHub and Stripe do), and
+// bcrypt/argon2 would add nothing. CodeQL's insufficient-password-hash is a
+// false positive here, dismissed as such (reviewed by the Legal Manager).
 export function hashToken(token: string): string {
     return crypto.createHash("sha256").update(token, "utf8").digest("hex");
 }
