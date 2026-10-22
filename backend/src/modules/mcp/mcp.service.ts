@@ -2,6 +2,13 @@
 // the personal access tokens behind it, and the tool contract other modules
 // implement (McpTool, McpContext). Other modules import only from here.
 
+// FIRST, before anything that loads the catalog: the catalog imports the
+// facades of the modules that publish tools, and they import defineTool from
+// here. Exporting it ahead of that cycle keeps it defined whichever side
+// loads first.
+export { DEFAULT_SCOPES, MCP_SCOPES, defineTool } from "./mcp.types";
+export type { AnyMcpTool, McpContext, McpRole, McpScope, McpTool, McpToolAnnotations } from "./mcp.types";
+
 import type { Db } from "../../lib/supabase";
 import { ok, type ServiceResult } from "../../lib/serviceResult";
 import { buildContext, cleanClientName } from "./mcp.context";
@@ -11,8 +18,6 @@ import type { McpContext } from "./mcp.types";
 export { buildServer, SERVER_INFO } from "./mcp.server";
 export { createAccessToken, listAccessTokens, revokeAccessToken } from "./mcp.tokens";
 export type { AccessTokenView } from "./mcp.tokens";
-export { DEFAULT_SCOPES, MCP_SCOPES, defineTool } from "./mcp.types";
-export type { AnyMcpTool, McpContext, McpRole, McpScope, McpTool, McpToolAnnotations } from "./mcp.types";
 
 const REJECTION_MESSAGE: Record<TokenRejection, string> = {
     missing: "Envie o token de acesso do Mike no cabeçalho Authorization: Bearer.",
