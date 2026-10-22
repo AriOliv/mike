@@ -11919,6 +11919,43 @@ grant select, insert, update, delete on public.contract_analyses, public.contrac
   to service_role;
 
 
+-- ── Fork: a deadline says what it is and where it stands (20261023_90) ──
+alter table public.obligations
+  add column if not exists kind text not null default 'manual',
+  add column if not exists status text not null default 'aberto';
+
+alter table public.obligations drop constraint if exists obligations_kind_check;
+alter table public.obligations
+  add constraint obligations_kind_check
+  check (kind in ('vigencia', 'aviso_previo', 'renovacao', 'manual'));
+
+alter table public.obligations drop constraint if exists obligations_status_check;
+alter table public.obligations
+  add constraint obligations_status_check
+  check (status in ('aberto', 'feito', 'dispensado'));
+
+-- Rows already marked done are done; the renewal ones created by the terms
+-- extraction get their kind from their title.
+update public.obligations set status = 'feito' where done and status = 'aberto';
+update public.obligations set kind = 'aviso_previo'
+  where origin = 'renewal' and kind = 'manual' and mark = 'critico';
+update public.obligations set kind = 'renovacao'
+  where origin = 'renewal' and kind = 'manual' and mark = 'tarefa';
+
+-- An old concurrent extraction could leave two generated rows of one kind;
+-- keep the newest of each (only generated rows, never a hand-made one) so the
+-- unique index below can be built.
+delete from public.obligations o
+  using public.obligations newer
+  where o.origin = 'renewal' and newer.origin = 'renewal'
+    and o.project_id = newer.project_id and o.kind = newer.kind
+    and (o.created_at, o.id) < (newer.created_at, newer.id);
+
+-- One generated deadline per kind per contract; hand-made ones are free.
+create unique index if not exists uq_obligations_generated_kind
+  on public.obligations(project_id, kind)
+  where origin = 'renewal' and project_id is not null;
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12100,5 +12137,6 @@ insert into public.schema_migrations (filename) values
   ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
   ('20261022_97_card_events_cascade.sql'),
-  ('20261022_98_obligation_owner.sql')
+  ('20261022_98_obligation_owner.sql'),
+  ('20261023_90_obligation_kind_status.sql')
 on conflict (filename) do nothing;

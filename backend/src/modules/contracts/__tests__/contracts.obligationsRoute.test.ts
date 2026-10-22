@@ -8,6 +8,8 @@ const contracts = vi.hoisted(() => ({
     createObligation: vi.fn(),
     updateObligation: vi.fn(),
     deleteObligation: vi.fn(),
+    obligationIcs: vi.fn(),
+    listContractAlerts: vi.fn(),
 }));
 vi.mock("../contracts.service", () => contracts);
 const requests = vi.hoisted(() => ({ listLegalTeamMembers: vi.fn(), whoAmI: vi.fn() }));
@@ -21,11 +23,12 @@ vi.mock("../../../middleware/auth", () => ({
     },
 }));
 
-import { obligationsRouter } from "../contracts.routes";
+import { obligationsRouter, projectContractRouter } from "../contracts.routes";
 
 const app = express();
 app.use(express.json());
 app.use("/obligations", obligationsRouter);
+app.use("/projects/:projectId", projectContractRouter);
 
 const caller = { userId: "u1", userEmail: "ana@avenia.io" };
 const team = (...emails: string[]) => ({ ok: true, data: emails.map((email) => ({ user_id: email, email, name: email })) });
@@ -77,3 +80,30 @@ describe("/obligations owners and alerts", () => {
         expect(contracts.createObligation).toHaveBeenCalledWith({}, caller, expect.anything(), { members: [] });
     });
 });
+
+describe("a deadline as a calendar file", () => {
+    it("downloads as an .ics, never rendered in the page", async () => {
+        contracts.obligationIcs.mockResolvedValue({ ok: true, data: { filename: "prazo-2026-12-31.ics", body: "BEGIN:VCALENDAR\r\n" } });
+        const res = await request(app).get("/obligations/o1/ics").expect(200);
+        expect(res.headers["content-type"]).toContain("text/calendar");
+        expect(res.headers["content-disposition"]).toBe('attachment; filename="prazo-2026-12-31.ics"');
+        expect(res.text).toBe("BEGIN:VCALENDAR\r\n");
+        expect(contracts.obligationIcs).toHaveBeenCalledWith({}, caller, "o1");
+    });
+
+    it("answers 404 in Portuguese for a deadline the caller cannot see", async () => {
+        contracts.obligationIcs.mockResolvedValue({ ok: false, kind: "not_found", detail: "Não encontrei este prazo." });
+        const res = await request(app).get("/obligations/o1/ics").expect(404);
+        expect(JSON.stringify(res.body)).toContain("Não encontrei este prazo.");
+    });
+});
+
+describe("the contract's alerts", () => {
+    it("lists a contract's deadlines for whoever can open it", async () => {
+        contracts.listContractAlerts.mockResolvedValue({ ok: true, data: [{ id: "o1", days_left: 3 }] });
+        const res = await request(app).get("/projects/p1/alerts").expect(200);
+        expect(res.body).toEqual([{ id: "o1", days_left: 3 }]);
+        expect(contracts.listContractAlerts).toHaveBeenCalledWith({}, caller, "p1");
+    });
+});
+

@@ -26,7 +26,9 @@ import {
     getContractTerms,
     getDossier,
     integrationStatus,
+    listContractAlerts,
     listObligationAlerts,
+    obligationIcs,
     listObligations,
     listCardEvents,
     listPipeline,
@@ -135,6 +137,19 @@ obligationsRouter.post(
     }),
 );
 
+// One deadline as a calendar file ("criar evento"); before "/:id".
+obligationsRouter.get(
+    "/:id/ics",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const result = await obligationIcs(createServerSupabase(), caller(res), req.params.id);
+        if (!result.ok) return void sendServiceFailure(res, result);
+        res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${result.data.filename}"`);
+        res.send(result.data.body);
+    }),
+);
+
 obligationsRouter.patch(
     "/:id",
     requireAuth,
@@ -197,6 +212,15 @@ projectContractRouter.get(
         res.setHeader("Content-Type", result.data.contentType);
         res.setHeader("Content-Disposition", `inline; filename="${result.data.filename}"`);
         res.send(result.data.bytes);
+    }),
+);
+
+// Every deadline of the contract: the tab inside it.
+projectContractRouter.get(
+    "/alerts",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await listContractAlerts(createServerSupabase(), caller(res), req.params.projectId));
     }),
 );
 

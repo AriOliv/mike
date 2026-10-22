@@ -41,6 +41,8 @@ const ob = (over: Partial<Obligation> = {}): Obligation => ({
     source_quote: null,
     owner_email: null,
     alert_days: 30,
+    kind: "manual",
+    status: "aberto",
     ...over,
 });
 const alertOf = (over: Partial<ObligationAlert> = {}): ObligationAlert => ({ ...ob(), days_left: 10, ...over });
