@@ -35,6 +35,7 @@ import {
     type ResourcePeopleResult,
 } from "../../lib/resourcePeople";
 import { attachActiveVersionPaths } from "../../lib/documentVersions";
+import { chunkArray } from "../../lib/arrays";
 import { TABULAR_MODEL_REQUIRED_DETAIL } from "../../lib/modelSelection";
 import { failure, internalFailure } from "../../lib/serviceResult";
 import {
@@ -50,6 +51,7 @@ import {
     type SourceDocument,
 } from "./tabular.rows";
 import {
+    CELL_ID_BATCH_SIZE,
     isReviewGenerationRunning,
     modelFailure,
     parseCellContent,
@@ -304,11 +306,11 @@ export async function syncCellsForReviewRows(
     const staleCellIds = (cells ?? [])
         .filter((cell) => !activeColumnIndexes.has(cell.column_index))
         .map((cell) => cell.id);
-    if (staleCellIds.length) {
+    for (const batch of chunkArray(staleCellIds, CELL_ID_BATCH_SIZE)) {
         const { error } = await db
             .from("tabular_cells")
             .delete()
-            .in("id", staleCellIds);
+            .in("id", batch);
         if (error) throw new Error(error.message);
     }
 
