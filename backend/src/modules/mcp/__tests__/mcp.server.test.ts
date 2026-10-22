@@ -72,19 +72,23 @@ describe("/mcp over HTTP", () => {
             "mike_quem_sou",
             "mike_contratos_buscar",
             "mike_contratos_ficha",
+            "mike_revisao_listar",
+            "mike_revisao_ler",
             "mike_contratos_documento",
             "mike_contratos_atividade",
             "mike_prazos_proximos",
             "mike_base_perguntar",
             "mike_radar_mudancas",
             "mike_radar_contratos_afetados",
+            "mike_controle_listar",
+            "mike_controle_ler",
         ]);
         for (const t of tools) expect(t.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
 
         const r = await client.callTool({ name: "mike_quem_sou", arguments: {} });
         expect(r.isError).toBeFalsy();
         expect(r.structuredContent).toMatchObject({ nome: "Ana Teste", email: "ana@exemplo.test", papel: "team", workspace: "personal", cliente: "claude-code" });
-        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 9 ferramentas disponíveis.");
+        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 13 ferramentas disponíveis.");
         expect(tables.mcp_access_tokens[0].last_client).toBe("claude-code");
 
         expect(audit.recordAudit).toHaveBeenCalledWith(
