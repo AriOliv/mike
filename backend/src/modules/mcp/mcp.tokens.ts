@@ -50,6 +50,10 @@ type TokenRow = {
 const COLUMNS =
     "id, org_id, user_id, kind, name, token_prefix, scopes, expires_at, revoked_at, last_used_at, last_client, created_at";
 
+// A token is randomBytes(32), 256 bits, not a password a person chose: a fast
+// hash is the standard for high-entropy secrets (as GitHub and Stripe do), and
+// bcrypt/argon2 would add nothing. CodeQL's insufficient-password-hash is a
+// false positive here, dismissed as such (reviewed by the Legal Manager).
 export function hashToken(token: string): string {
     return crypto.createHash("sha256").update(token, "utf8").digest("hex");
 }
@@ -110,6 +114,20 @@ export async function createAccessToken(
     const days = body.expires_in_days === undefined ? DEFAULT_DAYS : Number(body.expires_in_days);
     if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS)
         return failure("validation", `A validade vai de 1 a ${MAX_DAYS} dias.`);
+
+    // A token reads contracts outside the browser: it never comes from an
+    // account protected by a password alone. The route has already asked for
+    // the second factor of whoever enrolled one (requireMfaIfEnrolled); this
+    // refuses the accounts that have none.
+    const { data: account, error: accountError } = await db.auth.admin.getUserById(caller.userId);
+    if (accountError) return internalFailure(accountError);
+    const hasTotp = (account.user?.factors ?? []).some((f) => f.factor_type === "totp" && f.status === "verified");
+    if (!hasTotp)
+        return failure(
+            "forbidden",
+            "Ative a verificação em duas etapas em Configurações → Segurança para criar um token de acesso.",
+            "mfa_enrollment_required",
+        );
 
     let workspace: WorkspaceFilter;
     try {

@@ -38,6 +38,12 @@ const TABS: SettingsShellTab[] = [
         href: "/settings/byok",
     },
     { id: "connectors", label: "Connectors", href: "/settings/connectors" },
+    // Personal tokens for Claude Code, Codex and other agents (MCP, doc 09).
+    {
+        id: "agent-tokens",
+        label: "Tokens para agentes",
+        href: "/settings/agent-tokens",
+    },
     // The organizations the person belongs to, and their invitations. Each
     // organization's own settings are a separate area, opened from here or
     // from the account menu.

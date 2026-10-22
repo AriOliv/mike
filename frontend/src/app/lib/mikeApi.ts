@@ -5704,3 +5704,59 @@ export async function setLegalAgentChannelStatus(
 export async function deleteLegalAgentChannel(orgId: string, channelId: string): Promise<{ deleted: true }> {
     return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}`), { method: "DELETE" });
 }
+
+// ── Tokens de acesso para agentes (MCP, doc 09 §3.1) ────────────────────────
+
+/** What a token may do; the backend's MCP_SCOPES. */
+export type McpScope =
+    | "contratos:read"
+    | "prazos:read"
+    | "base:ask"
+    | "revisao:read"
+    | "revisao:run"
+    | "controle:read"
+    | "controle:run"
+    | "radar:read"
+    | "painel:read"
+    | "pedidos:read"
+    | "pedidos:write"
+    | "agente:config";
+
+export interface McpAccessToken {
+    id: string;
+    name: string;
+    kind: "pessoal" | "servico";
+    /** "personal" or an organization id. */
+    workspace: string;
+    /** The first characters, to recognise a token without showing it. */
+    prefix: string;
+    scopes: McpScope[];
+    expires_at: string;
+    revoked_at: string | null;
+    last_used_at: string | null;
+    last_client: string | null;
+    created_at: string;
+}
+
+export async function listMcpTokens(): Promise<McpAccessToken[]> {
+    const data = await apiRequest<{ tokens: McpAccessToken[] }>("/mcp-tokens");
+    return data.tokens;
+}
+
+/** The plain token comes back here, once, and is never readable again. */
+export async function createMcpToken(body: {
+    name: string;
+    workspace: string;
+    scopes: McpScope[];
+    expires_in_days: number;
+}): Promise<{ token: string; access_token: McpAccessToken }> {
+    return apiRequest("/mcp-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export async function revokeMcpToken(id: string): Promise<McpAccessToken> {
+    return apiRequest(`/mcp-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+}

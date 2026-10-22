@@ -27,7 +27,9 @@ export async function buildContext(
         db,
         caller,
         displayName: token.displayName,
-        role: who.data.role,
+        // No Legal team configured: the screens keep the whole menu (nobody is
+        // narrowed to a requester), so the agent reads like the team does.
+        role: who.data.configured ? who.data.role : "team",
         workspace: token.orgId ?? PERSONAL_WORKSPACE,
         scopes: token.scopes,
         clientName,
