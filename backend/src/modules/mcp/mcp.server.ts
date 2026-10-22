@@ -11,7 +11,7 @@ import { recordAudit } from "../../lib/audit";
 import { recordAgentRead } from "../contracts/contracts.service";
 import { failure, type ServiceFailure } from "../../lib/serviceResult";
 import { consume, propose } from "./mcp.confirm";
-import { catalogTools } from "./mcp.catalog";
+import { catalogTools, WRITE_TOOLS_ENABLED } from "./mcp.catalog";
 import type { AnyMcpTool, McpContext } from "./mcp.types";
 
 export const SERVER_INFO = { name: "mike", version: "1.0.0" } as const;
@@ -77,8 +77,10 @@ export async function runTool(tool: AnyMcpTool, ctx: McpContext, input: Record<s
         if (!allowed(tool, ctx)) {
             code = "forbidden";
             result = errorResult(code, "Este token não pode usar esta ferramenta.");
-        } else if (tool.access === "write" && !tool.confirm) {
-            // Every write that changes relevant state is confirmed by the person (doc 09 §6).
+        } else if (tool.access === "write" && (!tool.confirm || !WRITE_TOOLS_ENABLED.has(tool.name))) {
+            // Every write that changes relevant state is confirmed by the person
+            // (doc 09 §6), and only the writes switched on by name ever run, even
+            // when called here directly rather than through the catalog.
             code = "forbidden";
             result = errorResult(code, "Esta ação precisa de confirmação e ainda não está liberada pelo MCP.");
         } else {
