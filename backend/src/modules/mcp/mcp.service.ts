@@ -33,7 +33,7 @@ function clientNameOf(body: unknown, lastClient: string | null, userAgent: strin
     return cleanClientName(userAgent?.split(/[\s/]/)[0]);
 }
 
-export type McpAuthFailure = { status: 401 | 403; message: string };
+export type McpAuthFailure = { status: 400 | 401 | 403; message: string };
 
 /**
  * Authenticates one /mcp call and builds the context its tools run with.
@@ -42,9 +42,23 @@ export type McpAuthFailure = { status: 401 | 403; message: string };
  */
 export async function openMcpCall(
     db: Db,
-    input: { authorization: string | undefined; body: unknown; userAgent: string | undefined },
+    input: {
+        authorization: string | undefined;
+        body: unknown;
+        userAgent: string | undefined;
+        /** X-Mike-Acting-User. Never honoured on a personal token (doc 09 §3.2). */
+        actingUser?: string | undefined;
+    },
     now: Date = new Date(),
 ): Promise<ServiceResult<McpContext> | { ok: false; kind: "auth"; auth: McpAuthFailure }> {
+    // A personal token acts only as its owner. Ignoring the header would let
+    // a bot believe it is acting for someone else while it acts as the owner.
+    if (input.actingUser !== undefined)
+        return {
+            ok: false,
+            kind: "auth",
+            auth: { status: 400, message: "X-Mike-Acting-User só vale com um token de serviço autorizado a agir em nome de outra pessoa." },
+        };
     const auth = await authenticateToken(db, input.authorization, now);
     if (!auth.ok) {
         return {

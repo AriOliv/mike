@@ -8,7 +8,7 @@ import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serv
 import { PERSONAL_WORKSPACE, resolveWorkspaceFilter, type WorkspaceFilter } from "../../lib/workspace";
 import { DEFAULT_SCOPES, MCP_SCOPES, type McpScope } from "./mcp.types";
 
-const PREFIX = { pessoal: "mike_pat_", agente: "mike_agt_" } as const;
+const PREFIX = { pessoal: "mike_pat_", servico: "mike_svc_" } as const;
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 90;
 const MAX_ACTIVE_PER_USER = 20;
@@ -207,6 +207,8 @@ export async function authenticateToken(
 ): Promise<{ ok: true; token: ResolvedToken } | { ok: false; reason: TokenRejection }> {
     const raw = bearer?.startsWith("Bearer ") ? bearer.slice(7).trim() : "";
     if (!raw) return { ok: false, reason: "missing" };
+    // Service tokens (act_as, doc 09 §3.2) are refused until the confirmed
+    // chat identity link, the per-person limit and their audit ship.
     if (!raw.startsWith(PREFIX.pessoal)) return { ok: false, reason: "invalid" };
 
     const { data, error } = await db

@@ -44,6 +44,7 @@ mcpRouter.post(
             authorization: req.get("authorization"),
             body: req.body,
             userAgent: req.get("user-agent"),
+            actingUser: req.get("x-mike-acting-user"),
         });
         if (!opened.ok) {
             if (opened.kind === "auth") {

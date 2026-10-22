@@ -2,9 +2,12 @@
 -- Access tokens for agents calling the Mike MCP server (/mcp), doc 09 §3.
 --
 -- A token always acts for a person. kind 'pessoal' acts as its owner
--- (user_id); kind 'agente' (Hermes, phase 2) acts as the org member named on
--- each call. org_id is the workspace the token reads: the same filter the
--- home screen applies, null for the personal workspace.
+-- (user_id). kind 'servico' (a bot such as Hermes, doc 09 §3.2) belongs to
+-- one org, is created by an owner/admin (user_id), and acts as the org member
+-- whose CONFIRMED chat identity link the call names, and only when can_act_as
+-- was granted explicitly. A personal token can never act as anyone else.
+-- org_id is the workspace the token reads: the same filter the home screen
+-- applies, null for the personal workspace.
 --
 -- Only the SHA-256 of the token is stored; the plain token is shown once at
 -- creation. Revoking stamps revoked_at and never deletes, so the audit trail
@@ -24,8 +27,13 @@ create table if not exists public.mcp_access_tokens (
   revoked_at timestamptz,
   last_used_at timestamptz,
   last_client text,
+  can_act_as boolean not null default false,
   created_at timestamptz not null default now(),
-  constraint mcp_access_tokens_kind_check check (kind in ('pessoal', 'agente')),
+  constraint mcp_access_tokens_kind_check check (kind in ('pessoal', 'servico')),
+  constraint mcp_access_tokens_act_as_check
+    check (not can_act_as or (kind = 'servico' and org_id is not null)),
+  constraint mcp_access_tokens_servico_org_check
+    check (kind <> 'servico' or org_id is not null),
   constraint mcp_access_tokens_name_check check (char_length(name) between 1 and 80)
 );
 
