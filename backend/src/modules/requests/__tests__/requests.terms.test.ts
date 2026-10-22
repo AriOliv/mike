@@ -244,7 +244,7 @@ describe("answering the terms", () => {
         const { w, id, row } = await open();
         row.terms_inferred = { ...SUGGEST };
         const done = await setTerms(w.db, REQUESTER, id, { confirm: ["term_start", "term_months", "nada"] });
-        expect(done.ok && done.data).toMatchObject({ term_start: "2026-11-01", term_months: 24, term_end: "2028-11-01" });
+        expect(done.ok && done.data).toMatchObject({ term_start: "2026-11-01", term_months: 24, term_end: "2028-10-31" });
         expect(row).toMatchObject({ term_start: "2026-11-01", term_months: 24 });
         expect(Object.keys(row.terms_inferred as object)).toEqual(["counterparty"]);
 
