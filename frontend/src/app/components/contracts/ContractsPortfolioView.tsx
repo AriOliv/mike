@@ -21,6 +21,7 @@ import {
 import { describeError } from "@/app/lib/userFacingError";
 import {
     brDate,
+    contractTypeLabel,
     daysUntil,
     fichaProgress,
     sortPortfolio,
@@ -31,7 +32,7 @@ import { cn } from "@/app/lib/utils";
 
 const COLUMNS = [
     { label: "Contrato", width: "w-72" },
-    { label: "Tipo", width: "w-32" },
+    { label: "Tipo", width: "w-44" },
     { label: "Vencimento", width: "w-28" },
     { label: "Aviso até", width: "w-36" },
     { label: "Ficha", width: "w-40" },
@@ -164,7 +165,7 @@ export function ContractsPortfolioView({
                                             {row.counterparty ?? "Contraparte não informada"}
                                         </span>
                                     </TableCell>
-                                    <TableCell className="w-32">{row.contract_type ?? "—"}</TableCell>
+                                    <TableCell className="w-44">{contractTypeLabel(row.contract_type)}</TableCell>
                                     <TableCell className="w-28">{brDate(row.term_end)}</TableCell>
                                     <TableCell
                                         className={cn(
