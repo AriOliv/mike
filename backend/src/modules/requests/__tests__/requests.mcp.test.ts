@@ -22,7 +22,7 @@ import {
 } from "../requests.service";
 import type { AnyMcpTool, McpContext } from "../../mcp/mcp.service";
 import { allowed, runTool } from "../../mcp/mcp.server";
-import { readTools } from "../../mcp/mcp.catalog";
+import { catalogTools } from "../../mcp/mcp.catalog";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const HEAD = { userId: "aaaaaaaa-0000-4000-8000-000000000001", userEmail: "head@avenia.io" };
@@ -348,17 +348,18 @@ describe("the team through an assistant", () => {
 });
 
 describe("through the mcp server", () => {
-    it("publishes the four reads next to mike_quem_sou, each to the roles the screen allows", () => {
-        const names = readTools().map((t) => t.name);
+    it("publishes the reads next to mike_quem_sou, no write until it is switched on, each to the roles the screen allows", () => {
+        const names = catalogTools().map((t) => t.name);
         expect(names).toEqual(expect.arrayContaining(["mike_quem_sou", ...REQUEST_READ_TOOLS.map((t) => t.name)]));
-        expect(names.filter((n) => n.startsWith("mike_pedidos_"))).toHaveLength(4);
+        expect(names.filter((n) => n.startsWith("mike_pedidos_"))).toHaveLength(REQUEST_READ_TOOLS.length);
+        for (const t of REQUEST_WRITE_TOOLS) expect(names).not.toContain(t.name);
         const scopes = ["pedidos:read"] as McpContext["scopes"];
         expect(allowed(tool("fila"), { role: "requester", scopes })).toBe(false);
         expect(allowed(tool("fila"), { role: "team", scopes })).toBe(true);
         expect(allowed(tool("listar_meus"), { role: "requester", scopes: [] })).toBe(false);
     });
 
-    it("runs a read into a Portuguese result and refuses a write until Phase 2", async () => {
+    it("runs a read into a Portuguese result; a write only proposes until the person confirms", async () => {
         const w = world();
         const code = await pedido(w);
         const ana = ctxOf(w, REQUESTER, "Ana", "requester");
@@ -367,8 +368,13 @@ describe("through the mcp server", () => {
         expect(read.structuredContent).toMatchObject({ codigo: code, etapa: "Recebido" });
         expect((read.content as { text: string }[])[0].text).toMatch(/^LEG-0001: Recebido/);
 
+        // Step 1 of a write: the preview, a confirmation code, nothing created.
         const write = await runTool(tool("criar"), ana, { tipo: "nda", descricao: "Outro piloto." });
-        expect(write.isError).toBe(true);
+        expect(write.isError).toBeFalsy();
+        expect(write.structuredContent).toMatchObject({
+            precisa_confirmar: true,
+            resumo: expect.stringMatching(/^Criar o pedido “NDA” \(NDA\) para o Legal, prazo /),
+        });
         expect(w.table("legal_requests")).toHaveLength(1);
 
         const other = await runTool(tool("ler"), ctxOf(w, OTHER, "Beto", "requester"), { pedido: code });
