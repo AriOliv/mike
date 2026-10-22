@@ -30,6 +30,20 @@ export {
     type RequestListItem,
 } from "./requests.core";
 export { handleRequestTriage, suggestAssignee, parseTriage } from "./requests.triage";
+export {
+    answerIntake,
+    getIntake,
+    getIntakeTemplate,
+    queueIntakePrefill,
+    setIntakeTemplate,
+    type RequestIntake,
+} from "./requests.checklist";
+export { handleIntakePrefill, parsePrefill, PREFILL_JOB_KIND } from "./requests.prefill";
+export {
+    DEFAULT_INTAKE_TEMPLATE,
+    intakeForAnalysis,
+    type IntakeItem,
+} from "./requests.intake";
 export { handleRequestNotify, renderNotification, requestLink, SEND_JOB_KIND } from "./requests.notifications";
 export {
     requestCode,
@@ -45,4 +59,13 @@ export {
     type PlanStep,
 } from "./requests.shared";
 export type { Caller, McpActor } from "./requests.access";
+export {
+    ANALYSIS_START_JOB_KIND,
+    getRequestAnalysis,
+    handleAnalysisReady,
+    handleRequestAnalysisStart,
+    listCriticalAlerts,
+    requestAnalysis,
+    type CriticalAlert,
+} from "./requests.analysis";
 export { REQUEST_TOOLS, REQUEST_READ_TOOLS, REQUEST_WRITE_TOOLS } from "./requests.mcp";

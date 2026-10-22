@@ -90,6 +90,9 @@ export type RequestRow = {
     delivery: Record<string, unknown> | null;
     delivered_at: string | null;
     source: Record<string, unknown>;
+    intake: Record<string, unknown>;
+    intake_completed_at: string | null;
+    critical_alert_at: string | null;
     created_at: string;
     updated_at: string;
 };
@@ -98,7 +101,8 @@ export const REQUEST_COLUMNS =
     "id, number, org_id, project_id, requester_id, requester_email, requester_name, requester_area, " +
     "requester_area_source, kind, title, " +
     "counterparty, context, urgency, needed_by, due_at, status, paused_at, paused_seconds, " +
-    "assignee_id, assigned_at, summary, triage, delivery, delivered_at, source, created_at, updated_at";
+    "assignee_id, assigned_at, summary, triage, delivery, delivered_at, source, intake, intake_completed_at, " +
+    "critical_alert_at, created_at, updated_at";
 
 const NOT_FOUND = failure("not_found", "Pedido não encontrado.");
 

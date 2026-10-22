@@ -603,6 +603,16 @@ describe("Ficha service", () => {
         expect(await getFicha(fakeDb({}).db, caller, "p1")).toMatchObject({ kind: "not_found" });
     });
 
+    it("points the viewer at the contract before any Ficha, and keeps the Ficha's own document", async () => {
+        versions.loadActiveVersion.mockResolvedValueOnce({ id: "v1", version_number: 1, filename: "Contrato.docx", file_type: "docx", storage_path: "s" });
+        expect(
+            await getFicha(fakeDb({ contract_fichas: [{ data: null }], documents: [{ data: [{ id: "d9" }] }] }).db, caller, "p1"),
+        ).toMatchObject({ ok: true, data: { ficha: null, document_id: "d9" } });
+        const kept = fakeDb({ contract_fichas: [{ data: { project_id: "p1", ficha: {}, document_id: "d1" } }] });
+        expect(await getFicha(kept.db, caller, "p1")).toMatchObject({ ok: true, data: { document_id: "d1" } });
+        expect(kept.calls.some((call) => call.table === "documents")).toBe(false);
+    });
+
     it("confirms and corrects a field, re-running the rules and keeping the trail", async () => {
         const stored = {
             project_id: "p1",

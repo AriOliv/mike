@@ -189,6 +189,9 @@ export type AgentRunOutcome = {
     error?: string | null;
     modelResolved?: string | null;
     latencyMs?: number | null;
+    tokensIn?: number | null;
+    tokensOut?: number | null;
+    costUsd?: number | null;
 };
 
 /** Close a run. Best-effort: a failed close must not fail the agent's work. */
@@ -205,6 +208,10 @@ export async function finishAgentRun(
             error: outcome.error ?? null,
             model_resolved: outcome.modelResolved ?? null,
             latency_ms: outcome.latencyMs ?? null,
+            // Left out when the agent does not report them, so a close never blanks them.
+            ...(outcome.tokensIn != null && { tokens_in: outcome.tokensIn }),
+            ...(outcome.tokensOut != null && { tokens_out: outcome.tokensOut }),
+            ...(outcome.costUsd != null && { cost_usd: outcome.costUsd }),
             finished_at: new Date().toISOString(),
         })
         .eq("id", runId);
