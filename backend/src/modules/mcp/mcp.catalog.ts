@@ -4,6 +4,7 @@
 import { CONTRACT_REVIEW_TOOLS } from "../contract-review/contractReview.service";
 import { CONTRACT_TOOLS } from "../contracts/contracts.service";
 import { DASHBOARD_TOOLS } from "../dashboard/dashboard.service";
+import { AGENT_TOOLS } from "../legal-agent/legalAgent.service";
 import { REGULATORY_TOOLS } from "../regulatory/regulatory.service";
 import { TABULAR_TOOLS } from "../tabular/tabular.service";
 import { whoAmITool } from "./mcp.whoami";
@@ -20,6 +21,8 @@ export function readTools(): readonly AnyMcpTool[] {
         ...REGULATORY_TOOLS,
         ...TABULAR_TOOLS,
         ...DASHBOARD_TOOLS,
+        // Structural fit to McpTool (the legal-agent module declares its own context subset).
+        ...(AGENT_TOOLS as unknown as AnyMcpTool[]),
     ].filter(
         (t) => t.access === "read",
     );

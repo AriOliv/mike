@@ -10,7 +10,16 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure } from "../../lib/serviceResult";
 import { hashToken } from "./mcp.tokens";
-import { buildServer, createAccessToken, listAccessTokens, openMcpCall, revokeAccessToken } from "./mcp.service";
+import {
+    buildServer,
+    createAccessToken,
+    createServiceToken,
+    listAccessTokens,
+    listServiceTokens,
+    openMcpCall,
+    revokeAccessToken,
+    revokeServiceToken,
+} from "./mcp.service";
 
 const caller = (res: { locals: Record<string, unknown> }) => ({
     userId: res.locals.userId as string,
@@ -48,10 +57,15 @@ mcpRouter.post(
         });
         if (!opened.ok) {
             if (opened.kind === "auth") {
-                res.setHeader("WWW-Authenticate", 'Bearer realm="mike"');
+                if (opened.auth.status === 401) res.setHeader("WWW-Authenticate", 'Bearer realm="mike"');
                 return void res.status(opened.auth.status).json({
                     jsonrpc: "2.0",
-                    error: { code: -32001, message: opened.auth.message },
+                    error: {
+                        code: -32001,
+                        message: opened.auth.message,
+                        // The bot sends the person the link to confirm who they are.
+                        ...(opened.auth.code ? { data: { code: opened.auth.code, ...(opened.auth.link ? { link: opened.auth.link } : {}) } } : {}),
+                    },
                     id: null,
                 });
             }
@@ -101,6 +115,40 @@ mcpTokensRouter.post(
         if (!result.ok) return void sendServiceFailure(res, result);
         res.setHeader("Cache-Control", "no-store");
         res.status(201).json(result.data);
+    }),
+);
+
+// Service tokens (doc 09 §3.2), for an organization's owners and admins.
+// Registered before "/:tokenId" so "servico" is never read as an id.
+mcpTokensRouter.get(
+    "/servico",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const result = await listServiceTokens(createServerSupabase(), caller(res), String(req.query.org_id ?? ""));
+        if (!result.ok) return void sendServiceFailure(res, result);
+        res.json({ tokens: result.data });
+    }),
+);
+
+mcpTokensRouter.post(
+    "/servico",
+    requireAuth,
+    requireMfaIfEnrolled,
+    asyncRoute(async (req, res) => {
+        const result = await createServiceToken(createServerSupabase(), caller(res), (req.body ?? {}) as Record<string, unknown>);
+        if (!result.ok) return void sendServiceFailure(res, result);
+        res.setHeader("Cache-Control", "no-store");
+        res.status(201).json(result.data);
+    }),
+);
+
+mcpTokensRouter.delete(
+    "/servico/:tokenId",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const result = await revokeServiceToken(createServerSupabase(), caller(res), String(req.params.tokenId));
+        if (!result.ok) return void sendServiceFailure(res, result);
+        res.json(result.data);
     }),
 );
 

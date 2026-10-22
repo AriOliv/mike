@@ -34,6 +34,8 @@ export async function buildContext(
         scopes: token.scopes,
         clientName,
         tokenId: token.id,
+        tokenKind: token.kind,
+        linkId: token.linkId,
         actor: {
             actorType: "agent",
             actorId: `mcp:${clientName}`,
