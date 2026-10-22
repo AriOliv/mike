@@ -5789,6 +5789,97 @@ export async function getLegalDashboard(params?: {
     return apiRequest(`/dashboard${suffix}`);
 }
 
+// ── Agente do Legal (org settings) ──────────────────────────────────────────
+
+export type LegalAgentTone = "formal" | "cordial" | "direto";
+export type LegalAgentChannelKind = "slack" | "whatsapp" | "telegram";
+
+export interface LegalAgentSettings {
+    enabled: boolean;
+    display_name: string;
+    persona: string;
+    tone: LegalAgentTone;
+    hours: { timezone: string; days: number[]; start: string; end: string; outside: "avisa_e_registra" | "so_registra" };
+    permissions: { area: string; kinds: string[] }[];
+    escalation: { risk_levels: string[]; kinds: string[]; low_confidence: boolean; escalate_to_email: string };
+    proactive: { deadline_days: number[]; renewals: boolean; radar: boolean; digest_time: string };
+    updated_at: string | null;
+}
+
+export interface LegalAgentChannel {
+    id: string;
+    kind: LegalAgentChannelKind;
+    status: "rascunho" | "configurado" | "pausado";
+    name: string;
+    config: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface LegalAgentChannelSetup {
+    kind: LegalAgentChannelKind;
+    steps: { title: string; detail: string }[];
+    files: { name: string; language: "yaml" | "http" | "text" | "env"; content: string }[];
+    warnings: string[];
+}
+
+export interface LegalAgentView {
+    settings: LegalAgentSettings;
+    channels: LegalAgentChannel[];
+    can_manage: boolean;
+    options: {
+        tones: string[];
+        kinds: string[];
+        risk_levels: string[];
+        fixed_escalations: string[];
+        disclaimer: string;
+    };
+}
+
+const legalAgentPath = (orgId: string, rest = "") => `/orgs/${encodeURIComponent(orgId)}/legal-agent${rest}`;
+const jsonInit = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+});
+
+export async function getLegalAgent(orgId: string): Promise<LegalAgentView> {
+    return apiRequest(legalAgentPath(orgId));
+}
+
+export async function saveLegalAgentSettings(
+    orgId: string,
+    settings: Omit<LegalAgentSettings, "updated_at">,
+): Promise<LegalAgentSettings> {
+    return apiRequest(legalAgentPath(orgId), jsonInit("PUT", settings));
+}
+
+export async function saveLegalAgentChannel(
+    orgId: string,
+    channel: { id?: string; kind: LegalAgentChannelKind; name: string; config: Record<string, unknown> },
+): Promise<{ channel: LegalAgentChannel; setup: LegalAgentChannelSetup }> {
+    const { id, ...body } = channel;
+    return id
+        ? apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(id)}`), jsonInit("PUT", body))
+        : apiRequest(legalAgentPath(orgId, "/channels"), jsonInit("POST", body));
+}
+
+export async function getLegalAgentChannelSetup(orgId: string, channelId: string): Promise<LegalAgentChannelSetup> {
+    return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}/setup`));
+}
+
+export async function setLegalAgentChannelStatus(
+    orgId: string,
+    channelId: string,
+    status: LegalAgentChannel["status"],
+): Promise<LegalAgentChannel> {
+    return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}`), jsonInit("PATCH", { status }));
+}
+
+export async function deleteLegalAgentChannel(orgId: string, channelId: string): Promise<{ deleted: true }> {
+    return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}`), { method: "DELETE" });
+}
+
 // ── Tokens de acesso para agentes (MCP, doc 09 §3.1) ────────────────────────
 
 /** What a token may do; the backend's MCP_SCOPES. */
