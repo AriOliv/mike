@@ -54,6 +54,11 @@ export {
 } from "./playbooks.sources";
 
 export {
+  findPlaybookForContractType,
+  playbookForContractType,
+} from "./playbooks.byType";
+
+export {
   playbookImportPrefix,
   playbookSourceUploadPrefix,
   isStagedPlaybookImportKey,

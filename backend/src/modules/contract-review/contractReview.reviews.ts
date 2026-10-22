@@ -21,6 +21,7 @@ import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serv
 import type { EditAnnotation } from "@mike/contracts";
 import {
     createPlaybook,
+    findPlaybookForContractType,
     getPlaybookRunById,
     listPlaybooks,
     playbookConfiguration,
@@ -178,6 +179,15 @@ export async function ensureAveniaPlaybook(db: Db, caller: Caller, orgId: string
     return updatePlaybookContent(caller.userId, created.id, AVENIA_PLAYBOOK_CONTENT, db, {}, caller.userEmail);
 }
 
+/** The organization's playbook written for this contract's type (an NDA's), if any. */
+async function playbookForProjectType(db: Db, caller: Caller, projectId: string, orgId: string | null) {
+    if (!orgId) return null;
+    const { data, error } = await db.from("projects").select("contract_type").eq("id", projectId).maybeSingle();
+    if (error) throw error;
+    const contractType = (data as { contract_type: string | null } | null)?.contract_type ?? null;
+    return findPlaybookForContractType(db, { userId: caller.userId, userEmail: caller.userEmail, orgId, contractType });
+}
+
 /** Starts a review of the contract's document; the run continues on the server. */
 export async function startContractReview(
     db: Db,
@@ -195,7 +205,8 @@ export async function startContractReview(
         const playbook =
             typeof body.playbook_id === "string" && body.playbook_id
                 ? { id: body.playbook_id }
-                : await ensureAveniaPlaybook(db, caller, orgId);
+                : ((await playbookForProjectType(db, caller, projectId, orgId)) ??
+                  (await ensureAveniaPlaybook(db, caller, orgId)));
         const model =
             typeof body.model === "string" && body.model
                 ? body.model

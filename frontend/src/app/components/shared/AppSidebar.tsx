@@ -68,7 +68,7 @@ import {
     type NavItem,
     type NavRole,
 } from "@/app/lib/navItems";
-import { loadNavRole } from "@/app/lib/navRole";
+import { loadAlertCount, loadNavRole } from "@/app/lib/navRole";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -96,9 +96,12 @@ const NAV_ICONS: Record<NavIconKey, (props: { className?: string }) => ReactElem
 };
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
-const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44";
+// On a short screen (a 1280x900 laptop, a phone) Recent Projects shows three
+// rows and scrolls inside, so History keeps the rest of the column. Written
+// out in full: Tailwind only generates classes it finds as literal text.
+const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44 [@media(max-height:960px)]:h-28";
 // Room for an expanded project's recent chats and reviews.
-const RECENT_PROJECT_LIST_EXPANDED_HEIGHT_CLASS = "h-64";
+const RECENT_PROJECT_LIST_EXPANDED_HEIGHT_CLASS = "h-64 [@media(max-height:960px)]:h-44";
 const recentProjectsCache = new Map<
     string,
     { projects: Project[]; hasMore: boolean }
@@ -478,6 +481,17 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         return () => controller.abort();
     }, [userId]);
     const nav = navForRole(navRole);
+    // The Head's open critical alerts, as a count on Pedidos.
+    const [alertCount, setAlertCount] = useState(0);
+    useEffect(() => {
+        setAlertCount(0);
+        if (navRole !== "head") return;
+        const controller = new AbortController();
+        void loadAlertCount(controller.signal).then((n) => {
+            if (!controller.signal.aborted) setAlertCount(n);
+        });
+        return () => controller.abort();
+    }, [navRole, pathname]);
 
 
     const getDisplayName = () => {
@@ -599,6 +613,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 active={isNavItemActive(item, pathname)}
                                 isOpen={isOpen}
                                 animate={shouldAnimate}
+                                badge={item.href === "/pedidos" ? alertCount : 0}
                                 onNavigate={() => router.push(item.href)}
                             />
                         ))}
@@ -626,7 +641,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     </div>
 
                     {isOpen && nav.workLists && (
-                        <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
+                        // No min-h-0 here: the lists keep their own height, so on a
+                        // short screen (a phone) the column above scrolls down to
+                        // History instead of squeezing it under the footer.
+                        <div className="mt-4 flex flex-1 flex-col gap-4">
                             {/* Recent Projects */}
                             <div>
                                 <button
@@ -756,7 +774,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     role="region"
                                     aria-label="Histórico"
                                     className={cn(
-                                        "min-h-0 flex-1 overflow-y-auto",
+                                        // basis-0: the region takes the room left, never the
+                                        // whole list's height.
+                                        "min-h-0 flex-1 basis-0 overflow-y-auto",
                                         historyCollapsed && "hidden",
                                     )}
                                     onScroll={handleHistoryScroll}
@@ -1057,12 +1077,15 @@ function NavButton({
     active,
     isOpen,
     animate,
+    badge = 0,
     onNavigate,
 }: {
     item: NavItem;
     active: boolean;
     isOpen: boolean;
     animate: boolean;
+    /** Open critical alerts, on Pedidos for the Head. */
+    badge?: number;
     onNavigate: () => void;
 }) {
     const Icon = NAV_ICONS[item.icon];
@@ -1073,7 +1096,7 @@ function NavButton({
                 title={!isOpen ? item.label : ""}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                    "w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
+                    "relative w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
                     active
                         ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
                         : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
@@ -1094,6 +1117,17 @@ function NavButton({
                         {item.label}
                     </span>
                 )}
+                {badge > 0 ? (
+                    <span
+                        className={cn(
+                            "ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white",
+                            !isOpen && "absolute right-1 top-0.5 ml-0",
+                        )}
+                        aria-label={`${badge} ${badge === 1 ? "pedido com risco crítico" : "pedidos com risco crítico"}`}
+                    >
+                        {badge}
+                    </span>
+                ) : null}
             </button>
         </div>
     );
