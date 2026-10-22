@@ -19,6 +19,7 @@ import {
     startAgentRun,
 } from "../contracts/contracts.service";
 import { REQUEST_COLUMNS, type RequestRow } from "./requests.access";
+import { applyAssignmentRules } from "./requests.rules";
 import {
     KIND_LABELS,
     normalizeArea,
@@ -339,6 +340,7 @@ export async function handleRequestTriage(
     if (autoAssign) {
         patch.assignee_id = assignee!.user_id;
         patch.assigned_at = new Date().toISOString();
+        patch.assigned_by = "triage";
     }
     const { error: updateError } = await db.from("legal_requests").update(patch).eq("id", row.id);
     if (updateError) {
@@ -383,6 +385,11 @@ export async function handleRequestTriage(
             .from("projects")
             .update({ assignee_email: members.find((m) => m.user_id === assignee!.user_id)?.email ?? null })
             .eq("id", row.project_id);
+    }
+
+    // The agent may have just read the area a rule asks about.
+    if (fillArea && !autoAssign) {
+        await applyAssignmentRules(db, { ...row, requester_area: readArea, kind, assigned_by: row.assigned_by });
     }
 
     await finishAgentRun(db, runId, {
