@@ -10,16 +10,41 @@ import {
 } from "./contractTerms";
 
 describe("contract terms", () => {
-    it("ends on the same day, months later", () => {
-        expect(termEndDate("2026-11-12", 12)).toBe("2027-11-12");
-        expect(termEndDate("2026-11-12", 1)).toBe("2026-12-12");
-        expect(termEndDate("2026-12-15", 3)).toBe("2027-03-15");
+    it("ends the day before the start's day, months later", () => {
+        expect(termEndDate("2026-11-12", 12)).toBe("2027-11-11");
+        expect(termEndDate("2026-01-15", 1)).toBe("2026-02-14");
+        expect(termEndDate("2026-11-12", 36)).toBe("2029-11-11");
+        expect(termEndDate("2026-06-10", 6)).toBe("2026-12-09");
+        expect(termEndDate("2026-12-15", 1)).toBe("2027-01-14");
     });
 
-    it("falls on the last day of a shorter month", () => {
-        expect(termEndDate("2026-01-31", 1)).toBe("2026-02-28");
+    it("lets a term from the 1st end on the last day of the month before", () => {
+        expect(termEndDate("2026-01-01", 12)).toBe("2026-12-31");
+        expect(termEndDate("2026-03-01", 1)).toBe("2026-03-31");
+        expect(termEndDate("2026-02-01", 1)).toBe("2026-02-28");
+        expect(termEndDate("2028-02-01", 1)).toBe("2028-02-29");
+        expect(termEndDate("2026-12-01", 1)).toBe("2026-12-31");
+        expect(termEndDate("2026-01-01", 600)).toBe("2075-12-31");
+    });
+
+    it("ends on the last day of a shorter month and never spills into the next (CC art. 132, §3º)", () => {
+        expect(termEndDate("2027-01-31", 1)).toBe("2027-02-28");
         expect(termEndDate("2028-01-31", 1)).toBe("2028-02-29");
         expect(termEndDate("2026-08-31", 6)).toBe("2027-02-28");
+        expect(termEndDate("2026-12-31", 2)).toBe("2027-02-28");
+        expect(termEndDate("2026-03-31", 1)).toBe("2026-04-30");
+        expect(termEndDate("2026-01-30", 1)).toBe("2026-02-28");
+        expect(termEndDate("2026-01-29", 1)).toBe("2026-02-28");
+        expect(termEndDate("2026-01-28", 1)).toBe("2026-02-27");
+        expect(termEndDate("2026-12-31", 12)).toBe("2027-12-30");
+    });
+
+    it("handles leap days", () => {
+        expect(termEndDate("2024-02-29", 12)).toBe("2025-02-28");
+        expect(termEndDate("2024-02-29", 48)).toBe("2028-02-28");
+        expect(termEndDate("2023-02-28", 12)).toBe("2024-02-27");
+        expect(termEndDate("2023-03-01", 12)).toBe("2024-02-29");
+        expect(termEndDate("2027-03-01", 12)).toBe("2028-02-29");
     });
 
     it("has no end until both values are valid", () => {
@@ -33,8 +58,8 @@ describe("contract terms", () => {
     });
 
     it("writes the end in Portuguese, singular and plural", () => {
-        expect(termEndSentence("2026-11-12", 12)).toBe("Termina em 12/11/2027 (início + 12 meses)");
-        expect(termEndSentence("2026-11-12", 1)).toBe("Termina em 12/12/2026 (início + 1 mês)");
+        expect(termEndSentence("2026-11-12", 12)).toBe("Termina em 11/11/2027 (início + 12 meses − 1 dia)");
+        expect(termEndSentence("2026-11-12", 1)).toBe("Termina em 11/12/2026 (início + 1 mês − 1 dia)");
         expect(termEndSentence("2026-11-12", null)).toBeNull();
         expect(termEndSentence("", 12)).toBeNull();
         expect(brDate("2027-03-05")).toBe("05/03/2027");

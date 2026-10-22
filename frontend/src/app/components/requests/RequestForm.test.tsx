@@ -158,10 +158,10 @@ describe("RequestForm, part 2: the contract", () => {
         fireEvent.change(screen.getByLabelText("Início da vigência"), { target: { value: "2026-11-12" } });
         expect(screen.queryByText(/Termina em/)).not.toBeInTheDocument();
         fireEvent.change(screen.getByLabelText("Prazo (em meses)"), { target: { value: "12" } });
-        expect(screen.getByText("Termina em 12/11/2027 (início + 12 meses)")).toBeInTheDocument();
+        expect(screen.getByText("Termina em 11/11/2027 (início + 12 meses − 1 dia)")).toBeInTheDocument();
         fireEvent.change(screen.getByLabelText("Início da vigência"), { target: { value: "2026-01-31" } });
         fireEvent.change(screen.getByLabelText("Prazo (em meses)"), { target: { value: "1" } });
-        expect(screen.getByText("Termina em 28/02/2026 (início + 1 mês)")).toBeInTheDocument();
+        expect(screen.getByText("Termina em 28/02/2026 (início + 1 mês − 1 dia)")).toBeInTheDocument();
     });
 
     it("warns about an old start, and does not block", async () => {

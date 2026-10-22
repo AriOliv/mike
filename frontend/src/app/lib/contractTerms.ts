@@ -20,9 +20,19 @@ function parts(value: string): { y: number; m: number; d: number } | null {
 }
 
 /**
- * The day the term ends: the start plus the months, on the same day, or the
- * last day of a shorter month ("31/01 + 1 mês = 28/02"). Null until both are
- * valid.
+ * The day the term ends: start + N months, minus one day. A term that starts
+ * on 12/11/2026 and lasts 12 months ends on 11/11/2027; one that starts on
+ * 01/01 and lasts a year ends on 31/12.
+ *
+ * The day is taken one before the start's day, in the month the term lands
+ * on. When that day does not exist there, the term ends on the month's last
+ * day and never spills into the next: 31/01 + 1 month ends on 28/02 (29/02 in
+ * a leap year). A start on the 1st ends on the last day of the month before.
+ * Null until both values are valid.
+ *
+ * The same rule, with the same cases, as the server's `termEnd`
+ * (requests.terms.ts), so the sentence on the form and what the team reads
+ * are one date. Código Civil, art. 132, §3º.
  */
 export function termEndDate(start: string, months: number | null): string | null {
     const p = parts(start);
@@ -31,8 +41,9 @@ export function termEndDate(start: string, months: number | null): string | null
     const year = Math.floor(index / 12);
     const month = index % 12;
     const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-    const day = Math.min(p.d, lastDay);
-    return `${String(year).padStart(4, "0")}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const day = p.d - 1;
+    const end = day < 1 ? new Date(Date.UTC(year, month, 0)) : new Date(Date.UTC(year, month, Math.min(day, lastDay)));
+    return end.toISOString().slice(0, 10);
 }
 
 /** "12/11/2027" from "2027-11-12". */
@@ -45,7 +56,7 @@ export function brDate(iso: string): string {
 export function termEndSentence(start: string, months: number | null): string | null {
     const end = termEndDate(start, months);
     if (!end || months === null) return null;
-    return `Termina em ${brDate(end)} (início + ${months} ${months === 1 ? "mês" : "meses"})`;
+    return `Termina em ${brDate(end)} (início + ${months} ${months === 1 ? "mês" : "meses"} − 1 dia)`;
 }
 
 /** The months field as typed: null when empty, NaN-safe, never throws. */
