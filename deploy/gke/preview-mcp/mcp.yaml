@@ -9,9 +9,13 @@ spec:
   selector: { app: backend }
   ports: [{ name: http, port: 3001, targetPort: 3001 }]
 ---
-# Only the exact path /mcp: everything else on the host (including /api/*)
-# still goes to the frontend behind IAP. Exact beats the catch-all route.
-# Phase 2 adds /.well-known/oauth-protected-resource and /oauth here.
+# Only the MCP paths: everything else on the host (including /api/* and the
+# consent screen /oauth/consentir, which needs the normal login) still goes to
+# the frontend behind IAP. These matches beat the catch-all route.
+#   /mcp                                          the MCP server (Phase 1)
+#   /.well-known/oauth-protected-resource[/...]   metadata MCP clients discover
+#   /.well-known/oauth-authorization-server[/...] (RFC 9728 / RFC 8414)
+#   /oauth/{register,authorize,token,revoke}      the authorization server (Phase 2)
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -19,7 +23,14 @@ metadata:
 spec:
   parentRefs: [{ name: mike-edge, sectionName: https }]
   rules:
-    - matches: [{ path: { type: Exact, value: /mcp } }]
+    - matches:
+        - path: { type: Exact, value: /mcp }
+        - path: { type: PathPrefix, value: /.well-known/oauth-protected-resource }
+        - path: { type: PathPrefix, value: /.well-known/oauth-authorization-server }
+        - path: { type: Exact, value: /oauth/register }
+        - path: { type: Exact, value: /oauth/authorize }
+        - path: { type: Exact, value: /oauth/token }
+        - path: { type: Exact, value: /oauth/revoke }
       backendRefs: [{ name: backend-mcp, port: 3001 }]
 ---
 # No iap block: this backend service is public, the token is checked in Mike.

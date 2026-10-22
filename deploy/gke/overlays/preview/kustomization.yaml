@@ -18,6 +18,9 @@ configMapGenerator:
   - name: mike-env
     literals:
       - PUBLIC_URL=https://preview.34-120-191-197.nip.io
+      # MCP OAuth (Phase 2) is on only where this is set: the resource the
+      # tokens are issued for. Preview only; staging has no public MCP.
+      - MCP_PUBLIC_URL=https://preview.34-120-191-197.nip.io/mcp
 images:
   - name: mike-backend
     newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend

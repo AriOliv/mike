@@ -33,7 +33,10 @@ não tem Gateway próprio. As rotas dele se penduram no do staging com
 Na **prévia**, `POST /mcp` (caminho exato) vai direto ao backend, **fora do IAP**
 (`preview-mcp/`): Claude Code, Codex ou um script falam com
 `https://preview.34-120-191-197.nip.io/mcp` usando só o token de acesso do Mike
-(`Authorization: Bearer mike_pat_...`). O resto do host segue atrás do IAP. No
+(`Authorization: Bearer mike_pat_...`). O resto do host segue atrás do IAP.
+Para o OAuth (Fase 2), também ficam fora do IAP `/.well-known/oauth-protected-resource`,
+`/.well-known/oauth-authorization-server` e `/oauth/{register,authorize,token,revoke}`.
+A tela de consentimento (`/oauth/consentir`, frontend) continua atrás do IAP e do login. No
 **staging**, tudo continua atrás do IAP: esse componente nunca entra lá
 (docs/product/09-mcp-integral.md §9).
 
