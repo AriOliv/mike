@@ -79,7 +79,7 @@ export type NotionConnectionView = {
     fields: { field: string; label: string; types: readonly string[]; owner: string }[];
 };
 
-type Row = {
+export type Row = {
     org_id: string;
     token_encrypted: string | null;
     token_iv: string | null;

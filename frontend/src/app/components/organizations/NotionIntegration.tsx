@@ -16,12 +16,15 @@ import {
     getNotionConnection,
     listNotionDatabases,
     saveNotionMapping,
+    previewNotionImport,
+    applyNotionImport,
+    type NotionImportPlan,
     type NotionBoardSchema,
     type NotionConnection,
     type NotionLane,
     type NotionStageTarget,
 } from "@/app/lib/mikeApi";
-import { assign, LANE_LABEL, looksLikeToken, mappingProblems, OWNER_LABEL, propertiesFor, propertyOf } from "@/app/lib/notionIntegration";
+import { assign, LANE_LABEL, looksLikeToken, mappingProblems, MATCH_LABEL, OWNER_LABEL, propertiesFor, propertyOf } from "@/app/lib/notionIntegration";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
 import { useOrganizationSettings } from "./OrganizationSettingsShell";
 
@@ -44,6 +47,7 @@ export function NotionIntegration() {
     const [fieldMap, setFieldMap] = useState<Record<string, string>>({});
     const [stageMap, setStageMap] = useState<Record<string, NotionStageTarget>>({});
     const [poll, setPoll] = useState(10);
+    const [plan, setPlan] = useState<NotionImportPlan | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -134,7 +138,25 @@ export function NotionIntegration() {
         }
     };
 
+    const preview = async () => {
+        const next = await run("simular a importação", () => previewNotionImport(orgId));
+        if (next) setPlan(next);
+    };
+
+    const importNow = async () => {
+        const done = await run("importar do Notion", () => applyNotionImport(orgId));
+        if (!done) return;
+        showToast({
+            tone: done.failed ? "error" : "success",
+            message:
+                `Importação feita: ${done.created} novos, ${done.linked} ligados a cards existentes` +
+                (done.failed ? `, ${done.failed} com erro (tente de novo; os já importados não se repetem).` : "."),
+        });
+        setPlan(await previewNotionImport(orgId).catch(() => null));
+    };
+
     const canManage = conn.can_manage;
+    const ready = !!conn.database_id && Object.values(conn.field_map).includes("lane");
     const byField = propertyOf(fieldMap);
 
     return (
@@ -329,6 +351,68 @@ export function NotionIntegration() {
                             Salvar mapeamento
                         </PillButtonUI>
                     </div>
+                </section>
+            ) : null}
+
+            {ready && canManage ? (
+                <section aria-labelledby="notion-import" className="space-y-3">
+                    <SettingsHeading id="notion-import">Importar</SettingsHeading>
+                    <p className="text-sm text-gray-500">
+                        Primeiro uma simulação: nada muda no Mike nem no Notion. Confira os números e só então importe. Importar de
+                        novo não duplica nada.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        <PillButtonUI tone="white" size="sm" onClick={() => void preview()} loading={busy && !plan}>
+                            Simular importação
+                        </PillButtonUI>
+                        {plan ? (
+                            <PillButtonUI tone="black" size="sm" onClick={() => void importNow()} disabled={busy || plan.counts.new + plan.counts.project + plan.counts.duplicate === 0}>
+                                Importar agora
+                            </PillButtonUI>
+                        ) : null}
+                    </div>
+                    {plan ? (
+                        <GlassCardUI>
+                            <SettingsRow layout="stacked">
+                                <SettingsLabel>{plan.total} páginas na base</SettingsLabel>
+                                <ul className="grid gap-2 sm:grid-cols-2" aria-label="Resumo da simulação">
+                                    {(Object.keys(MATCH_LABEL) as (keyof typeof MATCH_LABEL)[]).map((m) => (
+                                        <li key={m} className="text-sm">
+                                            <span className="font-medium text-gray-900">
+                                                {plan.counts[m]} {MATCH_LABEL[m].label.toLowerCase()}
+                                            </span>
+                                            <span className="block text-xs text-gray-500">{MATCH_LABEL[m].hint}</span>
+                                        </li>
+                                    ))}
+                                    {plan.counts.skipped ? (
+                                        <li className="text-sm">
+                                            <span className="font-medium text-amber-700">{plan.counts.skipped} ficam de fora</span>
+                                            <span className="block text-xs text-gray-500">sem nome de contrato</span>
+                                        </li>
+                                    ) : null}
+                                </ul>
+                            </SettingsRow>
+                            {plan.items.some((i) => i.warnings.length) ? (
+                                <SettingsRow layout="stacked">
+                                    <SettingsLabel>Para conferir</SettingsLabel>
+                                    <ul className="max-h-64 space-y-2 overflow-y-auto text-xs" aria-label="Avisos da importação">
+                                        {plan.items
+                                            .filter((i) => i.warnings.length)
+                                            .map((i) => (
+                                                <li key={i.page_id}>
+                                                    <span className="font-medium text-gray-900">{i.name}</span>
+                                                    {i.warnings.map((w) => (
+                                                        <span key={w} className="block text-gray-600">
+                                                            {w}
+                                                        </span>
+                                                    ))}
+                                                </li>
+                                            ))}
+                                    </ul>
+                                </SettingsRow>
+                            ) : null}
+                        </GlassCardUI>
+                    ) : null}
                 </section>
             ) : null}
         </div>

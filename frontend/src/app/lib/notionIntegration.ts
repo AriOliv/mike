@@ -50,3 +50,10 @@ export function mappingProblems(fieldMap: Record<string, string>, stageOptions: 
 export function propertiesFor(properties: { name: string; type: string }[], types: string[]): string[] {
     return properties.filter((p) => types.includes(p.type)).map((p) => p.name);
 }
+
+export const MATCH_LABEL: Record<"linked" | "project" | "duplicate" | "new", { label: string; hint: string }> = {
+    new: { label: "Novos", hint: "viram cards no Mike" },
+    project: { label: "Pelo ID", hint: "o ProjectId da página aponta para um card do Mike" },
+    duplicate: { label: "Duplicados", hint: "mesmo contrato e contraparte de um card que já existe; são ligados a ele" },
+    linked: { label: "Já ligados", hint: "importados antes; ficam como estão" },
+};
