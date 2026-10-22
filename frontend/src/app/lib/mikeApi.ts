@@ -4774,6 +4774,56 @@ export async function inviteRequestParticipant(
     return apiRequest(`/requests/${id}/participants`, jsonPost(body));
 }
 
+export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money";
+
+export interface IntakeItem {
+    key: string;
+    label: string;
+    kind: IntakeKind;
+    required: boolean;
+    hint?: string;
+    detail_label?: string;
+}
+
+export interface IntakeAnswer {
+    value: string;
+    choice?: "sim" | "nao";
+    detail?: string;
+    source: "requester" | "inferred";
+    confirmed: boolean;
+    /** For an inferred answer: the contract's words it came from. */
+    quote?: string;
+    updated_at: string;
+}
+
+/** A request's intake checklist and where it stands. */
+export interface RequestIntake {
+    request_id: string;
+    items: (IntakeItem & { answer: IntakeAnswer | null; state: "confirmado" | "inferido" | "pendente" })[];
+    pending: string[];
+    to_confirm: string[];
+    complete: boolean;
+    answered: number;
+    total: number;
+    completed_at: string | null;
+    can_answer: boolean;
+    template_source: "org" | "padrao";
+}
+
+export type IntakeAnswerInput = string | boolean | { value: string | boolean; detail?: string };
+
+export async function getRequestIntake(id: string): Promise<RequestIntake> {
+    return apiRequest(`/requests/${id}/intake`);
+}
+
+/** Answer items and/or confirm inferred ones as they stand. */
+export async function answerRequestIntake(
+    id: string,
+    body: { answers?: Record<string, IntakeAnswerInput>; confirm?: string[] },
+): Promise<RequestIntake> {
+    return apiRequest(`/requests/${id}/intake`, jsonPost(body));
+}
+
 export async function revokeRequestParticipant(id: string, participantId: string): Promise<LegalRequest> {
     return apiRequest(`/requests/${id}/participants/${participantId}`, { method: "DELETE" });
 }

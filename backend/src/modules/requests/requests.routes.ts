@@ -7,6 +7,10 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
 import {
+    answerIntake,
+    getIntake,
+    getIntakeTemplate,
+    setIntakeTemplate,
     assignRequest,
     createRequest,
     decideTriage,
@@ -67,11 +71,44 @@ requestsRouter.post(
     }),
 );
 
+// The organization's intake checklist (before "/:id", which would match it).
+requestsRouter.get(
+    "/intake-template",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await getIntakeTemplate(createServerSupabase(), caller(res)));
+    }),
+);
+
+requestsRouter.put(
+    "/intake-template",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setIntakeTemplate(createServerSupabase(), caller(res), body(req)));
+    }),
+);
+
 requestsRouter.get(
     "/:id",
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await getRequest(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.get(
+    "/:id/intake",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await getIntake(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.post(
+    "/:id/intake",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await answerIntake(createServerSupabase(), caller(res), req.params.id, body(req)));
     }),
 );
 

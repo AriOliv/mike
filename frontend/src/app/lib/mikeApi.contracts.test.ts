@@ -26,6 +26,8 @@ import {
     deliverRequest,
     getRequest,
     getRequestRole,
+    getRequestIntake,
+    answerRequestIntake,
     inviteRequestParticipant,
     listRequests,
     postRequestMessage,
@@ -282,5 +284,18 @@ describe("requests to the legal team", () => {
         await revokeRequestParticipant("r1", "p1");
         expect(lastFetchCall().url).toMatch(/\/requests\/r1\/participants\/p1$/);
         expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+
+    it("reads the intake checklist and answers or confirms it", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await getRequestIntake("r1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/intake$/);
+        await answerRequestIntake("r1", { answers: { inicio: "01/11/2026", confidencial: { value: "sim", detail: "As duas" } }, confirm: ["valor"] });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/intake$/);
+        expect(lastFetchCall().init.method).toBe("POST");
+        expect(jsonBody()).toEqual({
+            answers: { inicio: "01/11/2026", confidencial: { value: "sim", detail: "As duas" } },
+            confirm: ["valor"],
+        });
     });
 });

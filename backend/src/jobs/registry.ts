@@ -5,7 +5,7 @@ import { handleDocumentCleanup, handleDocumentExtractText, markDocumentTextFaile
 import { handleExtractionExtract, markExtractionJobFailed } from "../modules/tabular/tabular.service";
 import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../modules/memory/memory.service";
 import { handleRegulatoryScan } from "../modules/regulatory/regulatory.service";
-import { handleRequestNotify, handleRequestTriage } from "../modules/requests/requests.service";
+import { handleIntakePrefill, handleRequestNotify, handleRequestTriage, PREFILL_JOB_KIND } from "../modules/requests/requests.service";
 import { AUTO_REVIEW_JOB, handleAutoReview, markAutoReviewFailed } from "../modules/contracts/contracts.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
 import { type DbJobHandlers } from "../lib/dbq/types";
@@ -26,6 +26,7 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   "regulatory.scan": handleRegulatoryScan,
   "request.triage": handleRequestTriage,
   "request.notify": (db) => handleRequestNotify(db),
+  [PREFILL_JOB_KIND]: handleIntakePrefill,
   [AUTO_REVIEW_JOB]: handleAutoReview,
 };
 export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {
