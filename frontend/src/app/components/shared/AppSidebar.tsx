@@ -68,7 +68,7 @@ import {
     type NavItem,
     type NavRole,
 } from "@/app/lib/navItems";
-import { loadNavRole } from "@/app/lib/navRole";
+import { loadAlertCount, loadNavRole } from "@/app/lib/navRole";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -481,6 +481,17 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         return () => controller.abort();
     }, [userId]);
     const nav = navForRole(navRole);
+    // The Head's open critical alerts, as a count on Pedidos.
+    const [alertCount, setAlertCount] = useState(0);
+    useEffect(() => {
+        setAlertCount(0);
+        if (navRole !== "head") return;
+        const controller = new AbortController();
+        void loadAlertCount(controller.signal).then((n) => {
+            if (!controller.signal.aborted) setAlertCount(n);
+        });
+        return () => controller.abort();
+    }, [navRole, pathname]);
 
 
     const getDisplayName = () => {
@@ -602,6 +613,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 active={isNavItemActive(item, pathname)}
                                 isOpen={isOpen}
                                 animate={shouldAnimate}
+                                badge={item.href === "/pedidos" ? alertCount : 0}
                                 onNavigate={() => router.push(item.href)}
                             />
                         ))}
@@ -1065,12 +1077,15 @@ function NavButton({
     active,
     isOpen,
     animate,
+    badge = 0,
     onNavigate,
 }: {
     item: NavItem;
     active: boolean;
     isOpen: boolean;
     animate: boolean;
+    /** Open critical alerts, on Pedidos for the Head. */
+    badge?: number;
     onNavigate: () => void;
 }) {
     const Icon = NAV_ICONS[item.icon];
@@ -1081,7 +1096,7 @@ function NavButton({
                 title={!isOpen ? item.label : ""}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                    "w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
+                    "relative w-full h-8 flex items-center gap-2 px-2 py-2 rounded-md transition-colors text-left",
                     active
                         ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
                         : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
@@ -1102,6 +1117,17 @@ function NavButton({
                         {item.label}
                     </span>
                 )}
+                {badge > 0 ? (
+                    <span
+                        className={cn(
+                            "ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white",
+                            !isOpen && "absolute right-1 top-0.5 ml-0",
+                        )}
+                        aria-label={`${badge} ${badge === 1 ? "pedido com risco crítico" : "pedidos com risco crítico"}`}
+                    >
+                        {badge}
+                    </span>
+                ) : null}
             </button>
         </div>
     );

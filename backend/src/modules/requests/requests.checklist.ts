@@ -32,6 +32,25 @@ import {
 import { PREFILL_JOB_KIND } from "./requests.prefill";
 
 /**
+ * The job kind requests.analysis.ts handles. Named here, not imported, so the
+ * checklist does not pull contract-review in for a string.
+ */
+export const ANALYSIS_START_JOB = "request.analysis_start";
+
+async function enqueueAnalysis(db: Db, requestId: string): Promise<void> {
+    try {
+        await enqueueDbJob(db, {
+            kind: ANALYSIS_START_JOB,
+            payload: { request_id: requestId },
+            dedupeKey: `analysis-start:${requestId}`,
+            maxAttempts: 3,
+        });
+    } catch (error) {
+        console.error("[requests] analysis enqueue failed", { requestId, error: safeError(error) });
+    }
+}
+
+/**
  * Where the intake agent stands on this request: reading the contract,
  * done, or unable to (no model, unreadable text). Null when it never ran
  * or had nothing to do (no contract, nothing left to answer).
@@ -169,6 +188,8 @@ export async function answerIntake(
             after: { answered: status.answered, total: status.total, pending: status.pending.length },
         });
     }
+    // The checklist just closed: the contract's analysis runs for the team.
+    if (closing && row.project_id) await enqueueAnalysis(db, row.id);
     return ok(view(updated, template, true, prefill));
 }
 

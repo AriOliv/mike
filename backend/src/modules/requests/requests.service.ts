@@ -51,3 +51,12 @@ export {
     REQUESTER_AREAS,
 } from "./requests.shared";
 export type { Caller } from "./requests.access";
+export {
+    ANALYSIS_START_JOB_KIND,
+    getRequestAnalysis,
+    handleAnalysisReady,
+    handleRequestAnalysisStart,
+    listCriticalAlerts,
+    requestAnalysis,
+    type CriticalAlert,
+} from "./requests.analysis";
