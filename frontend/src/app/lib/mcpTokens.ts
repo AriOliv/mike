@@ -20,6 +20,22 @@ export const SCOPE_OPTIONS: readonly { scope: McpScope; label: string; hint: str
 /** What a new token gets unless the person unticks it: reading only. */
 export const DEFAULT_SCOPES: McpScope[] = SCOPE_OPTIONS.map((o) => o.scope);
 
+export type LegalRole = { configured: boolean; role: "head" | "team" | "requester" } | null;
+
+/**
+ * The permissions worth offering to this person: the server gates each tool
+ * by role too, so a scope the role cannot use would make a token that does
+ * nothing. A requester reads only their requests; the Painel is the head's.
+ * Unknown role (still loading, or no Legal team configured) offers what the
+ * team has, as the menu does.
+ */
+export function scopesFor(who: LegalRole): typeof SCOPE_OPTIONS {
+    const role = who && who.configured ? who.role : "team";
+    if (role === "requester") return SCOPE_OPTIONS.filter((o) => o.scope === "pedidos:read");
+    if (role === "team") return SCOPE_OPTIONS.filter((o) => o.scope !== "painel:read");
+    return SCOPE_OPTIONS;
+}
+
 export const VALIDITY_OPTIONS = [
     { days: 7, label: "7 dias" },
     { days: 30, label: "30 dias" },
@@ -48,7 +64,7 @@ export const STATE_LABEL: Record<TokenState, string> = {
 export function lastUseLabel(token: Pick<McpAccessToken, "last_used_at" | "last_client">, now: number = Date.now()): string {
     if (!token.last_used_at) return "Nunca usado";
     const when = relativeTime(token.last_used_at, now);
-    return token.last_client ? `Usado ${when} pelo ${token.last_client}` : `Usado ${when}`;
+    return token.last_client ? `Usado ${when} pelo ${clientLabel(token.last_client)}` : `Usado ${when}`;
 }
 
 /** "Expira em 12 dias", "Expira hoje", "Expirou em 20/10/2026" or "Revogado em 21/10/2026". */
@@ -86,3 +102,36 @@ export function clientSetup(url: string, token: string): { label: string; text: 
         },
     ];
 }
+
+const CLIENT_LABELS: Record<string, string> = {
+    "claude-code": "Claude Code",
+    "claude-ai": "Claude",
+    claude: "Claude",
+    codex: "Codex",
+    "codex-mcp-client": "Codex",
+    cursor: "Cursor",
+    "hermes-docbot": "Hermes",
+};
+
+/** "Claude Code" for claude-code; an unknown client keeps its own name. */
+export function clientLabel(client: string): string {
+    return CLIENT_LABELS[client.toLowerCase()] ?? client;
+}
+
+/** Each MCP tool, in the Legal team's words, for the activity history. */
+export const TOOL_LABELS: Record<string, string> = {
+    mike_quem_sou: "conferiu o acesso",
+    mike_contratos_buscar: "buscou na carteira",
+    mike_contratos_ficha: "leu a Ficha de um contrato",
+    mike_contratos_documento: "leu o texto de um contrato",
+    mike_contratos_atividade: "leu a atividade de um contrato",
+    mike_revisao_listar: "listou as revisões de um contrato",
+    mike_revisao_ler: "leu uma revisão por playbook",
+    mike_prazos_proximos: "consultou os prazos",
+    mike_base_perguntar: "perguntou à base de contratos",
+    mike_radar_mudancas: "consultou o radar regulatório",
+    mike_radar_contratos_afetados: "viu os contratos afetados por uma mudança",
+    mike_controle_listar: "listou as tabelas de análise",
+    mike_controle_ler: "leu uma tabela de análise",
+    mike_painel_metricas: "leu o Painel do Legal",
+};

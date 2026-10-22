@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MikeApiError, createMcpToken, listMcpTokens, revokeMcpToken, type McpAccessToken } from "@/app/lib/mikeApi";
+import { MikeApiError, createMcpToken, getRequestRole, listMcpTokens, revokeMcpToken, type McpAccessToken } from "@/app/lib/mikeApi";
 import { needsMfaVerification } from "@/app/components/popups/MfaVerificationPopup";
 
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/app/lib/mikeApi")>();
-    return { ...actual, listMcpTokens: vi.fn(), createMcpToken: vi.fn(), revokeMcpToken: vi.fn() };
+    return { ...actual, listMcpTokens: vi.fn(), createMcpToken: vi.fn(), revokeMcpToken: vi.fn(), getRequestRole: vi.fn() };
 });
 const mfa = vi.hoisted(() => ({ onVerified: null as null | (() => void), open: false }));
 vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
@@ -54,6 +54,7 @@ beforeEach(() => {
     vi.mocked(listMcpTokens).mockReset();
     vi.mocked(createMcpToken).mockReset();
     vi.mocked(revokeMcpToken).mockReset();
+    vi.mocked(getRequestRole).mockReset().mockResolvedValue({ configured: true, role: "head", area: null, areas: [] });
     vi.mocked(needsMfaVerification).mockReset().mockResolvedValue(false);
     push.mockReset();
     toast.showToast.mockReset();
@@ -72,18 +73,25 @@ describe("Tokens de acesso para agentes", () => {
         const items = within(screen.getByRole("list", { name: "Tokens de acesso" })).getAllByRole("listitem");
         expect(items.map((i) => i.textContent?.slice(0, 22))).toEqual(["Claude Code do noteboo", "Codex antigoRevogadomi"]);
         expect(items[0].textContent).toContain("Legal Avenia");
-        expect(items[0].textContent).toContain("Usado há 5 min pelo claude-code");
+        expect(items[0].textContent).toContain("Usado há 5 min pelo Claude Code");
         expect(items[0].textContent).toContain("Expira em 29 dias");
         expect(items[0].textContent).toContain("Ler contratos · Ver prazos");
         expect(within(items[0]).getByRole("button", { name: "Revogar Claude Code do notebook" })).toBeTruthy();
+        // Inactive is neutral grey, never the red of a failure.
+        const revoked = within(items[1]).getByText("Revogado");
+        expect(revoked.className).toContain("text-gray-400");
+        expect(revoked.className).not.toMatch(/red/);
         expect(items[1].textContent).toContain("Pessoal");
         expect(items[1].textContent).toContain("Nunca usado");
         expect(within(items[1]).queryByRole("button")).toBeNull();
     });
 
-    it("shows an empty state with a way to start", async () => {
-        vi.mocked(listMcpTokens).mockResolvedValue([]);
+    it("shows skeleton lines while loading, then an empty state with a way to start", async () => {
+        let resolve!: (v: McpAccessToken[]) => void;
+        vi.mocked(listMcpTokens).mockReturnValue(new Promise((r) => (resolve = r)));
         await renderPage();
+        expect(screen.getByLabelText("Carregando tokens").getAttribute("aria-busy")).toBe("true");
+        await act(async () => resolve([]));
         expect(screen.getByText("Nenhum token ainda")).toBeTruthy();
     });
 
@@ -93,7 +101,7 @@ describe("Tokens de acesso para agentes", () => {
         await renderPage();
         fireEvent.click(screen.getByRole("button", { name: "Criar token" }));
         fireEvent.change(screen.getByPlaceholderText("Ex.: Claude Code do notebook"), { target: { value: "  Claude Code  " } });
-        fireEvent.change(screen.getByDisplayValue("Pessoal"), { target: { value: "org-1" } });
+        fireEvent.change(screen.getByLabelText("Espaço"), { target: { value: "org-1" } });
         fireEvent.click(screen.getByLabelText(/Ver o Painel do Legal/));
         await act(async () => {
             fireEvent.click(screen.getAllByRole("button", { name: "Criar token" }).at(-1)!);
@@ -110,7 +118,9 @@ describe("Tokens de acesso para agentes", () => {
         expect(screen.getByText(/claude mcp add --transport http mike .*\/mcp --header "Authorization: Bearer mike_pat_SEGREDO"/)).toBeTruthy();
         expect(screen.getByText(/bearer_token_env_var = "MIKE_TOKEN"/)).toBeTruthy();
 
-        fireEvent.click(screen.getAllByRole("button", { name: "Copiar" })[0]);
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Copiar Token" }));
+        });
         expect(navigator.clipboard.writeText).toHaveBeenCalledWith("mike_pat_SEGREDO");
 
         await act(async () => {
@@ -119,6 +129,49 @@ describe("Tokens de acesso para agentes", () => {
         // Gone from the screen for good; the list shows it by prefix only.
         expect(screen.queryByText(/mike_pat_SEGREDO/)).toBeNull();
         expect(screen.getByText("Claude Code")).toBeTruthy();
+    });
+
+    it("never loses the token silently: closing the modal asks first", async () => {
+        vi.mocked(listMcpTokens).mockResolvedValue([]);
+        vi.mocked(createMcpToken).mockResolvedValue({ token: "mike_pat_SEGREDO", access_token: token() });
+        await renderPage();
+        fireEvent.click(screen.getByRole("button", { name: "Criar token" }));
+        fireEvent.change(screen.getByPlaceholderText("Ex.: Claude Code do notebook"), { target: { value: "Codex" } });
+        await act(async () => {
+            fireEvent.click(screen.getAllByRole("button", { name: "Criar token" }).at(-1)!);
+        });
+        fireEvent.keyDown(document, { key: "Escape" });
+        expect(screen.getByText("Fechar sem copiar?")).toBeTruthy();
+        fireEvent.click(screen.getByRole("button", { name: "Voltar e copiar" }));
+        expect(screen.getAllByText("mike_pat_SEGREDO").length).toBe(1);
+        fireEvent.keyDown(document, { key: "Escape" });
+        fireEvent.click(screen.getByRole("button", { name: "Fechar mesmo assim" }));
+        expect(screen.queryByText(/mike_pat_SEGREDO/)).toBeNull();
+    });
+
+    it("says so when the browser will not copy", async () => {
+        Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))) } });
+        vi.mocked(listMcpTokens).mockResolvedValue([]);
+        vi.mocked(createMcpToken).mockResolvedValue({ token: "mike_pat_X", access_token: token() });
+        await renderPage();
+        fireEvent.click(screen.getByRole("button", { name: "Criar token" }));
+        fireEvent.change(screen.getByPlaceholderText("Ex.: Claude Code do notebook"), { target: { value: "Codex" } });
+        await act(async () => {
+            fireEvent.click(screen.getAllByRole("button", { name: "Criar token" }).at(-1)!);
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Copiar Token" }));
+        });
+        expect(toast.showToast).toHaveBeenCalledWith({ tone: "error", message: "Não consegui copiar. Selecione o texto e copie à mão." });
+    });
+
+    it("offers the Painel only to the head of Legal", async () => {
+        vi.mocked(listMcpTokens).mockResolvedValue([]);
+        vi.mocked(getRequestRole).mockResolvedValue({ configured: true, role: "team", area: null, areas: [] });
+        await renderPage();
+        fireEvent.click(screen.getByRole("button", { name: "Criar token" }));
+        expect(screen.queryByLabelText(/Ver o Painel do Legal/)).toBeNull();
+        expect(screen.getByLabelText(/Ler contratos/)).toBeTruthy();
     });
 
     it("asks for the second factor before creating, and creates once it is verified", async () => {

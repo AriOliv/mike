@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+    clientLabel,
     clientSetup,
     DEFAULT_SCOPES,
     lastUseLabel,
     mcpServerUrl,
     SCOPE_OPTIONS,
+    scopesFor,
     STATE_LABEL,
+    TOOL_LABELS,
     tokenState,
     validityLabel,
 } from "./mcpTokens";
@@ -31,7 +34,8 @@ describe("access token words", () => {
 
     it("says when and by which client a token was last used", () => {
         expect(lastUseLabel({ last_used_at: null, last_client: null }, NOW)).toBe("Nunca usado");
-        expect(lastUseLabel({ last_used_at: iso(NOW - 5 * 60_000), last_client: "claude-code" }, NOW)).toBe("Usado há 5 min pelo claude-code");
+        expect(lastUseLabel({ last_used_at: iso(NOW - 5 * 60_000), last_client: "claude-code" }, NOW)).toBe("Usado há 5 min pelo Claude Code");
+        expect(lastUseLabel({ last_used_at: iso(NOW - 5 * 60_000), last_client: "meu-bot" }, NOW)).toBe("Usado há 5 min pelo meu-bot");
         expect(lastUseLabel({ last_used_at: iso(NOW - 5 * 60_000), last_client: null }, NOW)).toBe("Usado há 5 min");
     });
 
@@ -59,5 +63,23 @@ describe("access token words", () => {
         expect(codex.text.split("\n# no shell")[0]).not.toContain("mike_pat_abc");
         expect(codex.text).toContain('bearer_token_env_var = "MIKE_TOKEN"');
         expect(codex.text).toContain('export MIKE_TOKEN="mike_pat_abc"');
+    });
+
+    it("offers each role only the permissions it can use", () => {
+        const scopes = (who: Parameters<typeof scopesFor>[0]) => scopesFor(who).map((o) => o.scope);
+        expect(scopes({ configured: true, role: "head" })).toContain("painel:read");
+        expect(scopes({ configured: true, role: "team" })).not.toContain("painel:read");
+        expect(scopes({ configured: true, role: "team" })).toContain("contratos:read");
+        expect(scopes({ configured: true, role: "requester" })).toEqual(["pedidos:read"]);
+        // No Legal team configured, or role not known yet: the team's, as the menu.
+        expect(scopes({ configured: false, role: "requester" })).toEqual(scopes({ configured: true, role: "team" }));
+        expect(scopes(null)).toEqual(scopes({ configured: true, role: "team" }));
+    });
+
+    it("names clients and tools in the Legal team's words", () => {
+        expect(clientLabel("Codex")).toBe("Codex");
+        expect(clientLabel("hermes-docbot")).toBe("Hermes");
+        expect(clientLabel("outro")).toBe("outro");
+        expect(TOOL_LABELS.mike_contratos_ficha).toBe("leu a Ficha de um contrato");
     });
 });

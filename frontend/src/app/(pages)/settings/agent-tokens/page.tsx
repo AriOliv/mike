@@ -15,24 +15,27 @@ import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import { SettingsDescription, SettingsLabel } from "@/app/components/settings/SettingsText";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
+import { SkeletonLine } from "@/app/components/shared/TablePrimitive";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { StatusChip, type ChipStatus } from "@/app/components/ui/status-chip";
 import { showToast } from "@/app/components/ui/toast";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import {
     clientSetup,
-    DEFAULT_SCOPES,
     lastUseLabel,
     mcpServerUrl,
     SCOPE_OPTIONS,
+    scopesFor,
     STATE_LABEL,
     tokenState,
     validityLabel,
     VALIDITY_OPTIONS,
+    type LegalRole,
     type TokenState,
 } from "@/app/lib/mcpTokens";
 import {
     createMcpToken,
+    getRequestRole,
     isMfaRequiredError,
     listMcpTokens,
     revokeMcpToken,
@@ -45,38 +48,46 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
 const PT = (action: string) => ({ lang: "pt" as const, action });
 
-const CHIP: Record<TokenState, ChipStatus> = {
-    ativo: "concluido",
-    expira_em_breve: "aguardando",
-    expirado: "a_fazer",
-    revogado: "erro",
+// Inactive (expired, revoked) is neither a failure nor work to do: the
+// neutral chip, greyed further. Red stays for a real failure (doc 05).
+const CHIP: Record<TokenState, { status: ChipStatus; className?: string; title?: string }> = {
+    ativo: { status: "concluido" },
+    expira_em_breve: { status: "aguardando", title: "Crie um novo antes de expirar" },
+    expirado: { status: "a_fazer", className: "bg-gray-50 text-gray-400" },
+    revogado: { status: "a_fazer", className: "bg-gray-50 text-gray-400" },
 };
 
 type Draft = { name: string; workspace: string; scopes: McpScope[]; days: number };
 
-const EMPTY_DRAFT: Draft = { name: "", workspace: "personal", scopes: [...DEFAULT_SCOPES], days: 30 };
+const emptyDraft = (offered: typeof SCOPE_OPTIONS): Draft => ({
+    name: "",
+    workspace: "personal",
+    scopes: offered.map((o) => o.scope),
+    days: 30,
+});
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
     const [copied, setCopied] = useState(false);
+    const copy = async () => {
+        try {
+            if (!navigator.clipboard) throw new Error("clipboard unavailable");
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch {
+            showToast({ tone: "error", message: "Não consegui copiar. Selecione o texto e copie à mão." });
+        }
+    };
     return (
         <div className="space-y-1">
             <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-medium text-gray-700">{label}</span>
-                <PillButtonUI
-                    tone="white"
-                    size="xs"
-                    onClick={() => {
-                        void navigator.clipboard?.writeText(text).then(() => {
-                            setCopied(true);
-                            setTimeout(() => setCopied(false), 2000);
-                        });
-                    }}
-                >
+                <PillButtonUI tone="white" size="xs" onClick={() => void copy()} aria-label={`Copiar ${label}`}>
                     {copied ? <Check aria-hidden="true" className="h-3 w-3" /> : <Copy aria-hidden="true" className="h-3 w-3" />}
                     {copied ? "Copiado" : "Copiar"}
                 </PillButtonUI>
             </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-gray-200 bg-gray-50 p-2 font-mono text-[11px] text-gray-800">
+            <pre className="select-all overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-gray-200 bg-gray-50 p-2 font-mono text-[11px] text-gray-800">
                 {text}
             </pre>
         </div>
@@ -87,8 +98,11 @@ export default function AgentTokensPage() {
     const router = useRouter();
     const { organizations } = useWorkspace();
     const [tokens, setTokens] = useState<McpAccessToken[] | null>(null);
+    const [who, setWho] = useState<LegalRole>(null);
+    const offered = useMemo(() => scopesFor(who), [who]);
     const [creating, setCreating] = useState(false);
-    const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+    const [draft, setDraft] = useState<Draft>(() => emptyDraft(scopesFor(null)));
+    const [leaving, setLeaving] = useState(false);
     const [saving, setSaving] = useState(false);
     const [mfaOpen, setMfaOpen] = useState(false);
     const [needsEnrollment, setNeedsEnrollment] = useState(false);
@@ -116,7 +130,17 @@ export default function AgentTokensPage() {
     }, []);
     useEffect(() => {
         void load();
+        // The role decides which permissions are worth offering; without it
+        // the screen offers the team's, as the menu does.
+        getRequestRole()
+            .then((r) => setWho({ configured: r.configured, role: r.role }))
+            .catch(() => setWho(null));
     }, [load]);
+
+    const openCreate = () => {
+        setDraft(emptyDraft(offered));
+        setCreating(true);
+    };
 
     const submit = async () => {
         if (saving) return;
@@ -133,7 +157,6 @@ export default function AgentTokensPage() {
                 expires_in_days: draft.days,
             });
             setCreating(false);
-            setDraft(EMPTY_DRAFT);
             setCreated({ token: result.token, name: result.access_token.name });
             setTokens((list) => [result.access_token, ...(list ?? [])]);
         } catch (e) {
@@ -182,7 +205,7 @@ export default function AgentTokensPage() {
                             protocolo MCP. O agente vê só o que você vê na tela e, por enquanto, só lê: não muda nada.
                         </SettingsDescription>
                     </div>
-                    <PillButtonUI tone="black" size="sm" onClick={() => setCreating(true)}>
+                    <PillButtonUI tone="black" size="sm" onClick={openCreate}>
                         <KeyRound aria-hidden="true" className="h-3.5 w-3.5" />
                         Criar token
                     </PillButtonUI>
@@ -190,9 +213,14 @@ export default function AgentTokensPage() {
 
                 <GlassCardUI>
                     {tokens === null ? (
-                        <p className="p-4 text-xs text-gray-500" aria-busy="true">
-                            Carregando…
-                        </p>
+                        <div className="space-y-3 p-4" aria-busy="true" aria-label="Carregando tokens">
+                            {[0, 1, 2].map((i) => (
+                                <div key={i} className="space-y-1.5">
+                                    <SkeletonLine className="w-48" />
+                                    <SkeletonLine className="w-72" />
+                                </div>
+                            ))}
+                        </div>
                     ) : tokens.length === 0 ? (
                         <EmptyState
                             icon={<KeyRound aria-hidden="true" className="h-5 w-5" />}
@@ -210,7 +238,9 @@ export default function AgentTokensPage() {
                                             <div className="min-w-0 space-y-1">
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <SettingsLabel>{t.name}</SettingsLabel>
-                                                    <StatusChip status={CHIP[state]} label={STATE_LABEL[state]} />
+                                                    <span title={CHIP[state].title}>
+                                                        <StatusChip status={CHIP[state].status} className={CHIP[state].className} label={STATE_LABEL[state]} />
+                                                    </span>
                                                 </div>
                                                 <p className="break-words text-xs text-gray-500">
                                                     <span className="font-mono">{t.prefix}</span> · {workspaceName(t.workspace)} ·{" "}
@@ -265,9 +295,13 @@ export default function AgentTokensPage() {
                             autoFocus
                         />
                     </label>
-                    <label className="block space-y-1">
-                        <span className="text-xs font-medium text-gray-700">Workspace</span>
+                    <div className="space-y-1">
+                        <label htmlFor="agent-token-space" className="block text-xs font-medium text-gray-700">
+                            Espaço
+                        </label>
                         <select
+                            id="agent-token-space"
+                            aria-describedby="agent-token-space-hint"
                             className={SETTINGS_CONTROL_CLASS}
                             value={draft.workspace}
                             onChange={(e) => setDraft({ ...draft, workspace: e.target.value })}
@@ -279,11 +313,13 @@ export default function AgentTokensPage() {
                                 </option>
                             ))}
                         </select>
-                        <span className="block text-[11px] text-gray-500">O agente vê só os contratos deste workspace.</span>
-                    </label>
+                        <span id="agent-token-space-hint" className="block text-[11px] text-gray-500">
+                            O agente vê só os contratos deste espaço.
+                        </span>
+                    </div>
                     <fieldset className="space-y-1">
                         <legend className="text-xs font-medium text-gray-700">O que o agente pode fazer</legend>
-                        {SCOPE_OPTIONS.map((o) => (
+                        {offered.map((o) => (
                             <label key={o.scope} className="flex items-start gap-2 py-0.5 text-xs text-gray-800">
                                 <input
                                     type="checkbox"
@@ -324,7 +360,7 @@ export default function AgentTokensPage() {
 
             <Modal
                 open={created !== null}
-                onClose={() => setCreated(null)}
+                onClose={() => setLeaving(true)}
                 breadcrumbs={[created ? `Token “${created.name}” criado` : ""]}
                 primaryAction={{ label: "Já guardei o token", onClick: () => setCreated(null) }}
                 cancelAction={false}
@@ -339,11 +375,24 @@ export default function AgentTokensPage() {
                             <CopyBlock key={c.label} label={c.label} text={c.text} />
                         ))}
                         <p className="text-[11px] text-gray-500">
-                            Depois de conectar, peça ao agente “mike_quem_sou” para conferir em nome de quem ele age.
+                            Depois de conectar, peça ao agente: “Quem sou eu no Mike?” (ferramenta mike_quem_sou), para conferir em nome de quem ele age.
                         </p>
                     </div>
                 ) : null}
             </Modal>
+
+            <ConfirmPopup
+                open={leaving}
+                title="Fechar sem copiar?"
+                message="O token não aparece de novo. Se fechar sem guardar, revogue-o e crie outro."
+                confirmLabel="Fechar mesmo assim"
+                cancelLabel="Voltar e copiar"
+                onConfirm={() => {
+                    setLeaving(false);
+                    setCreated(null);
+                }}
+                onCancel={() => setLeaving(false)}
+            />
 
             <MfaVerificationPopup
                 open={mfaOpen}

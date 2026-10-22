@@ -11,10 +11,10 @@ import { z } from "zod";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeDb } from "./fakeDb";
 
-const state = vi.hoisted(() => ({ db: null as unknown, role: "team" as "head" | "team" | "requester" }));
+const state = vi.hoisted(() => ({ db: null as unknown, role: "team" as "head" | "team" | "requester", configured: true }));
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: () => state.db }));
 vi.mock("../../requests/requests.service", () => ({
-    whoAmI: vi.fn(async () => ({ ok: true, data: { configured: true, role: state.role, area: null, areas: [] } })),
+    whoAmI: vi.fn(async () => ({ ok: true, data: { configured: state.configured, role: state.role, area: null, areas: [] } })),
 }));
 const audit = vi.hoisted(() => ({ recordAudit: vi.fn(async () => undefined) }));
 vi.mock("../../../lib/audit", () => audit);
@@ -60,6 +60,7 @@ beforeEach(() => {
     state.db = fake.db;
     tables = fake.tables;
     state.role = "team";
+    state.configured = true;
     audit.recordAudit.mockClear();
 });
 
@@ -121,6 +122,16 @@ describe("/mcp over HTTP", () => {
         const refused = await narrow.callTool({ name: "mike_contratos_buscar", arguments: {} });
         expect(refused.isError).toBe(true);
         await narrow.close();
+    });
+
+    it("reads like the team when no Legal team is configured, as the menu does", async () => {
+        state.configured = false;
+        state.role = "requester";
+        const client = await connect(await token());
+        const names = (await client.listTools()).tools.map((t) => t.name);
+        expect(names).toContain("mike_contratos_buscar");
+        expect(names).not.toContain("mike_painel_metricas");
+        await client.close();
     });
 
     it("refuses a missing, unknown or revoked token with 401 and a Portuguese message", async () => {
