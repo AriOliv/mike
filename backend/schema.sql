@@ -1255,7 +1255,10 @@ create index if not exists idx_mcp_access_tokens_user
 
 alter table public.mcp_access_tokens enable row level security;
 revoke all on public.mcp_access_tokens from anon, authenticated;
-grant select, insert, update on public.mcp_access_tokens to service_role;
+-- delete too: schema.sql's blanket service_role grant (which runs after this
+-- table) gives it, and fresh and upgraded installs must match. The backend
+-- never deletes a token; revoking stamps revoked_at.
+grant select, insert, update, delete on public.mcp_access_tokens to service_role;
 
 create index if not exists idx_projects_user
   on public.projects(user_id);
