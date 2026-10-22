@@ -129,6 +129,7 @@ export const TOOL_LABELS: Record<string, string> = {
     mike_pedidos_ler: "leu um pedido ao Legal",
     mike_pedidos_status_e_plano: "viu o andamento de um pedido",
     mike_pedidos_fila: "leu a fila de pedidos do Legal",
+    mike_pedidos_checklist: "leu o checklist de um pedido",
     mike_revisao_listar: "listou as revisões de um contrato",
     mike_revisao_ler: "leu uma revisão por playbook",
     mike_prazos_proximos: "consultou os prazos",
