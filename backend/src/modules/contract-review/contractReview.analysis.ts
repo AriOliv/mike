@@ -259,18 +259,24 @@ export function withMissingIntake(result: AnalysisResult, intake: IntakeAnswer[]
     };
 }
 
-// List prices in US$ per million tokens (input, output), by model family. An
-// estimate: the provider layer does not report usage to this module yet.
+// List prices in US$ per million tokens (input, output), by model family.
 const PRICES: [RegExp, number, number][] = [
     [/haiku/i, 1, 5],
     [/sonnet/i, 3, 15],
     [/opus/i, 15, 75],
 ];
 
-/** Tokens from characters (≈4 per token) and the list price of the model's family; null price when unknown. */
-export function estimateUsage(model: string, calls: { input: number; output: number }[]) {
-    const input = Math.round(calls.reduce((sum, call) => sum + call.input, 0) / 4);
-    const output = Math.round(calls.reduce((sum, call) => sum + call.output, 0) / 4);
+/**
+ * Tokens as the provider reported them, else from characters (≈4 per token,
+ * which undercounts Portuguese), at the list price of the model's family;
+ * null price when unknown. `estimated` says whether any call had no report.
+ */
+export function estimateUsage(
+    model: string,
+    calls: { input: number; output: number; reported?: { inputTokens: number; outputTokens: number } | null }[],
+) {
+    const input = calls.reduce((sum, call) => sum + (call.reported ? call.reported.inputTokens : Math.round(call.input / 4)), 0);
+    const output = calls.reduce((sum, call) => sum + (call.reported ? call.reported.outputTokens : Math.round(call.output / 4)), 0);
     const price = PRICES.find(([pattern]) => pattern.test(model));
     const cost = price ? (input / 1e6) * price[1] + (output / 1e6) * price[2] : null;
     return {
@@ -279,7 +285,7 @@ export function estimateUsage(model: string, calls: { input: number; output: num
         input_tokens: input,
         output_tokens: output,
         estimated_cost_usd: cost === null ? null : Math.round(cost * 10_000) / 10_000,
-        estimated: true,
+        estimated: calls.some((call) => !call.reported),
     };
 }
 

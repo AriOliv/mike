@@ -14,7 +14,7 @@ import type { Db } from "../../lib/supabase";
 import type { DbJob } from "../../lib/dbq/types";
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import { NonRetryableJobError } from "../../lib/dbq/runner";
-import { completeText } from "../../lib/llm";
+import { completeText, type TokenUsage } from "../../lib/llm";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { getUserModelSettings } from "../user/user.service";
 import { finishAgentRun, recordCardEvent, startAgentRun } from "../contracts/contracts.service";
@@ -228,19 +228,23 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
             intake: row.intake ?? [],
             playbook: yardstick ? { name: yardstick.name, findings: yardstick.findings } : null,
         });
+        let reported: TokenUsage | null = null;
         const raw = await completeText({
             model,
             systemPrompt: "Você é um analista jurídico brasileiro revisando um contrato para o time jurídico da Avenia. Responda apenas com JSON válido.",
             user: prompt,
             maxTokens: 16_000,
             apiKeys: settings.api_keys,
+            onUsage: (usage) => {
+                reported = usage;
+            },
         });
         const { result, dropped } = normalizeAnalysis(parseModelJson(raw), documentText, yardstick?.findings ?? []);
         const final = withMissingIntake(result, row.intake ?? []);
         if (dropped.length)
             // Counts only: the quotes are contract text.
             console.warn(`[analysis] ${row.id}: ${dropped.length} citation(s) not found in the document were dropped`);
-        const usage = estimateUsage(model, [{ input: prompt.length, output: raw.length }]);
+        const usage = estimateUsage(model, [{ input: prompt.length, output: raw.length, reported }]);
         const counts = analysisCounts(final);
         const finished = new Date().toISOString();
         await setRow(db, row.id, {
@@ -258,6 +262,9 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
             output: { analysis_id: row.id, ...counts, dropped: dropped.length },
             modelResolved: model,
             latencyMs: Date.now() - started,
+            tokensIn: usage.input_tokens,
+            tokensOut: usage.output_tokens,
+            costUsd: usage.estimated_cost_usd,
         });
         await recordCardEvent(db, {
             projectId: row.project_id,

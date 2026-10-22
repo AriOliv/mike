@@ -113,4 +113,17 @@ describe("withMissingIntake and estimateUsage", () => {
         });
         expect(estimateUsage("gemini-4-argon", [{ input: 4, output: 4 }]).estimated_cost_usd).toBeNull();
     });
+
+    it("uses the provider's token counts when it reports them", () => {
+        expect(
+            estimateUsage("claude-sonnet-5-5", [{ input: 400_000, output: 40_000, reported: { inputTokens: 150_000, outputTokens: 12_000 } }]),
+        ).toEqual({
+            model: "claude-sonnet-5-5",
+            calls: 1,
+            input_tokens: 150_000,
+            output_tokens: 12_000,
+            estimated_cost_usd: 0.63,
+            estimated: false,
+        });
+    });
 });

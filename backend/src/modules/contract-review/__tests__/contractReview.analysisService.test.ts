@@ -108,6 +108,28 @@ describe("startAnalystAnalysis", () => {
 });
 
 describe("handleAnalystAnalysis", () => {
+    it("records the provider's token counts, not the character estimate, when it reports them", async () => {
+        llm.completeText.mockImplementationOnce(async (params: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            params.onUsage?.({ inputTokens: 10_000, outputTokens: 2_000 });
+            return modelAnswer;
+        });
+        const fake = scriptedDb([
+            { table: "contract_analyses", data: row() },
+            { table: "contract_analyses", op: "update" },
+            { table: "projects", data: { contract_type: null } },
+            { table: "contract_analyses", op: "update" },
+        ]);
+        await handleAnalystAnalysis(fake.db, job());
+        const done = fake.calls[3].payload as Record<string, any>;
+        // Sonnet: 10k × US$ 3/M + 2k × US$ 15/M.
+        expect(done.usage).toMatchObject({ input_tokens: 10_000, output_tokens: 2_000, estimated_cost_usd: 0.06, estimated: false });
+        expect(contracts.finishAgentRun).toHaveBeenCalledWith(
+            expect.anything(),
+            "run1",
+            expect.objectContaining({ status: "succeeded", tokensIn: 10_000, tokensOut: 2_000, costUsd: 0.06 }),
+        );
+    });
+
     it("writes the verified analysis, announces it on the card and hands the counts to the request", async () => {
         const fake = scriptedDb([
             { table: "contract_analyses", data: row() },
