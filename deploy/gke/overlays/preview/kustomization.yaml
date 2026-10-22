@@ -21,6 +21,12 @@ configMapGenerator:
       # MCP OAuth (Phase 2) is on only where this is set: the resource the
       # tokens are issued for. Preview only; staging has no public MCP.
       - MCP_PUBLIC_URL=https://preview.34-120-191-197.nip.io/mcp
+      # AI through the LiteLLM gateway with a key of its own (mike-preview: its
+      # own budget, haiku and sonnet only), never staging's. The key comes from
+      # this namespace's mike-litellm Secret (patch below); every call carries
+      # LiteLLM's message-redaction header, as on staging.
+      - MIKE_MODEL_CONFIG_JSON={"models":[{"id":"claude-haiku-5-5","label":"Claude Haiku 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}},{"id":"claude-sonnet-5-5","label":"Claude Sonnet 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}}]}
+      - LLM_MAX_OUTPUT_TOKENS=32000
 images:
   - name: mike-backend
     newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend
@@ -29,6 +35,14 @@ images:
     newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/frontend
     newTag: latest
 patches:
+  # the preview's LiteLLM key, for the backend only
+  - target: { kind: Deployment, name: backend }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LITELLM_API_KEY
+          valueFrom: { secretKeyRef: { name: mike-litellm, key: LITELLM_API_KEY } }
   # drop this namespace's Gateway; the routes point at staging's
   - target: { kind: Gateway, name: mike-edge }
     patch: |-
