@@ -97,7 +97,15 @@ export const DEFAULT_SETTINGS: AgentSettings = {
 };
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** A plain address: one @, no spaces, a dot inside the domain. Linear, no backtracking regex. */
+export function isEmail(value: string): boolean {
+    if (value.length > 254 || /\s/.test(value)) return false;
+    const at = value.indexOf("@");
+    if (at < 1 || at !== value.lastIndexOf("@")) return false;
+    const domain = value.slice(at + 1);
+    const dot = domain.lastIndexOf(".");
+    return dot > 0 && dot < domain.length - 1;
+}
 const MAX_PERSONA = 2000;
 const MAX_NAME = 60;
 
@@ -176,7 +184,7 @@ export function parseSettings(input: unknown): ParseResult<Omit<AgentSettings, "
     if (!escalationKinds) return fail("Tipo de pedido desconhecido na regra de escalada.");
     if (typeof escalation.low_confidence !== "boolean") return fail("Diga se o agente escala quando não tem certeza.");
     const escalateTo = typeof escalation.escalate_to_email === "string" ? escalation.escalate_to_email.trim().toLowerCase() : null;
-    if (escalateTo === null || (escalateTo && !EMAIL.test(escalateTo)))
+    if (escalateTo === null || (escalateTo && !isEmail(escalateTo)))
         return fail("O e-mail de quem recebe as escaladas não é válido.");
 
     if (!isObject(proactive)) return fail("Informe os avisos que o agente dá sozinho.");

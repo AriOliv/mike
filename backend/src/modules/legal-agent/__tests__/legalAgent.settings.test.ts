@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    isEmail,
     agentConfigForBot,
     DEFAULT_SETTINGS,
     DISCLAIMER,
@@ -92,6 +93,19 @@ describe("parseSettings", () => {
     it("accepts an empty escalation e-mail: the queue receives it", () => {
         const result = parseSettings({ ...valid(), escalation: { ...valid().escalation, escalate_to_email: "" } });
         expect(result.ok && result.value.escalation.escalate_to_email).toBe("");
+    });
+});
+
+describe("isEmail", () => {
+    it("accepts a plain address and refuses the rest, in linear time", () => {
+        expect(isEmail("head@avenia.io")).toBe(true);
+        for (const bad of ["head", "@avenia.io", "a@b", "a@b.", "a@.b", "a@@b.io", "a b@c.io", "a@b@c.io", "x".repeat(250) + "@a.io"])
+            expect(isEmail(bad)).toBe(false);
+        const start = Date.now();
+        expect(isEmail("!@!." + "!.".repeat(50_000))).toBe(false);
+        expect(isEmail("a@" + "b.".repeat(100) + "io")).toBe(true);
+        expect(isEmail("a".repeat(100_000))).toBe(false);
+        expect(Date.now() - start).toBeLessThan(200);
     });
 });
 
