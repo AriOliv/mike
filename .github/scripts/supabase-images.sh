@@ -16,7 +16,7 @@
 set -euo pipefail
 
 CLI_VERSION="${SUPABASE_CLI_VERSION:-2.108.0}"
-REPO="${GITHUB_REPOSITORY:-AriOliv/mike}"
+REPO="${GITHUB_REPOSITORY:-aol-tech/mike}"
 MIRROR="${MIRROR:-ghcr.io/$(tr 'A-Z' 'a-z' <<<"$REPO")-ci-mirror}"
 # What CI's stacks pull: the services they start (the rest is excluded with -x
 # in every job) plus realtime and storage-api, whose images the CLI still runs
