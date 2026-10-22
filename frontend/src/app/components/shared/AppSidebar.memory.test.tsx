@@ -276,11 +276,11 @@ describe("AppSidebar account dropdown", () => {
       name: "Hide recent chats and reviews in Open matter",
     });
     const list = toggle.closest(".overflow-y-auto");
-    expect(list).toHaveClass("h-64");
+    expect(list).toHaveClass("h-64", "[@media(max-height:960px)]:h-44");
 
     await user.click(toggle);
 
-    expect(list).toHaveClass("h-44");
+    expect(list).toHaveClass("h-44", "[@media(max-height:960px)]:h-28");
   });
 
   it("fades contents in when a sidebar that loaded closed is opened", () => {
