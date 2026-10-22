@@ -146,6 +146,24 @@ describe("channels", () => {
         ]);
     });
 
+    it("keeps the workspace id links count on, and says when another channel has it", async () => {
+        access.getOrgRole.mockResolvedValue("admin");
+        const fake = scriptedDb([
+            { table: "legal_agent_channels", op: "insert", data: channel },
+            { table: "legal_agent_settings", data: null },
+        ]);
+        await saveLegalAgentChannel(fake.db, caller, ORG, { kind: "slack", name: "S", config: { workspace: "A" }, platform_team_id: " T01 " });
+        expect(fake.calls[0].payload).toMatchObject({ platform_team_id: "T01" });
+        expect(
+            await saveLegalAgentChannel(scriptedDb([]).db, caller, ORG, { kind: "slack", name: "S", config: { workspace: "A" }, platform_team_id: "T 01" }),
+        ).toMatchObject({ kind: "validation" });
+        const taken = scriptedDb([{ table: "legal_agent_channels", op: "insert", error: { code: "23505", message: "dup" } }]);
+        expect(await saveLegalAgentChannel(taken.db, caller, ORG, { kind: "slack", name: "S", config: { workspace: "A" }, platform_team_id: "T01" })).toMatchObject({
+            kind: "conflict",
+            detail: "Este workspace já está ligado a outro canal desta organização.",
+        });
+    });
+
     it("refuses a bad channel before touching the database", async () => {
         access.getOrgRole.mockResolvedValue("admin");
         const db = scriptedDb([]).db;

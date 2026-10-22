@@ -30,6 +30,13 @@ const FIELDS: Record<LegalAgentChannelKind, { key: string; label: string; placeh
     ],
 };
 
+const TEAM_LABEL: Record<LegalAgentChannelKind, string> = {
+    slack: "ID do workspace do Slack (team id)",
+    telegram: "ID do bot no Telegram",
+    whatsapp: "Phone number ID do WhatsApp",
+};
+const TEAM_PLACEHOLDER: Record<LegalAgentChannelKind, string> = { slack: "T01ABCDE", telegram: "7654321", whatsapp: "106540352242922" };
+
 /**
  * The installation assistant for one chat channel, in two steps: the details
  * that are safe to keep (never a token), then the generated files and the
@@ -52,6 +59,7 @@ export function LegalAgentChannelWizard({
 }) {
     const [kind, setKind] = useState<LegalAgentChannelKind>(channel?.kind ?? "slack");
     const [name, setName] = useState(channel?.name ?? "");
+    const [teamId, setTeamId] = useState(channel?.platform_team_id ?? "");
     const [draft, setDraft] = useState<Record<string, string>>(() => channelDraft(channel?.kind ?? "slack", channel?.config));
     const [setup, setSetup] = useState<LegalAgentChannelSetup | null>(initialSetup ?? null);
     const [saving, setSaving] = useState(false);
@@ -73,6 +81,7 @@ export function LegalAgentChannelWizard({
                 kind,
                 name: name.trim(),
                 config: channelConfig(kind, draft),
+                platform_team_id: teamId.trim(),
             });
             setSetup(saved.setup);
             onSaved(saved.channel);
@@ -198,6 +207,13 @@ export function LegalAgentChannelWizard({
                             {field.hint ? <span className="block text-xs text-gray-500">{field.hint}</span> : null}
                         </label>
                     ))}
+                    <label className="block space-y-1 text-sm">
+                        <span className="text-gray-700">{TEAM_LABEL[kind]}</span>
+                        <input className={FIELD} value={teamId} onChange={(e) => setTeamId(e.target.value)} placeholder={TEAM_PLACEHOLDER[kind]} />
+                        <span className="block text-xs text-gray-500">
+                            Cada pessoa liga a conta de chat uma vez, no Mike. Só vale para este workspace.
+                        </span>
+                    </label>
                     {kind === "telegram" ? (
                         <div role="group" aria-label="Como recebe mensagens" className="flex flex-wrap gap-2">
                             <TabPillButtonUI active={draft.mode !== "webhook"} onClick={() => setDraft({ ...draft, mode: "polling" })}>
