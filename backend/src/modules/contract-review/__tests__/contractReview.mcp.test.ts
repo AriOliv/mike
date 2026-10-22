@@ -4,9 +4,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const svc = vi.hoisted(() => ({ listContractPortfolio: vi.fn(), getFicha: vi.fn() }));
+const svc = vi.hoisted(() => ({ listContractPortfolio: vi.fn(), getFicha: vi.fn(), listContractReviews: vi.fn(), getContractReview: vi.fn() }));
 vi.mock("../contractReview.portfolio", () => ({ listContractPortfolio: svc.listContractPortfolio }));
 vi.mock("../contractReview.fichaService", () => ({ getFicha: svc.getFicha }));
+vi.mock("../contractReview.reviews", () => ({ listContractReviews: svc.listContractReviews, getContractReview: svc.getContractReview }));
 vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn(async () => undefined) }));
 const events = vi.hoisted(() => ({ recordAgentRead: vi.fn(async () => undefined) }));
 vi.mock("../../contracts/contracts.service", () => events);
@@ -37,6 +38,8 @@ const row = (id: string, name: string, counterparty: string, over: Record<string
 beforeEach(() => {
     svc.listContractPortfolio.mockReset();
     svc.getFicha.mockReset();
+    svc.listContractReviews.mockReset();
+    svc.getContractReview.mockReset();
     events.recordAgentRead.mockClear();
     process.env.FRONTEND_URL = "https://mike.exemplo.test/";
 });
@@ -162,14 +165,103 @@ describe("mike_contratos_ficha", () => {
     });
 });
 
+describe("mike_revisao_listar and mike_revisao_ler", () => {
+    const RUN = "00000000-0000-4000-c000-000000000009";
+    const clause = (verdict: string, over: Record<string, unknown> = {}) => ({
+        id: `f-${verdict}`,
+        ruleId: "r",
+        topicId: null,
+        ruleName: `Regra ${verdict}`,
+        status: "needs_review",
+        quote: "a multa será de 50%",
+        location: "Cláusula 9",
+        analysis: "Multa acima da posição.",
+        suggestedText: "a multa será de 10%",
+        verdict,
+        playbook_status: "needs_review",
+        covered: true,
+        sources: [
+            { kind: "playbook", label: "Multa", position: "Até 10%", criteria: "Acima de 20% diverge" },
+            { kind: "ficha", path: "rescisao.multa_rescisoria", label: "Multa", state: "pendente", quote: null },
+        ],
+        rule_findings: [{ titulo: "Multa alta", severidade: "alta" }],
+        precedent: null,
+        decision: null,
+        ...over,
+    });
+
+    it("lists the reviews with their counts", async () => {
+        svc.listContractReviews.mockResolvedValue(
+            ok([{ id: RUN, status: "completed", started_at: "2026-10-20T10:00:00Z", playbook_name: "Playbook Avenia v1", counts: { alinhado: 8, precisa_revisao: 6, diverge: 3 } }]),
+        );
+        const { result, ctx } = await runToolForTest(tool("mike_revisao_listar"), { project_id: P1 });
+        expect(svc.listContractReviews).toHaveBeenCalledWith(ctx.db, ctx.caller, P1);
+        expect(result.structuredContent).toMatchObject({ revisoes: [{ review_id: RUN, playbook: "Playbook Avenia v1", alinhadas: 8, precisam_revisao: 6, divergem: 3 }] });
+        expect(result.content).toEqual([{ type: "text", text: "1 revisão(ões); a mais recente (Playbook Avenia v1): 3 divergem, 6 pedem revisão." }]);
+        svc.listContractReviews.mockResolvedValueOnce(ok([]));
+        expect((await runToolForTest(tool("mike_revisao_listar"), { project_id: P1 })).result.content).toEqual([{ type: "text", text: "Este contrato ainda não foi revisado por playbook." }]);
+    });
+
+    it("reads each clause with the playbook's position and the Legal's decision, filtered by verdict", async () => {
+        svc.getContractReview.mockResolvedValue(
+            ok({
+                id: RUN,
+                status: "completed",
+                error: null,
+                summary: "Três pontos divergem.",
+                started_at: "2026-10-20T10:00:00Z",
+                completed_at: "2026-10-20T10:05:00Z",
+                model: "m",
+                playbook: { id: "pb", name: "Playbook Avenia v1" },
+                document: { id: "d1", name: "nda.docx", edited_version_id: null },
+                clauses: [
+                    clause("diverge", { decision: { decision: "editado", edited_text: "multa de 15%", reason: "acordo comercial", decided_by: "Duda", decided_at: "2026-10-20T11:00:00Z", edit: null } }),
+                    clause("alinhado", { suggestedText: "" }),
+                ],
+                uncovered: [{ titulo: "Foro fora de SP", severidade: "media", justificativa: "Foro em outra comarca." }],
+            }),
+        );
+        const { result, ctx } = await runToolForTest(tool("mike_revisao_ler"), { project_id: P1, review_id: RUN, vereditos: ["diverge"] });
+        expect(svc.getContractReview).toHaveBeenCalledWith(ctx.db, ctx.caller, P1, RUN);
+        const out = result.structuredContent as { clausulas: Record<string, unknown>[]; contagem: unknown };
+        expect(out.contagem).toEqual({ alinhadas: 1, precisam_revisao: 0, divergem: 1, nao_se_aplicam: 0 });
+        expect(out.clausulas).toEqual([
+            {
+                regra: "Regra diverge",
+                veredito: "diverge",
+                local: "Cláusula 9",
+                trecho: "a multa será de 50%",
+                analise: "Multa acima da posição.",
+                redacao_sugerida: "a multa será de 10%",
+                posicao_do_playbook: [{ posicao: "Até 10%", criterio: "Acima de 20% diverge" }],
+                alertas_da_ficha: [{ titulo: "Multa alta", severidade: "alta" }],
+                decisao: { decisao: "editado", texto_editado: "multa de 15%", motivo: "acordo comercial", por: "Duda", em: "2026-10-20T11:00:00Z" },
+            },
+        ]);
+        expect(result.structuredContent).toMatchObject({ fora_do_playbook: [{ titulo: "Foro fora de SP" }], aviso: "Veredito do agente; a decisão sobre cada cláusula é do Legal." });
+        expect(result.content).toEqual([{ type: "text", text: "Revisão pelo playbook Playbook Avenia v1: 1 diverge, 0 precisa de revisão, 1 alinhada." }]);
+        expect(events.recordAgentRead).toHaveBeenCalledWith(ctx.db, expect.objectContaining({ projectId: P1, tool: "mike_revisao_ler" }));
+    });
+
+    it("says when a review is still running or failed, and keeps not_found", async () => {
+        svc.getContractReview.mockResolvedValueOnce(
+            ok({ id: RUN, status: "running", error: null, summary: null, started_at: "x", completed_at: null, model: "m", playbook: { id: "pb", name: "P" }, document: { id: null, name: null, edited_version_id: null }, clauses: [], uncovered: [] }),
+        );
+        expect((await runToolForTest(tool("mike_revisao_ler"), { project_id: P1, review_id: RUN })).result.content).toEqual([{ type: "text", text: "Revisão running." }]);
+        svc.getContractReview.mockResolvedValueOnce(failure("not_found", "Revisão não encontrada."));
+        expect((await runToolForTest(tool("mike_revisao_ler"), { project_id: P1, review_id: RUN })).result).toMatchObject({ structuredContent: { error: { code: "not_found" } } });
+    });
+});
+
 describe("gating", () => {
-    it("is for the Legal team with contratos:read, never for a requester", () => {
-        expect(CONTRACT_REVIEW_TOOLS.map((t) => [t.name, !!t.recordsRead])).toEqual([
-            ["mike_contratos_buscar", false],
-            ["mike_contratos_ficha", true],
+    it("is for the Legal team with its scope, never for a requester", () => {
+        expect(CONTRACT_REVIEW_TOOLS.map((t) => [t.name, t.scope, !!t.recordsRead])).toEqual([
+            ["mike_contratos_buscar", "contratos:read", false],
+            ["mike_contratos_ficha", "contratos:read", true],
+            ["mike_revisao_listar", "revisao:read", false],
+            ["mike_revisao_ler", "revisao:read", true],
         ]);
         for (const t of CONTRACT_REVIEW_TOOLS) {
-            expect(t.scope).toBe("contratos:read");
             expect(t.roles).toEqual(["head", "team"]);
             expect(t.access).toBe("read");
         }
