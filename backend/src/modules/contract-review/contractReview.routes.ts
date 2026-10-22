@@ -17,6 +17,13 @@ import {
     listContractPortfolio,
     listContractReviews,
     startContractReview,
+    analysisDocx,
+    decideAnalysisRedline,
+    exportAnalysis,
+    getAnalysisById,
+    getLatestAnalysis,
+    listRedlineDecisions,
+    startAnalystAnalysis,
     type Caller,
 } from "./contractReview.service";
 
@@ -95,6 +102,83 @@ contractReviewRouter.patch(
     "/ficha/fields",
     asyncRoute(async (req, res) => {
         send(res, await decideFichaField(createServerSupabase(), caller(res), req.params.projectId, body(req)));
+    }),
+);
+
+// The analyst's analysis: a draft for the legal team (editors of the contract).
+contractReviewRouter.get(
+    "/analysis",
+    asyncRoute(async (req, res) => {
+        send(res, await getLatestAnalysis(createServerSupabase(), caller(res), req.params.projectId));
+    }),
+);
+
+contractReviewRouter.post(
+    "/analysis",
+    asyncRoute(async (req, res) => {
+        const input = body(req);
+        send(
+            res,
+            await startAnalystAnalysis(createServerSupabase(), caller(res), req.params.projectId, {
+                request_id: input.request_id as string | null | undefined,
+                intake: input.intake,
+            }),
+            202,
+        );
+    }),
+);
+
+contractReviewRouter.get(
+    "/analysis/:analysisId",
+    asyncRoute(async (req, res) => {
+        const result = await getAnalysisById(createServerSupabase(), caller(res), req.params.analysisId);
+        // An analysis of another contract answers like one that does not exist.
+        if (result.ok && result.data.project_id !== req.params.projectId)
+            return void res.status(404).json({ detail: "Análise não encontrada." });
+        send(res, result);
+    }),
+);
+
+contractReviewRouter.get(
+    "/analysis/:analysisId/decisions",
+    asyncRoute(async (req, res) => {
+        send(res, await listRedlineDecisions(createServerSupabase(), caller(res), req.params.projectId, req.params.analysisId));
+    }),
+);
+
+contractReviewRouter.post(
+    "/analysis/:analysisId/redlines/:redlineId/decision",
+    asyncRoute(async (req, res) => {
+        send(
+            res,
+            await decideAnalysisRedline(
+                createServerSupabase(),
+                caller(res),
+                req.params.projectId,
+                req.params.analysisId,
+                req.params.redlineId,
+                body(req),
+            ),
+        );
+    }),
+);
+
+// ?format=md (default) answers the text; ?format=docx a Word file.
+contractReviewRouter.get(
+    "/analysis/:analysisId/export",
+    asyncRoute(async (req, res) => {
+        const result = await exportAnalysis(createServerSupabase(), caller(res), req.params.projectId, req.params.analysisId);
+        if (!result.ok) return void send(res, result);
+        const { filename, markdown } = result.data;
+        if (req.query.format === "docx") {
+            const file = await analysisDocx(markdown);
+            res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+            res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`${filename}.docx`)}`);
+            return void res.send(file);
+        }
+        res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`${filename}.md`)}`);
+        res.send(markdown);
     }),
 );
 

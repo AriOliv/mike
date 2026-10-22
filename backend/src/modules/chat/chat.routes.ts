@@ -1,3 +1,4 @@
+import { isUuidShape } from "../../lib/ids";
 import { abortable } from "../../lib/abortable";
 import {
     attachAssistantTurnSse,
@@ -110,9 +111,7 @@ chatRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     if (
         beforeUpdatedAt !== null &&
         (!Number.isFinite(Date.parse(beforeUpdatedAt)) ||
-            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-                beforeId!,
-            ))
+            !isUuidShape(beforeId))
     ) {
         return void res.status(400).json({ detail: "Invalid chat cursor" });
     }

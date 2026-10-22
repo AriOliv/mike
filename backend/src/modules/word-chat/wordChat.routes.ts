@@ -1,3 +1,4 @@
+import { isUuidShape } from "../../lib/ids";
 import { sendInternalError } from "../../lib/httpError";
 import {
   attachAssistantTurnSse,
@@ -66,13 +67,11 @@ export const wordChatRouter = Router();
 
 type WordChatStorageMode = "cloud" | "local";
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parseDocumentId(
   value: unknown,
 ): { ok: true; value: string } | { ok: false; detail: string } {
-  if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+  if (typeof value !== "string" || !isUuidShape(value)) {
     return { ok: false, detail: "document_id must be a UUID" };
   }
   return { ok: true, value };
@@ -101,7 +100,7 @@ function parseDocumentName(
 }
 
 function isUuid(value: string): boolean {
-  return UUID_PATTERN.test(value);
+  return isUuidShape(value);
 }
 
 function parseStorageMode(
