@@ -19,7 +19,7 @@ import type { DbJob } from "../../lib/dbq/types";
 import { safeError } from "../../lib/safeError";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
-import { startPlaybookReview } from "../playbooks/playbooks.service";
+import { findPlaybookForContractType, startPlaybookReview } from "../playbooks/playbooks.service";
 import { analysisModel, normalizeString, requireProjectEdit, requireProjectView, type Caller } from "./contracts.shared";
 import { extractTermsForAgent } from "./contracts.terms";
 import { finishAgentRun, recordCardEvent, startAgentRun } from "./contracts.events";
@@ -424,6 +424,24 @@ async function setReview(db: Db, id: string, patch: Record<string, unknown>) {
     if (error) throw error;
 }
 
+/** The organization's playbook for the card's contract type, when it has one. */
+async function playbookForCardType(db: Db, review: ReviewRow, caller: Caller): Promise<string | null> {
+    if (!review.org_id) return null;
+    const { data, error } = await db
+        .from("projects")
+        .select("contract_type")
+        .eq("id", review.project_id)
+        .maybeSingle();
+    if (error) throw error;
+    const contractType = (data as { contract_type: string | null } | null)?.contract_type ?? null;
+    const playbook = await findPlaybookForContractType(db, {
+        userId: caller.userId,
+        orgId: review.org_id,
+        contractType,
+    });
+    return playbook?.id ?? null;
+}
+
 /**
  * The job body: read the terms, run the playbook, record the outcome. It is
  * idempotent: a review that already finished is left alone, and a retried
@@ -462,11 +480,19 @@ export async function handleAutoReview(db: Db, job: DbJob): Promise<Record<strin
         await setReview(db, review.id, { step: "ficha" });
         const terms = await extractTermsForAgent(db, caller.userId, review.project_id, selected);
 
-        // 2. The playbook, when the folder has one.
+        // 2. The playbook: the folder's, else the organization's playbook for
+        // the contract's type, which the Ficha has just classified.
         let tally = { aligned: 0, needs_review: 0, deviates: 0 };
         let summary: string | null = null;
         let playbookRunId: string | null = null;
         let sources = terms ? Object.keys(terms.sources ?? {}).length : 0;
+        if (!review.playbook_id) {
+            const byType = await playbookForCardType(db, review, caller);
+            if (byType) {
+                review.playbook_id = byType;
+                await setReview(db, review.id, { playbook_id: byType });
+            }
+        }
         if (review.playbook_id) {
             await setReview(db, review.id, { step: "playbook" });
             const { run, done } = await startPlaybookReview({
