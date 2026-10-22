@@ -446,7 +446,7 @@ describe("through the mcp server", () => {
         expect(allowed(tool("listar_meus"), { role: "requester", scopes: [] })).toBe(false);
     });
 
-    it("runs a read into a Portuguese result; a write only proposes until the person confirms", async () => {
+    it("runs a read into a Portuguese result; a write not switched on is refused", async () => {
         const w = world();
         const code = await pedido(w);
         const ana = ctxOf(w, REQUESTER, "Ana", "requester");
@@ -455,13 +455,10 @@ describe("through the mcp server", () => {
         expect(read.structuredContent).toMatchObject({ codigo: code, etapa: "Recebido" });
         expect((read.content as { text: string }[])[0].text).toMatch(/^LEG-0001: Recebido/);
 
-        // Step 1 of a write: the preview, a confirmation code, nothing created.
+        // Off by name in WRITE_TOOLS_ENABLED: refused even called directly, nothing proposed or created.
         const write = await runTool(tool("criar"), ana, { tipo: "nda", descricao: "Outro piloto." });
-        expect(write.isError).toBeFalsy();
-        expect(write.structuredContent).toMatchObject({
-            precisa_confirmar: true,
-            resumo: expect.stringMatching(/^Criar o pedido “NDA” \(NDA\) para o Legal, prazo /),
-        });
+        expect(write.isError).toBe(true);
+        expect(write.structuredContent).toMatchObject({ error: { code: "forbidden" } });
         expect(w.table("legal_requests")).toHaveLength(1);
 
         const other = await runTool(tool("ler"), ctxOf(w, OTHER, "Beto", "requester"), { pedido: code });

@@ -7,6 +7,11 @@ import { z } from "zod";
 
 const audit = vi.hoisted(() => ({ recordAudit: vi.fn(async () => undefined) }));
 vi.mock("../../../lib/audit", () => audit);
+// The test writes are switched on here; the real list is the catalog's.
+vi.mock("../mcp.catalog", () => ({
+    WRITE_TOOLS_ENABLED: new Set(["mike_teste_mover", "mike_teste_outra"]),
+    catalogTools: () => [],
+}));
 
 import { ok } from "../../../lib/serviceResult";
 import { argumentsHash, canonicalJson, CONFIRM_MINUTES } from "../mcp.confirm";
@@ -109,6 +114,10 @@ describe("two-step writes", () => {
 
     it("never runs a write without a confirmation step, and a read takes no token", async () => {
         expect(await runTool(unconfirmed, ctx(), { project_id: P1, etapa: "revisao" })).toMatchObject({ structuredContent: { error: { code: "forbidden" } } });
+        // Not switched on by name: refused even with a preview, even called directly.
+        const off = defineTool({ ...(mover as object), name: "mike_teste_desligada" } as never);
+        expect(await runTool(off, ctx(), { project_id: P1, etapa: "revisao" })).toMatchObject({ structuredContent: { error: { code: "forbidden" } } });
+        expect(db.tables.mcp_confirmations).toEqual([]);
         const reader = defineTool({ ...(mover as object), name: "mike_teste_ler", access: "read", scope: "contratos:read", confirm: undefined } as never);
         expect(await runTool(reader, ctx({ scopes: ["contratos:read"] }), { project_id: P1, etapa: "revisao", [CONFIRM_FIELD]: "x" })).toMatchObject({
             structuredContent: { error: { code: "invalid_input" } },
