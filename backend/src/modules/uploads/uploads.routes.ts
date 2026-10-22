@@ -9,6 +9,7 @@
 // storage against the signed URLs these endpoints hand out, so the JSON body
 // limit in app.ts stays small no matter how large the upload is.
 
+import { uuidId } from "../../lib/ids";
 import { randomUUID } from "node:crypto";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
@@ -68,7 +69,7 @@ const uploadSessionPollingLimiter = rateLimit({
   },
 });
 
-const sessionIdSchema = z.string().uuid();
+const sessionIdSchema = uuidId();
 const fileCompletionRequestSchema = z
   .object({ failed: z.boolean().default(false) })
   .strict();
