@@ -24,6 +24,7 @@ import { enqueueDbJob } from "./lib/dbq/enqueue";
 import { runStaleWorkSweep } from "./jobs/maintenance";
 import { startUploadProcessingWorkers } from "./modules/uploads/uploads.service";
 import { startContractMirrors } from "./modules/contracts/contracts.service";
+import { requeuePending } from "./modules/feedback/feedback.service";
 import { enqueueDueRegulatoryScans } from "./modules/regulatory/regulatory.service";
 import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
 import { createServerSupabase } from "./lib/supabase";
@@ -50,6 +51,8 @@ let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let initialSweep: ReturnType<typeof setTimeout> | null = null;
 let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let regulatoryTimer: ReturnType<typeof setInterval> | null = null;
+let feedbackTimer: ReturnType<typeof setInterval> | null = null;
+const FEEDBACK_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 
 /** How often to look for regulatory scans due a run (each job dedupes per scan). */
 const REGULATORY_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
@@ -152,6 +155,13 @@ export function startAllWorkers(): void {
     regulatoryTimer = setInterval(runRegulatorySweep, REGULATORY_SWEEP_INTERVAL_MS);
     regulatoryTimer.unref();
 
+    // Feedback reports whose job was lost or never queued go back on the queue.
+    feedbackTimer = setInterval(
+        () => void requeuePending(createServerSupabase()).catch((err) => console.error("[feedback-sweep] failed", err instanceof Error ? err.name : "error")),
+        FEEDBACK_SWEEP_INTERVAL_MS,
+    );
+    feedbackTimer.unref();
+
     // Notion / Drive / Calendar mirrors of the contract pipeline. Each is
     // inert unless its credentials are set.
     startContractMirrors();
@@ -163,6 +173,7 @@ export async function stopAllWorkers(): Promise<void> {
     if (sweepTimer) clearInterval(sweepTimer);
     if (mcpRefreshTimer) clearInterval(mcpRefreshTimer);
     if (regulatoryTimer) clearInterval(regulatoryTimer);
+    if (feedbackTimer) clearInterval(feedbackTimer);
     regulatoryTimer = null;
     initialSweep = null;
     sweepTimer = null;

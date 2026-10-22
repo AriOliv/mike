@@ -19,6 +19,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useFeedbackEnabled } from "@/app/components/feedback/FeedbackHost";
+import { feedbackStore } from "@/app/lib/feedback";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import {
@@ -121,6 +123,7 @@ interface AppSidebarProps {
 /** Renders workspace navigation, recent content, and the current account menu with its photo or monogram. */
 export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     const { user, signOut } = useAuth();
+    const feedbackEnabled = useFeedbackEnabled();
     const { profile } = useUserProfile();
     const {
         chats,
@@ -943,6 +946,16 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
 
                 {/* User Profile */}
                 <div className="shrink-0 p-1">
+                    {/* "Algo errado? Conte" (doc 13): always in sight, never over a contract. */}
+                    {user && feedbackEnabled && isOpen ? (
+                        <button
+                            type="button"
+                            onClick={() => feedbackStore.open()}
+                            className="mb-0.5 w-full rounded-lg px-2.5 py-1 text-left text-xs text-gray-500 outline-none hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        >
+                            Algo errado? Conte
+                        </button>
+                    ) : null}
                     {user && (
                         <Dropdown
                             open={isDropdownOpen}
@@ -1051,6 +1064,15 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                   >
                                       <OrganizationSkeuoIcon className="h-4 w-4 text-black" />
                                       Organization
+                                  </DropdownItem>
+                              ) : null}
+                              {feedbackEnabled ? (
+                                  <DropdownItem
+                                      onSelect={() => feedbackStore.open()}
+                                      className="h-8 gap-2 rounded-md px-2 py-2 text-sm font-medium text-gray-700 hover:text-gray-700 focus:text-gray-700 data-[selected=true]:text-gray-900 data-[selected=true]:hover:text-gray-900 data-[selected=true]:focus:text-gray-900"
+                                  >
+                                      Reportar ou sugerir
+                                      <span className="ml-auto text-[10px] text-gray-400">Ctrl+Shift+F</span>
                                   </DropdownItem>
                               ) : null}
                               <DropdownItem
