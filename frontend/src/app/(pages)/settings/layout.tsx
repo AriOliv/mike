@@ -11,18 +11,18 @@ import {
 } from "@/app/components/settings/SettingsShell";
 
 const TABS: SettingsShellTab[] = [
-    { id: "account", label: "Account", href: "/settings" },
+    { id: "account", label: "Conta", href: "/settings" },
     {
         id: "personalisation",
-        label: "Personalisation",
+        label: "Personalização",
         href: "/settings/personalisation",
     },
-    { id: "memory", label: "Memory", href: "/settings/memory" },
-    { id: "appearance", label: "Appearance", href: "/settings/appearance" },
-    { id: "features", label: "Features", href: "/settings/features" },
+    { id: "memory", label: "Memória", href: "/settings/memory" },
+    { id: "appearance", label: "Aparência", href: "/settings/appearance" },
+    { id: "features", label: "Recursos", href: "/settings/features" },
     {
         id: "privacy-data",
-        label: "Privacy & Data",
+        label: "Privacidade e dados",
         href: "/settings/privacy-data",
     },
     {
@@ -30,20 +30,20 @@ const TABS: SettingsShellTab[] = [
         label: "Minha atividade",
         href: "/settings/my-activity",
     },
-    { id: "security", label: "Security", href: "/settings/security" },
-    { id: "models", label: "Model Preferences", href: "/settings/models" },
+    { id: "security", label: "Segurança", href: "/settings/security" },
+    { id: "models", label: "Preferências de modelo", href: "/settings/models" },
     {
         id: "byok",
-        label: "Bring Your Own Keys",
+        label: "Chaves próprias (BYOK)",
         href: "/settings/byok",
     },
-    { id: "connectors", label: "Connectors", href: "/settings/connectors" },
+    { id: "connectors", label: "Conectores", href: "/settings/connectors" },
     // The organizations the person belongs to, and their invitations. Each
     // organization's own settings are a separate area, opened from here or
     // from the account menu.
     {
         id: "organizations",
-        label: "Organizations",
+        label: "Organizações",
         href: "/settings/organizations",
     },
 ];
@@ -78,15 +78,15 @@ export default function SettingsLayout({
         return null;
     }
 
-    // My Activity is linked from Settings but uses the full table-page layout.
+    // Minha atividade is linked from Settings but uses the full table-page layout.
     if (pathname === "/settings/my-activity") {
         return children;
     }
 
     return (
         <SettingsShell
-            title="Settings"
-            navLabel="Settings"
+            title="Configurações"
+            navLabel="Configurações"
             tabs={TABS.map((tab) =>
                 tab.id === "organizations" && invitationCount > 0
                     ? {
@@ -96,8 +96,8 @@ export default function SettingsLayout({
                                   {invitationCount}{" "}
                                   <span className="sr-only">
                                       {invitationCount === 1
-                                          ? "pending invitation"
-                                          : "pending invitations"}
+                                          ? "convite pendente"
+                                          : "convites pendentes"}
                                   </span>
                               </span>
                           ),
