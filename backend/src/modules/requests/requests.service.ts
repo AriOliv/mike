@@ -60,3 +60,12 @@ export {
 } from "./requests.shared";
 export type { Caller, McpActor } from "./requests.access";
 export { REQUEST_TOOLS, REQUEST_READ_TOOLS, REQUEST_WRITE_TOOLS } from "./requests.mcp";
+export {
+    ANALYSIS_START_JOB_KIND,
+    getRequestAnalysis,
+    handleAnalysisReady,
+    handleRequestAnalysisStart,
+    listCriticalAlerts,
+    requestAnalysis,
+    type CriticalAlert,
+} from "./requests.analysis";

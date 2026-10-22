@@ -28,6 +28,8 @@ import {
     getRequestRole,
     getRequestIntake,
     answerRequestIntake,
+    listCriticalAlerts,
+    requestContractAnalysis,
     inviteRequestParticipant,
     listRequests,
     postRequestMessage,
@@ -284,6 +286,15 @@ describe("requests to the legal team", () => {
         await revokeRequestParticipant("r1", "p1");
         expect(lastFetchCall().url).toMatch(/\/requests\/r1\/participants\/p1$/);
         expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+
+    it("lists the Head's critical alerts and asks for the contract analysis", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await listCriticalAlerts();
+        expect(lastFetchCall().url).toMatch(/\/requests\/alerts$/);
+        await requestContractAnalysis("r1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/analysis$/);
+        expect(lastFetchCall().init.method).toBe("POST");
     });
 
     it("reads the intake checklist and answers or confirms it", async () => {

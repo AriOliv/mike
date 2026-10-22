@@ -16,6 +16,7 @@ import {
     getRequest,
     inviteRequestParticipant,
     postRequestMessage,
+    requestContractAnalysis,
     revokeRequestParticipant,
     type LegalRequest,
 } from "@/app/lib/mikeApi";
@@ -31,11 +32,20 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { showToast } from "@/app/components/ui/toast";
 import { RequestConversation } from "./RequestConversation";
 import { RequestIntakeSection } from "./IntakeChecklist";
+import { CriticalAlertBanner } from "./CriticalAlerts";
+import { AnalystAnalysisView } from "@/app/components/contract-review/AnalystAnalysisView";
 import { ExternalChip } from "./ExternalChip";
 import { TriageSuggestion, type TriageDecision } from "./TriageSuggestion";
 
 const FIELD =
     "w-full rounded-lg border border-gray-200 bg-app-surface px-2 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
+/** Critical risks the analysis found, from the card's alert event. */
+function criticalCount(events: { action: string; after?: unknown }[]): number {
+    const alert = events.find((e) => e.action === "request.critical_alert");
+    const n = Number((alert?.after as { critical?: unknown } | null | undefined)?.critical ?? 0);
+    return n > 0 ? n : 1;
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
     return (
@@ -278,6 +288,48 @@ export function RequestPanel({
                             }}
                         />
                     </Section>
+
+                    {r.project_id ? (
+                        <Section title="Análise do contrato">
+                            {r.critical_alert_at ? <div className="mb-3"><CriticalAlertBanner critical={criticalCount(events)} /></div> : null}
+                            {r.intake_completed_at ? null : (
+                                <p className="mb-2 text-xs text-gray-500">
+                                    A análise roda sozinha quando o checklist fecha e o contrato está no pedido.
+                                </p>
+                            )}
+                            <AnalystAnalysisView
+                                key={`${r.id}-${reloadKey}-${r.intake_completed_at ?? ""}`}
+                                projectId={r.project_id}
+                                canDecide={open}
+                                onChanged={onChanged}
+                            />
+                            {open && r.intake_completed_at ? (
+                                <PillButtonUI
+                                    className="mt-2"
+                                    tone="white"
+                                    size="sm"
+                                    loading={busy === "pedir a análise"}
+                                    onClick={async () => {
+                                        setBusy("pedir a análise");
+                                        try {
+                                            const started = await requestContractAnalysis(r.id);
+                                            showToast({
+                                                tone: "success",
+                                                message: started.queued ? "Análise na fila. Leva alguns minutos." : "A análise deste contrato já existe.",
+                                            });
+                                            setReloadKey((k) => k + 1);
+                                        } catch (err) {
+                                            notifyError(err, { lang: "pt", action: "pedir a análise" });
+                                        } finally {
+                                            setBusy(null);
+                                        }
+                                    }}
+                                >
+                                    Analisar contrato
+                                </PillButtonUI>
+                            ) : null}
+                        </Section>
+                    ) : null}
 
                     <Section title="Conversa com o solicitante">
                         <RequestConversation

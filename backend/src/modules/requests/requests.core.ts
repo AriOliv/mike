@@ -120,6 +120,10 @@ export type RequestTeamView = RequestPublicView & {
     participants: Participant[];
     source: Record<string, unknown>;
     can_decide: boolean;
+    /** The intake checklist closed (the contract analysis may run). */
+    intake_completed_at: string | null;
+    /** The analysis found a critical risk and the Head was alerted. */
+    critical_alert_at: string | null;
 };
 
 export type RequestMessage = {
@@ -638,6 +642,8 @@ async function buildView(
         participants: (participants ?? []) as Participant[],
         source: row.source,
         can_decide: isHead(audience),
+        intake_completed_at: row.intake_completed_at,
+        critical_alert_at: row.critical_alert_at,
     };
 }
 

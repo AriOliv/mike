@@ -7,6 +7,9 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
 import {
+    getRequestAnalysis,
+    listCriticalAlerts,
+    requestAnalysis,
     answerIntake,
     getIntake,
     getIntakeTemplate,
@@ -71,6 +74,15 @@ requestsRouter.post(
     }),
 );
 
+// Open critical alerts for the Head (home screen, Pedidos badge).
+requestsRouter.get(
+    "/alerts",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await listCriticalAlerts(createServerSupabase(), caller(res)));
+    }),
+);
+
 // The organization's intake checklist (before "/:id", which would match it).
 requestsRouter.get(
     "/intake-template",
@@ -109,6 +121,22 @@ requestsRouter.post(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await answerIntake(createServerSupabase(), caller(res), req.params.id, body(req)));
+    }),
+);
+
+requestsRouter.get(
+    "/:id/analysis",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await getRequestAnalysis(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.post(
+    "/:id/analysis",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await requestAnalysis(createServerSupabase(), caller(res), req.params.id), 202);
     }),
 );
 

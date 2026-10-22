@@ -4653,6 +4653,10 @@ export interface LegalRequest {
     participants?: RequestParticipant[];
     source?: { channel?: string; permalink?: string };
     can_decide?: boolean;
+    /** Team view: the intake checklist closed. */
+    intake_completed_at?: string | null;
+    /** Team view: the analysis found a critical risk and the Head was alerted. */
+    critical_alert_at?: string | null;
 }
 
 export interface RequestListItem {
@@ -4822,6 +4826,27 @@ export async function answerRequestIntake(
     body: { answers?: Record<string, IntakeAnswerInput>; confirm?: string[] },
 ): Promise<RequestIntake> {
     return apiRequest(`/requests/${id}/intake`, jsonPost(body));
+}
+
+/** A request whose contract analysis found a critical risk, for the Head. */
+export interface CriticalAlert {
+    request_id: string;
+    code: string;
+    title: string;
+    project_id: string | null;
+    alerted_at: string;
+    critical: number;
+    assignee_name: string | null;
+}
+
+/** Open critical alerts (the Head's; anyone else gets an empty list). */
+export async function listCriticalAlerts(): Promise<{ alerts: CriticalAlert[] }> {
+    return apiRequest("/requests/alerts");
+}
+
+/** The team asks for the analysis of the request's contract; 409 lists what the checklist still lacks. */
+export async function requestContractAnalysis(id: string): Promise<{ analysis_id: string; queued: boolean }> {
+    return apiRequest(`/requests/${id}/analysis`, { method: "POST" });
 }
 
 export async function revokeRequestParticipant(id: string, participantId: string): Promise<LegalRequest> {
@@ -5339,6 +5364,104 @@ export async function decideFichaField(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
     });
+}
+
+// ── The analyst's analysis (/projects/:id/contract-review/analysis) ────────
+export type AnalysisLight = "red" | "yellow" | "green";
+export interface AnalysisItem {
+    id: string;
+    title: string;
+    quote: string;
+    clause: string | null;
+    rationale: string;
+    suggestion: string | null;
+    light: AnalysisLight;
+    rule_id: string | null;
+    span: { start: number; end: number } | null;
+}
+export interface AnalysisRedline {
+    id: string;
+    clause: string | null;
+    from: string;
+    to: string;
+    why: string;
+    item_id: string | null;
+    span: { start: number; end: number } | null;
+}
+export interface AnalysisResult {
+    notice: string;
+    executive_summary: { text: string; object: string | null; parties: string[]; value: string | null };
+    critical: AnalysisItem[];
+    attention: AnalysisItem[];
+    favorable: AnalysisItem[];
+    redlines: AnalysisRedline[];
+    compliance: {
+        data_protection: string;
+        confidentiality: string;
+        governing_law_forum: string;
+        term_termination_penalties: string;
+    };
+    open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro" }[];
+}
+export interface AnalystAnalysis {
+    id: string;
+    project_id: string;
+    request_id: string | null;
+    document_id: string | null;
+    version_id: string | null;
+    playbook_id: string | null;
+    playbook_run_id: string | null;
+    intake: { key: string; label: string; value: string; source?: string | null }[];
+    model: string | null;
+    status: "queued" | "running" | "done" | "failed";
+    result: AnalysisResult | null;
+    dropped_citations: { section: string; title: string; quote: string; reason: string }[];
+    usage: { model: string; calls: number; input_tokens: number; output_tokens: number; estimated_cost_usd: number | null } | null;
+    error: string | null;
+    created_at: string;
+    finished_at: string | null;
+}
+export interface AnalysisRedlineDecision extends ReviewDecision {
+    redline_id: string;
+}
+
+export async function getLatestAnalysis(projectId: string): Promise<AnalystAnalysis | null> {
+    return apiRequest(contractReviewPath(projectId, "/analysis"));
+}
+
+export async function startAnalystAnalysis(
+    projectId: string,
+    input: { request_id?: string | null; intake?: { key: string; label: string; value: string; source?: string }[] } = {},
+): Promise<{ analysis_id: string; queued: boolean }> {
+    return apiRequest(contractReviewPath(projectId, "/analysis"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export async function listAnalysisDecisions(projectId: string, analysisId: string): Promise<AnalysisRedlineDecision[]> {
+    return apiRequest(contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/decisions`));
+}
+
+export async function decideAnalysisRedline(
+    projectId: string,
+    analysisId: string,
+    redlineId: string,
+    input: { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string },
+): Promise<AnalysisRedlineDecision> {
+    return apiRequest(
+        contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/redlines/${encodeURIComponent(redlineId)}/decision`),
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+    );
+}
+
+export async function exportAnalysis(
+    projectId: string,
+    analysisId: string,
+    format: "md" | "docx",
+): Promise<{ blob: Blob; filename: string | null }> {
+    return apiBlobRequest(contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/export?format=${format}`));
 }
 
 // ── Contract portfolio (/contracts/fichas) ─────────────────────────────────
