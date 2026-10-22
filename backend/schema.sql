@@ -11907,6 +11907,31 @@ grant select, insert, update, delete on public.contract_analyses, public.contrac
   to service_role;
 
 
+-- Migration date: 2026-10-23 (20261023_94_request_contract_terms.sql)
+--
+-- Part 2 of asking the legal team, "the contract" (U-05, U-07, U-08): the
+-- other party's e-mail, when the contract starts and for how many months.
+-- The end date is computed from the two (term_end), never stored.
+--
+-- counterparty_email is only kept, for the external validation by link
+-- (U-16) that comes later. Nothing is sent to that address; it stays out of
+-- notifications, the card's activity and the MCP tools.
+--
+-- All three are optional: a request without a contract file (an NDA, a
+-- question) leaves them empty.
+
+alter table public.legal_requests
+  add column if not exists counterparty_email text,
+  add column if not exists term_start date,
+  add column if not exists term_months integer;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_term_months_check;
+alter table public.legal_requests
+  add constraint legal_requests_term_months_check
+    check (term_months is null or (term_months >= 1 and term_months <= 600));
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12087,5 +12112,6 @@ insert into public.schema_migrations (filename) values
   ('20261022_91_request_intake.sql'),
   ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
-  ('20261022_97_card_events_cascade.sql')
+  ('20261022_97_card_events_cascade.sql'),
+  ('20261023_94_request_contract_terms.sql')
 on conflict (filename) do nothing;
