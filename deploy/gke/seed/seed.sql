@@ -45,12 +45,7 @@ select c.id, legal.uid, c.name, c.counterparty, c.lane, c.status, c.priority, c.
 from cards c cross join legal
 on conflict (id) do nothing;
 
--- O solicitante vê os cards como editor (compartilhamento direto, projetos pessoais).
-insert into public.project_access_grants (project_id, email, role, created_by)
-select p.id, 'solicitante.demo@avenia.io', 'editor', p.user_id
-from public.projects p
-where p.id::text like '00000000-0000-4000-a000-%'
-on conflict (project_id, email) do nothing;
+-- Sem compartilhamento com o solicitante: ele vê só os pedidos dele (Pedidos).
 
 -- Termos dos contratos vigentes (Arquivado): exercitam renovação/aviso prévio.
 with legal as (select id::text as uid from public._seed_users where role = 'legal')
