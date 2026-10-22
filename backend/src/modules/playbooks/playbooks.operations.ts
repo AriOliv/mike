@@ -14,6 +14,7 @@ import { resolveWorkspaceFilter, workspaceMatches } from "../../lib/workspace";
 import type { EditAnnotation } from "@mike/contracts";
 import { extractDocxBodyText, type EditInput } from "../../lib/docxTrackedChanges";
 import { loadActiveVersion } from "../../lib/documentVersions";
+import { extractPdfText } from "../../lib/pdfText";
 import { mergeBatchReviews, playbookReviewBatches } from "./playbooks.batches";
 import {
   applyTrackedEditsToDocument,
@@ -1742,9 +1743,12 @@ async function loadReviewDocument(
   if (!version) throw missing();
   const filename = version.filename?.trim() || "Untitled document";
   const isDocx = version.file_type === "docx" || /\.docx$/i.test(filename);
-  if (!isDocx) return { filename, isDocx, text: null };
+  const isPdf = version.file_type === "pdf" || /\.pdf$/i.test(filename);
+  if (!isDocx && !isPdf) return { filename, isDocx, text: null };
   const current = await loadCurrentVersionBytes(documentId, db, version.id);
   if (!current) throw missing();
+  // A PDF is reviewed from its text; with no version there is no redline.
+  if (isPdf) return { filename, isDocx, text: (await extractPdfText(new Uint8Array(current.bytes).buffer))?.trim() || null };
   return {
     filename, isDocx, text: await extractDocxBodyText(current.bytes),
     version: { id: version.id, storagePath: current.storage_path },

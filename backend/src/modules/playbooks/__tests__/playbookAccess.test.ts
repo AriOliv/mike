@@ -14,6 +14,7 @@ const docs = vi.hoisted(() => ({
   loadCurrentVersionBytes: vi.fn(),
   loadActiveVersion: vi.fn(),
   extractDocxBodyText: vi.fn(),
+  extractPdfText: vi.fn(),
 }));
 vi.mock("../../documents/documents.service", async (original) => ({
   ...(await original<typeof import("../../documents/documents.service")>()),
@@ -23,6 +24,10 @@ vi.mock("../../documents/documents.service", async (original) => ({
 vi.mock("../../../lib/documentVersions", async (original) => ({
   ...(await original<typeof import("../../../lib/documentVersions")>()),
   loadActiveVersion: docs.loadActiveVersion,
+}));
+vi.mock("../../../lib/pdfText", async (original) => ({
+  ...(await original<typeof import("../../../lib/pdfText")>()),
+  extractPdfText: docs.extractPdfText,
 }));
 vi.mock("../../../lib/docxTrackedChanges", async (original) => ({
   ...(await original<typeof import("../../../lib/docxTrackedChanges")>()),
@@ -871,6 +876,19 @@ describe("playbook access and autosave", () => {
       expect(docs.applyTrackedEditsToDocument).not.toHaveBeenCalled();
       expect(result.editedVersionId).toBeNull();
       expect(result.status).toBe("completed");
+    });
+
+    it("reads a stored PDF's text itself, so a review by document id needs no caller text", async () => {
+      const { db } = setup("pdf");
+      docs.extractPdfText.mockResolvedValue(" Liability is unlimited. ");
+
+      const result = await review(db);
+
+      expect(docs.loadCurrentVersionBytes).toHaveBeenCalledWith("doc-1", db, "v1");
+      expect(docs.extractDocxBodyText).not.toHaveBeenCalled();
+      expect(docs.applyTrackedEditsToDocument).not.toHaveBeenCalled();
+      expect(result.status).toBe("completed");
+      expect(result.findings.find((item) => item.ruleId === "cap")?.quote).toBe("Liability is unlimited.");
     });
   });
   it("requires complete rules before a review, even though autosave accepts them", async () => {
