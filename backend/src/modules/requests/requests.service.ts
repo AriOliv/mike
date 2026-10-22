@@ -10,9 +10,13 @@
 export {
     createRequest,
     getRequest,
+    getRequestPlan,
     listRequests,
+    previewCreateRequest,
+    resolveRequestRef,
     assignRequest,
     decideTriage,
+    moveRequestStage,
     postMessage,
     deliverRequest,
     inviteParticipant,
@@ -26,7 +30,7 @@ export {
     type RequestListItem,
 } from "./requests.core";
 export { handleRequestTriage, suggestAssignee, parseTriage } from "./requests.triage";
-export { handleRequestNotify, renderNotification, SEND_JOB_KIND } from "./requests.notifications";
+export { handleRequestNotify, renderNotification, requestLink, SEND_JOB_KIND } from "./requests.notifications";
 export {
     requestCode,
     parseRequestCode,
@@ -34,6 +38,17 @@ export {
     slaState,
     requesterStep,
     normalizeArea,
+    requestPlan,
     REQUESTER_AREAS,
+    REQUEST_KINDS,
+    LANE_LABELS,
+    type PlanStep,
 } from "./requests.shared";
-export type { Caller } from "./requests.access";
+export type { Caller, McpActor } from "./requests.access";
+export {
+    REQUEST_TOOLS,
+    REQUEST_READ_TOOLS,
+    REQUEST_WRITE_TOOLS,
+    type McpContext as RequestsMcpContext,
+    type McpTool as RequestsMcpTool,
+} from "./requests.mcp";

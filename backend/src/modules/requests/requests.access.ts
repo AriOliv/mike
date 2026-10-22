@@ -12,7 +12,24 @@ import type { Db } from "../../lib/supabase";
 import { getOrgRole, normalizeEmail, type OrgRole } from "../../lib/access";
 import { failure, type ServiceFailure } from "../../lib/serviceResult";
 
-export type Caller = { userId: string; userEmail?: string | null };
+/**
+ * Who is acting. `actor` is set when the call comes through the MCP server
+ * (filled the same way for every tool by the mcp module): the events record
+ * the client acting on the person's behalf instead of the person at a screen.
+ */
+export type Caller = { userId: string; userEmail?: string | null; actor?: McpActor };
+
+/** The MCP client acting for a person: `ctx.actor` as the mcp module fills it (doc 09 §5). */
+export type McpActor = {
+    actorType: "agent";
+    /** "mcp:<client_name>" */
+    actorId: string;
+    /** "<client_name> em nome de <Nome>" */
+    actorName: string;
+    /** The person's e-mail. */
+    onBehalfOf: string;
+    source: "mcp";
+};
 
 export type Audience =
     | { kind: "team"; orgRole: OrgRole }
