@@ -18,9 +18,11 @@ set -euo pipefail
 CLI_VERSION="${SUPABASE_CLI_VERSION:-2.108.0}"
 REPO="${GITHUB_REPOSITORY:-AriOliv/mike}"
 MIRROR="${MIRROR:-ghcr.io/$(tr 'A-Z' 'a-z' <<<"$REPO")-ci-mirror}"
-# What CI's stacks start (the rest is excluded with -x in every job), plus the
-# e2e job's object store.
-SERVICES="${SERVICES:-postgres gotrue postgrest kong}"
+# What CI's stacks pull: the services they start (the rest is excluded with -x
+# in every job) plus realtime and storage-api, whose images the CLI still runs
+# as one-off migration jobs while starting the database (they are enabled in
+# the generated config.toml; -x drops only their long-running containers).
+SERVICES="${SERVICES:-postgres gotrue postgrest kong realtime storage-api}"
 EXTRA="${EXTRA:-rustfs/rustfs:latest}"
 
 # "<repository>:<tag>" for every FROM in the CLI's Dockerfile at that version
