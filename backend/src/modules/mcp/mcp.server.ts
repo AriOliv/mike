@@ -8,6 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { recordAudit } from "../../lib/audit";
+import { recordAgentRead } from "../contracts/contracts.service";
 import { failure, type ServiceFailure } from "../../lib/serviceResult";
 import { readTools } from "./mcp.catalog";
 import type { AnyMcpTool, McpContext } from "./mcp.types";
@@ -71,6 +72,14 @@ export async function runTool(tool: AnyMcpTool, ctx: McpContext, input: Record<s
                 ? await tool.handler(ctx, parsed.data)
                 : failure("validation", `Argumentos inválidos: ${parsed.error.issues.map((i) => i.path.join(".") || i.message).join(", ")}.`);
             if (out.ok) {
+                if (tool.recordsRead && typeof input.project_id === "string")
+                    await recordAgentRead(ctx.db, {
+                        projectId: input.project_id,
+                        actorId: ctx.actor.actorId,
+                        actorName: ctx.actor.actorName,
+                        onBehalfOf: ctx.actor.onBehalfOf,
+                        tool: tool.name,
+                    });
                 result = {
                     content: [{ type: "text", text: tool.summary(out.data) }],
                     structuredContent: out.data as Record<string, unknown>,

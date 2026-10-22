@@ -83,6 +83,12 @@ export type McpTool<I extends Shape = Shape, O = unknown> = {
     access: "read" | "write";
     annotations?: McpToolAnnotations;
     /**
+     * A read of one contract (its `project_id` input) that enters the
+     * contract's activity feed as "<client> em nome de <Nome>" (doc 09 §7).
+     * Off for tools that read the feed itself.
+     */
+    recordsRead?: boolean;
+    /**
      * Writes that change relevant state run in two steps (doc 09 §6):
      * `preview` changes nothing and says what would happen; the server asks
      * for the person's ok before `handler` runs. Phase 2.
