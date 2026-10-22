@@ -626,7 +626,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     </div>
 
                     {isOpen && nav.workLists && (
-                        <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
+                        // No min-h-0 here: the lists keep their own height, so on a
+                        // short screen (a phone) the column above scrolls down to
+                        // History instead of squeezing it under the footer.
+                        <div className="mt-4 flex flex-1 flex-col gap-4">
                             {/* Recent Projects */}
                             <div>
                                 <button
@@ -756,7 +759,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     role="region"
                                     aria-label="Histórico"
                                     className={cn(
-                                        "min-h-0 flex-1 overflow-y-auto",
+                                        // basis-0: the region takes the room left, never the
+                                        // whole list's height.
+                                        "min-h-0 flex-1 basis-0 overflow-y-auto",
                                         historyCollapsed && "hidden",
                                     )}
                                     onScroll={handleHistoryScroll}
