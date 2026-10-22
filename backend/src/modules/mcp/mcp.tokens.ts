@@ -111,6 +111,20 @@ export async function createAccessToken(
     if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS)
         return failure("validation", `A validade vai de 1 a ${MAX_DAYS} dias.`);
 
+    // A token reads contracts outside the browser: it never comes from an
+    // account protected by a password alone. The route has already asked for
+    // the second factor of whoever enrolled one (requireMfaIfEnrolled); this
+    // refuses the accounts that have none.
+    const { data: account, error: accountError } = await db.auth.admin.getUserById(caller.userId);
+    if (accountError) return internalFailure(accountError);
+    const hasTotp = (account.user?.factors ?? []).some((f) => f.factor_type === "totp" && f.status === "verified");
+    if (!hasTotp)
+        return failure(
+            "forbidden",
+            "Ative a verificação em duas etapas em Configurações → Segurança para criar um token de acesso.",
+            "mfa_enrollment_required",
+        );
+
     let workspace: WorkspaceFilter;
     try {
         const resolved = await resolveWorkspaceFilter(db, caller.userId, body.workspace ?? PERSONAL_WORKSPACE);

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { LANES } from "../../contracts/contracts.service";
+import { LANE_LABELS, PIPELINE_LANES } from "../requests.shared";
 import {
     addBusinessDays,
     normalizeArea,
@@ -156,5 +158,12 @@ describe("messages the user reads", () => {
             expect(detail, detail).not.toMatch(/[a-z]+_[a-z]+/);
             expect(detail, detail).toMatch(/[.?!]$/);
         }
+    });
+});
+
+describe("pipeline lanes", () => {
+    it("the MCP tools' copy matches the contracts module's lanes", () => {
+        expect([...PIPELINE_LANES]).toEqual([...LANES]);
+        expect(Object.keys(LANE_LABELS)).toEqual([...LANES]);
     });
 });

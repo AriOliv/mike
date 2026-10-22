@@ -11,10 +11,10 @@ import { z } from "zod";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeDb } from "./fakeDb";
 
-const state = vi.hoisted(() => ({ db: null as unknown, role: "team" as "head" | "team" | "requester" }));
+const state = vi.hoisted(() => ({ db: null as unknown, role: "team" as "head" | "team" | "requester", configured: true }));
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: () => state.db }));
 vi.mock("../../requests/requests.service", () => ({
-    whoAmI: vi.fn(async () => ({ ok: true, data: { configured: true, role: state.role, area: null, areas: [] } })),
+    whoAmI: vi.fn(async () => ({ ok: true, data: { configured: state.configured, role: state.role, area: null, areas: [] } })),
     // The requests tools have their own tests (requests.mcp.test.ts).
     REQUEST_TOOLS: [],
 }));
@@ -57,11 +57,12 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((resolve) => http.close(() => resolve())));
 
 beforeEach(() => {
-    const fake = fakeDb({}, { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z" } });
+    const fake = fakeDb({}, { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z", factors: [{ factor_type: "totp", status: "verified" }] } });
     fake.tables.user_profiles = [{ user_id: ana.userId, display_name: "Ana Teste" }];
     state.db = fake.db;
     tables = fake.tables;
     state.role = "team";
+    state.configured = true;
     audit.recordAudit.mockClear();
 });
 
@@ -69,13 +70,28 @@ describe("/mcp over HTTP", () => {
     it("answers mike_quem_sou for the token's person and records the client", async () => {
         const client = await connect(await token());
         const { tools } = await client.listTools();
-        expect(tools.map((t) => t.name)).toEqual(["mike_quem_sou"]);
-        expect(tools[0].annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+        // The team, default scopes: every read but the head-only Painel.
+        expect(tools.map((t) => t.name)).toEqual([
+            "mike_quem_sou",
+            "mike_contratos_buscar",
+            "mike_contratos_ficha",
+            "mike_revisao_listar",
+            "mike_revisao_ler",
+            "mike_contratos_documento",
+            "mike_contratos_atividade",
+            "mike_prazos_proximos",
+            "mike_base_perguntar",
+            "mike_radar_mudancas",
+            "mike_radar_contratos_afetados",
+            "mike_controle_listar",
+            "mike_controle_ler",
+        ]);
+        for (const t of tools) expect(t.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
 
         const r = await client.callTool({ name: "mike_quem_sou", arguments: {} });
         expect(r.isError).toBeFalsy();
         expect(r.structuredContent).toMatchObject({ nome: "Ana Teste", email: "ana@exemplo.test", papel: "team", workspace: "personal", cliente: "claude-code" });
-        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 1 ferramentas disponíveis.");
+        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 13 ferramentas disponíveis.");
         expect(tables.mcp_access_tokens[0].last_client).toBe("claude-code");
 
         expect(audit.recordAudit).toHaveBeenCalledWith(
@@ -89,6 +105,34 @@ describe("/mcp over HTTP", () => {
                 detail: expect.objectContaining({ client: "claude-code", tool: "mike_quem_sou", ok: true }),
             }),
         );
+        await client.close();
+    });
+
+    it("shows a requester only mike_quem_sou, the Painel only to the head, and only the token's scopes", async () => {
+        state.role = "requester";
+        const requester = await connect(await token());
+        expect((await requester.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou"]);
+        await requester.close();
+
+        state.role = "head";
+        const head = await connect(await token());
+        expect((await head.listTools()).tools.map((t) => t.name)).toContain("mike_painel_metricas");
+        await head.close();
+
+        const narrow = await connect(await token({ scopes: ["prazos:read"] }));
+        expect((await narrow.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou", "mike_prazos_proximos"]);
+        const refused = await narrow.callTool({ name: "mike_contratos_buscar", arguments: {} });
+        expect(refused.isError).toBe(true);
+        await narrow.close();
+    });
+
+    it("reads like the team when no Legal team is configured, as the menu does", async () => {
+        state.configured = false;
+        state.role = "requester";
+        const client = await connect(await token());
+        const names = (await client.listTools()).tools.map((t) => t.name);
+        expect(names).toContain("mike_contratos_buscar");
+        expect(names).not.toContain("mike_painel_metricas");
         await client.close();
     });
 

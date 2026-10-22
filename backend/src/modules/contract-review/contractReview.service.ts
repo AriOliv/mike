@@ -40,3 +40,5 @@ export {
     type TabularColumn,
 } from "./contractReview.controle";
 export type { Caller } from "./contractReview.shared";
+
+export { CONTRACT_REVIEW_TOOLS } from "./contractReview.mcp";

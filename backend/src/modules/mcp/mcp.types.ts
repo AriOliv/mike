@@ -3,7 +3,7 @@
 // re-exports them from its facade, and the server only aggregates: nobody
 // reaches into another module's topic files.
 
-import type { z } from "zod";
+import { z } from "zod";
 import type { Db } from "../../lib/supabase";
 import type { ServiceResult } from "../../lib/serviceResult";
 import type { WorkspaceFilter } from "../../lib/workspace";
@@ -83,6 +83,12 @@ export type McpTool<I extends Shape = Shape, O = unknown> = {
     access: "read" | "write";
     annotations?: McpToolAnnotations;
     /**
+     * A read of one contract (its `project_id` input) that enters the
+     * contract's activity feed as "<client> em nome de <Nome>" (doc 09 §7).
+     * Off for tools that read the feed itself.
+     */
+    recordsRead?: boolean;
+    /**
      * Writes that change relevant state run in two steps (doc 09 §6):
      * `preview` changes nothing and says what would happen; the server asks
      * for the person's ok before `handler` runs. Phase 2.
@@ -101,6 +107,14 @@ export type McpTool<I extends Shape = Shape, O = unknown> = {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyMcpTool = McpTool<any, any>;
+
+/**
+ * An id as Postgres stores it: 8-4-4-4-12 hex. Not zod's uuid(), which also
+ * checks the RFC version and variant and so refuses the fixed ids of seeds
+ * and fixtures that Postgres accepts.
+ */
+export const uuidId = () =>
+    z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "id inválido");
 
 export function defineTool<I extends Shape, O>(tool: McpTool<I, O>): AnyMcpTool {
     return tool as AnyMcpTool;

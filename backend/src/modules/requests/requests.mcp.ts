@@ -13,7 +13,6 @@
 
 import { z } from "zod";
 import { failure, ok, type ServiceResult } from "../../lib/serviceResult";
-import { LANES } from "../contracts/contracts.service";
 import { defineTool, type AnyMcpTool, type McpContext, type McpToolAnnotations } from "../mcp/mcp.service";
 import type { Caller } from "./requests.access";
 import {
@@ -35,6 +34,7 @@ import { requestLink } from "./requests.notifications";
 import {
     KIND_LABELS,
     LANE_LABELS,
+    PIPELINE_LANES,
     REQUEST_KINDS,
     REQUESTER_AREAS,
     URGENCIES,
@@ -580,7 +580,7 @@ const assumir = defineTool({
 
 const mudarEtapaInput = {
     pedido: pedidoRef,
-    etapa: z.enum(LANES).describe("entrada, triagem, revisao, negociacao, assinatura ou arquivado."),
+    etapa: z.enum(PIPELINE_LANES).describe("entrada, triagem, revisao, negociacao, assinatura ou arquivado."),
 };
 
 const mudarEtapa = defineTool({

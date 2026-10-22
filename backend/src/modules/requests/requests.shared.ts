@@ -200,6 +200,12 @@ export function parseRequestCode(value: string): number | null {
 export const REQUESTER_STEPS = ["recebido", "em_analise", "assinatura", "concluido"] as const;
 export type RequesterStep = (typeof REQUESTER_STEPS)[number];
 
+/**
+ * The pipeline's lanes (the contracts module's LANES), kept here too so the
+ * MCP tools' input schemas do not need another module loaded to be built.
+ */
+export const PIPELINE_LANES = ["entrada", "triagem", "revisao", "negociacao", "assinatura", "arquivado"] as const;
+
 /** The pipeline's lanes as the team reads them. */
 export const LANE_LABELS: Record<string, string> = {
     entrada: "Entrada",
