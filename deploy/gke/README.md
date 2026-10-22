@@ -28,6 +28,15 @@ não tem Gateway próprio. As rotas dele se penduram no do staging com
    A senha está no Secret do namespace e nunca vai para o git:
    `kubectl -n <ns> get secret mike-secrets -o jsonpath='{.data.DEMO_PASSWORD}' | base64 -d`
 
+## Clientes MCP (só na prévia)
+
+Na **prévia**, `POST /mcp` (caminho exato) vai direto ao backend, **fora do IAP**
+(`preview-mcp/`): Claude Code, Codex ou um script falam com
+`https://preview.34-120-191-197.nip.io/mcp` usando só o token de acesso do Mike
+(`Authorization: Bearer mike_pat_...`). O resto do host segue atrás do IAP. No
+**staging**, tudo continua atrás do IAP: esse componente nunca entra lá
+(docs/product/09-mcp-integral.md §9).
+
 ## Acesso de agentes (Playwright/curl atrás do IAP)
 
 A service account `mike-preview-e2e@ari-teste-492120.iam.gserviceaccount.com`:
