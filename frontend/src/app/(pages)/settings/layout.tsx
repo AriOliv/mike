@@ -27,7 +27,7 @@ const TABS: SettingsShellTab[] = [
     },
     {
         id: "my-activity",
-        label: "My Activity",
+        label: "Minha atividade",
         href: "/settings/my-activity",
     },
     { id: "security", label: "Security", href: "/settings/security" },

@@ -188,7 +188,7 @@ describe("AppSidebar workspace switcher", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     expect(heading()).toHaveTextContent("Mike");
-    expect(screen.queryByText("Personal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pessoal")).not.toBeInTheDocument();
   });
 
   it("shows a placeholder, not Mike, while a remembered organization's name loads", () => {
@@ -241,7 +241,7 @@ describe("AppSidebar workspace switcher", () => {
     await openAccountMenu(user);
     const options = screen.getAllByRole("menuitemradio");
     expect(options.map((option) => option.textContent)).toEqual([
-      "Personal",
+      "Pessoal",
       "Acme LLP",
       "Beta Chambers",
     ]);
@@ -250,7 +250,7 @@ describe("AppSidebar workspace switcher", () => {
       screen.getByRole("menuitemradio", { name: "Acme LLP" }),
     ).toHaveAttribute("aria-checked", "true");
     expect(
-      screen.getByRole("menuitemradio", { name: "Personal" }),
+      screen.getByRole("menuitemradio", { name: "Pessoal" }),
     ).toHaveAttribute("aria-checked", "false");
     // The rest of the account menu is still there.
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
@@ -263,7 +263,7 @@ describe("AppSidebar workspace switcher", () => {
 
     await openAccountMenu(user);
     const label = screen.getByText("Workspace");
-    const option = screen.getByRole("menuitemradio", { name: "Personal" });
+    const option = screen.getByRole("menuitemradio", { name: "Pessoal" });
     const horizontalPadding = (element: HTMLElement) =>
       [...element.classList].filter((name) => /^px-/.test(name));
     expect(horizontalPadding(label)).toEqual(horizontalPadding(option));
@@ -354,9 +354,9 @@ describe("AppSidebar workspace switcher", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     await openAccountMenu(user);
-    await user.click(screen.getByRole("menuitemradio", { name: "Personal" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Pessoal" }));
     expect(state.showToast).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ title: "Agora em Personal" }),
+      expect.objectContaining({ title: "Agora em Pessoal" }),
     );
   });
 
