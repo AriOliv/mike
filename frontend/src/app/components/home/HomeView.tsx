@@ -52,6 +52,8 @@ export function HomeView() {
     const load = useCallback(async () => {
         try {
             const next = await getHomeSummary(workspaceId);
+            // Someone outside the legal team has no queue here: their home is their requests.
+            if (next.audience === "requester") return void router.replace("/pedidos");
             hasData.current = true;
             setHome(next);
             setError(null);
@@ -66,7 +68,7 @@ export function HomeView() {
                 notifyError(e, { lang: "pt", action: "atualizar o Início", dedupeKey: "home-refresh" });
             else setError(describeError(e, { lang: "pt", action: "carregar o Início" }).message);
         }
-    }, [me, workspaceId]);
+    }, [me, router, workspaceId]);
 
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- the first read of an external store; load() sets state when the request settles
@@ -280,13 +282,18 @@ export function HomeView() {
     return (
         <div className="flex h-full min-h-0 flex-col">
             <PageHeader
-                actions={[
-                    {
-                        icon: <Upload aria-hidden="true" className="h-3.5 w-3.5" />,
-                        label: "Enviar contratos",
-                        onClick: () => setSending(true),
-                    },
-                ]}
+                // Only once the screen is known to be the team's: a requester is on their way to /pedidos.
+                actions={
+                    home
+                        ? [
+                              {
+                                  icon: <Upload aria-hidden="true" className="h-3.5 w-3.5" />,
+                                  label: "Enviar contratos",
+                                  onClick: () => setSending(true),
+                              },
+                          ]
+                        : []
+                }
             >
                 Início
             </PageHeader>

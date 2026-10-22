@@ -65,6 +65,12 @@ export type HomeDeadline = {
 };
 
 export type HomeSummary = {
+    /**
+     * Who the screen is for. A requester (someone outside the legal team) gets
+     * no portfolio at all, even when a card was shared with them: their home
+     * is their requests, not the team's queue.
+     */
+    audience: "team" | "requester";
     since: string | null;
     greeting: { reviewed: number; reviewed_90d: number; failed: number; notices_closing: number; ready: number };
     counters: { ready: number; mine: number; notices_30d: number; folders: number };
@@ -203,16 +209,30 @@ export async function countAgentReviews(
     return reviewed.size;
 }
 
+/** The home of someone outside the legal team: nothing from the portfolio. */
+export const REQUESTER_HOME: HomeSummary = {
+    audience: "requester",
+    since: null,
+    greeting: { reviewed: 0, reviewed_90d: 0, failed: 0, notices_closing: 0, ready: 0 },
+    counters: { ready: 0, mine: 0, notices_30d: 0, folders: 0 },
+    reviews: [],
+    deadlines: [],
+    activity: [],
+};
+
 /**
  * Builds the home screen and records this visit. `since` is when the caller
- * last opened it, so the greeting counts only what is new to them.
+ * last opened it, so the greeting counts only what is new to them. A
+ * requester (`audience`, from the requests module) reads nothing.
  */
 export async function getHomeSummary(
     db: Db,
     caller: Caller,
     now: Date = new Date(),
     workspace: WorkspaceFilter = null,
+    audience: HomeSummary["audience"] = "team",
 ): Promise<ServiceResult<HomeSummary>> {
+    if (audience === "requester") return ok(REQUESTER_HOME);
     try {
         const since = await touchVisit(db, caller.userId, now);
         const ids = await listAccessibleProjectIds(caller.userId, caller.userEmail, db);
@@ -407,6 +427,7 @@ export async function getHomeSummary(
 
         const notices30 = deadlines.filter((d) => d.days_left <= NOTICE_WINDOW_DAYS).length;
         return ok({
+            audience: "team",
             since,
             greeting: {
                 reviewed,

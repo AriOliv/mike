@@ -127,6 +127,22 @@ beforeEach(() => {
 });
 
 describe("HomeView", () => {
+    it("sends a requester to their requests and never shows the team's queue", async () => {
+        api.getHomeSummary.mockResolvedValue(summary([], { audience: "requester", deadlines: [], activity: [] }));
+        render(<HomeView />);
+        await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/pedidos"));
+        expect(screen.queryByText(/Revisei|Não revisei|Ainda não revisei/)).not.toBeInTheDocument();
+        expect(screen.queryByRole("table")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Enviar contratos/ })).not.toBeInTheDocument();
+    });
+
+    it("keeps the head on the Início with the queue", async () => {
+        api.getHomeSummary.mockResolvedValue(summary([review({})], { audience: "team" }));
+        render(<HomeView />);
+        expect(await screen.findByText(/Revisei/)).toBeInTheDocument();
+        expect(nav.replace).not.toHaveBeenCalledWith("/pedidos");
+    });
+
     it("greets with what the agents did, the counters and the queue, opening on my reviews", async () => {
         api.getHomeSummary.mockResolvedValue(
             summary([
