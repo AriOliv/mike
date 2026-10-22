@@ -9,6 +9,10 @@ const service = vi.hoisted(() => ({
     getLegalAgentChannelSetup: vi.fn(),
     setLegalAgentChannelStatus: vi.fn(),
     deleteLegalAgentChannel: vi.fn(),
+    listMyChatLinks: vi.fn(),
+    revokeMyChatLink: vi.fn(),
+    previewChatLink: vi.fn(),
+    confirmChatLink: vi.fn(),
 }));
 vi.mock("../legalAgent.service", () => service);
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: () => ({}) }));
@@ -20,11 +24,12 @@ vi.mock("../../../middleware/auth", () => ({
     },
 }));
 
-import { legalAgentRouter } from "../legalAgent.routes";
+import { chatLinksRouter, legalAgentRouter } from "../legalAgent.routes";
 
 const app = express();
 app.use(express.json());
 app.use("/orgs/:orgId/legal-agent", legalAgentRouter);
+app.use("/chat-links", chatLinksRouter);
 
 const caller = { userId: "u1", userEmail: "head@avenia.io" };
 const okData = (data: unknown) => ({ ok: true, data });
@@ -50,6 +55,7 @@ describe("legal agent routes", () => {
             kind: "slack",
             name: "S",
             config: { workspace: "A" },
+            platform_team_id: undefined,
         });
         await request(app).put("/orgs/o1/legal-agent/channels/c1").send("x").expect(200);
         expect(service.saveLegalAgentChannel).toHaveBeenLastCalledWith({}, caller, "o1", {
@@ -57,6 +63,7 @@ describe("legal agent routes", () => {
             kind: undefined,
             name: undefined,
             config: undefined,
+            platform_team_id: undefined,
         });
     });
 
@@ -67,6 +74,17 @@ describe("legal agent routes", () => {
         expect(service.setLegalAgentChannelStatus).toHaveBeenCalledWith({}, caller, "o1", "c1", "pausado");
         await request(app).delete("/orgs/o1/legal-agent/channels/c1").expect(200);
         expect(service.deleteLegalAgentChannel).toHaveBeenCalledWith({}, caller, "o1", "c1");
+    });
+
+    it("lists and revokes the caller's chat links, and confirms a link from the chat", async () => {
+        await request(app).get("/orgs/o1/legal-agent/links").expect(200);
+        expect(service.listMyChatLinks).toHaveBeenCalledWith({}, caller, "o1");
+        await request(app).delete("/orgs/o1/legal-agent/links/l1").expect(200);
+        expect(service.revokeMyChatLink).toHaveBeenCalledWith({}, caller, "o1", "l1");
+        await request(app).get("/chat-links/preview?t=abc").expect(200);
+        expect(service.previewChatLink).toHaveBeenCalledWith({}, caller, "abc");
+        await request(app).post("/chat-links/confirm").send({ t: "abc" }).expect(200);
+        expect(service.confirmChatLink).toHaveBeenCalledWith({}, caller, "abc");
     });
 
     it("answers a failure with its status and the sentence for the person", async () => {

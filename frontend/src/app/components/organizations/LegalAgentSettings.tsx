@@ -15,6 +15,9 @@ import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 import {
     deleteLegalAgentChannel,
     getLegalAgent,
+    listMyChatLinks,
+    revokeMyChatLink,
+    type ChatLink,
     getLegalAgentChannelSetup,
     saveLegalAgentSettings,
     setLegalAgentChannelStatus,
@@ -57,6 +60,7 @@ export function LegalAgentSettings() {
     const [saving, setSaving] = useState(false);
     const [wizard, setWizard] = useState<{ channel: LegalAgentChannel | null; setup: LegalAgentChannelSetup | null } | null>(null);
     const [newArea, setNewArea] = useState("");
+    const [links, setLinks] = useState<ChatLink[]>([]);
 
     const load = useCallback(async () => {
         try {
@@ -65,6 +69,8 @@ export function LegalAgentSettings() {
             setForm(next.settings);
             setDeadlineText(next.settings.proactive.deadline_days.join(", "));
             setError(null);
+            // My own links are a nicety on this page: if they fail, the rest still works.
+            setLinks(await listMyChatLinks(orgId).catch(() => []));
         } catch (e) {
             setError(describeError(e, { lang: "pt", action: "carregar o agente do Legal" }).message);
         }
@@ -136,6 +142,15 @@ export function LegalAgentSettings() {
             setView({ ...view, channels: view.channels.filter((c) => c.id !== channel.id) });
         } catch (e) {
             notifyError(e, { lang: "pt", action: "remover o canal" });
+        }
+    };
+
+    const unlink = async (link: ChatLink) => {
+        try {
+            await revokeMyChatLink(orgId, link.id);
+            setLinks(links.filter((l) => l.id !== link.id));
+        } catch (e) {
+            notifyError(e, { lang: "pt", action: "desligar a conta de chat" });
         }
     };
 
@@ -519,6 +534,35 @@ export function LegalAgentSettings() {
                                 </SettingsRow>
                             );
                         })
+                    )}
+                </GlassCardUI>
+            </section>
+
+            <section aria-labelledby="agent-my-links" className="space-y-3">
+                <SettingsHeading id="agent-my-links">Minhas contas de chat</SettingsHeading>
+                <GlassCardUI>
+                    {links.length === 0 ? (
+                        <SettingsRow>
+                            <SettingsDescription>
+                                Nenhuma ainda. Na primeira conversa, o assistente manda um link para você ligar a sua conta do
+                                chat ao Mike. Sem isso, ele não abre nem consulta pedidos em seu nome.
+                            </SettingsDescription>
+                        </SettingsRow>
+                    ) : (
+                        links.map((link) => (
+                            <SettingsRow key={link.id}>
+                                <div className="space-y-1">
+                                    <SettingsLabel>{CHANNEL_LABEL[link.platform].label}</SettingsLabel>
+                                    <SettingsDescription>
+                                        Ligada em {new Date(link.confirmed_at).toLocaleDateString("pt-BR")} · vale até{" "}
+                                        {new Date(link.expires_at).toLocaleDateString("pt-BR")}
+                                    </SettingsDescription>
+                                </div>
+                                <PillButtonUI tone="white" size="xs" onClick={() => void unlink(link)}>
+                                    Desligar
+                                </PillButtonUI>
+                            </SettingsRow>
+                        ))
                     )}
                 </GlassCardUI>
             </section>
