@@ -7,6 +7,7 @@
 // (contract_terms) until the Ficha carries the term dates; the notice in
 // days prefers the Ficha's literal reading and falls back to the terms.
 
+import { workspaceMatches, type WorkspaceFilter } from "../../lib/workspace";
 import type { Db } from "../../lib/supabase";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
@@ -35,7 +36,7 @@ const SORTS = new Set(["nome", "aviso"]);
 const MAX_LIMIT = 100;
 const CHUNK = 200;
 
-type ProjectRow = { id: string; name: string; counterparty: string | null; contract_type: string | null; lane: string | null };
+type ProjectRow = { id: string; name: string; counterparty: string | null; contract_type: string | null; lane: string | null; org_id: string | null };
 
 /** Fields that hold a reading of the contract: found, inferred or ambiguous. */
 function filledCount(ficha: Ficha | null): number {
@@ -58,6 +59,8 @@ export async function listContractPortfolio(
     db: Db,
     caller: Caller,
     query: Record<string, unknown>,
+    /** Narrow to one workspace, the cut the home screen counts in; null = every contract the caller sees. */
+    workspace: WorkspaceFilter = null,
 ): Promise<ServiceResult<Portfolio>> {
     const limit = query.limit === undefined ? 50 : Number(query.limit);
     const offset = query.offset === undefined ? 0 : Number(query.offset);
@@ -74,7 +77,7 @@ export async function listContractPortfolio(
             const [p, f, t] = await Promise.all([
                 db
                     .from("projects")
-                    .select("id, name, counterparty, contract_type, lane")
+                    .select("id, name, counterparty, contract_type, lane, org_id")
                     .in("id", chunk)
                     .not("lane", "is", null)
                     .is("archived_at", null),
@@ -84,7 +87,7 @@ export async function listContractPortfolio(
             if (p.error) throw p.error;
             if (f.error) throw f.error;
             if (t.error) throw t.error;
-            projects.push(...((p.data ?? []) as ProjectRow[]));
+            projects.push(...((p.data ?? []) as ProjectRow[]).filter((row) => workspaceMatches(workspace, row.org_id)));
             for (const row of (f.data ?? []) as { project_id: string; ficha: Ficha | null; risk_overall: PortfolioRow["risk"] }[])
                 fichas.set(row.project_id, row);
             for (const row of (t.data ?? []) as ({ project_id: string } & PortfolioRow)[]) terms.set(row.project_id, row);
