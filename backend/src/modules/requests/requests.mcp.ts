@@ -70,6 +70,12 @@ const SLA_LABELS: Record<string, string> = {
     encerrado: "encerrado",
 };
 
+/**
+ * A document id. Not z.string().uuid(): zod 4 checks the RFC version and
+ * variant and refuses ids Postgres accepts (the seed's fixed ones).
+ */
+const documentId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
 const pedidoRef = z
     .string()
     .min(1)
@@ -417,7 +423,7 @@ const criarInput = {
         .optional()
         .describe("AAAA-MM-DD, se a pessoa precisa antes do prazo do Legal."),
     anexos: z
-        .array(z.string().uuid())
+        .array(documentId)
         .max(5)
         .optional()
         .describe("Ids de documentos que a própria pessoa já subiu no Mike."),

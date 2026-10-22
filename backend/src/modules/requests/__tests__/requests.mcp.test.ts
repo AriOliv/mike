@@ -164,6 +164,12 @@ describe("the catalog", () => {
         expect(tool("listar_meus").roles).toEqual(["head", "team", "requester"]);
     });
 
+    it("takes the seed's fixed ids as attachments (Postgres accepts them; zod's uuid() does not)", () => {
+        const input = z.object(tool("criar").input);
+        expect(() => input.parse({ tipo: "nda", descricao: "x", anexos: ["00000000-0000-4000-e000-000000000001"] })).not.toThrow();
+        expect(() => input.parse({ tipo: "nda", descricao: "x", anexos: ["nao-e-id"] })).toThrow();
+    });
+
     it("never takes who acts as an argument", () => {
         for (const t of ALL) {
             const keys = Object.keys(t.input);
