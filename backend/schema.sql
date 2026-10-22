@@ -11230,12 +11230,19 @@ create index if not exists idx_card_events_at
 
 -- Append-only. The backend connects as service_role, which RLS does not
 -- restrict, so the trigger is the real guard. A retention purge will be a
--- dedicated security-definer function, never an ad hoc delete.
+-- dedicated security-definer function, never an ad hoc delete. The one
+-- DELETE let through is the cascade from deleting the card: by then the
+-- project row is gone (20261022_97).
 create or replace function public.card_events_append_only() returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
+  if tg_op = 'DELETE' and not exists (
+    select 1 from public.projects p where p.id = old.project_id
+  ) then
+    return old;
+  end if;
   raise exception 'card_events is append-only';
 end
 $$;
@@ -12079,5 +12086,6 @@ insert into public.schema_migrations (filename) values
   ('20261022_90_chat_identity_links.sql'),
   ('20261022_91_request_intake.sql'),
   ('20261022_92_contract_analyses.sql'),
-  ('20261022_95_mcp_confirmations.sql')
+  ('20261022_95_mcp_confirmations.sql'),
+  ('20261022_97_card_events_cascade.sql')
 on conflict (filename) do nothing;

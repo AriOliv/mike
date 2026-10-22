@@ -96,9 +96,12 @@ const NAV_ICONS: Record<NavIconKey, (props: { className?: string }) => ReactElem
 };
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
-const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44";
+// On a short screen (a 1280x900 laptop, a phone) Recent Projects shows three
+// rows and scrolls inside, so History keeps the rest of the column. Written
+// out in full: Tailwind only generates classes it finds as literal text.
+const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44 [@media(max-height:960px)]:h-28";
 // Room for an expanded project's recent chats and reviews.
-const RECENT_PROJECT_LIST_EXPANDED_HEIGHT_CLASS = "h-64";
+const RECENT_PROJECT_LIST_EXPANDED_HEIGHT_CLASS = "h-64 [@media(max-height:960px)]:h-44";
 const recentProjectsCache = new Map<
     string,
     { projects: Project[]; hasMore: boolean }
