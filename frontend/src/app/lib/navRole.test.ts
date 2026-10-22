@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadNavRole } from "./navRole";
+import { loadAlertCount, loadNavRole } from "./navRole";
 
 function answer(status: number, body: unknown) {
     vi.stubGlobal(
@@ -40,5 +40,26 @@ describe("loadNavRole", () => {
     it("answers null when the request fails", async () => {
         vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
         await expect(loadNavRole()).resolves.toBeNull();
+    });
+});
+
+describe("loadAlertCount", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("counts the Head's open critical alerts", async () => {
+        answer(200, { alerts: [{ request_id: "a" }, { request_id: "b" }] });
+        await expect(loadAlertCount()).resolves.toBe(2);
+        expect(fetch).toHaveBeenCalledWith("/api/requests/alerts", expect.objectContaining({ credentials: "include" }));
+    });
+
+    it("answers zero on an error, a missing route, a bad body or a network failure", async () => {
+        answer(404, {});
+        await expect(loadAlertCount()).resolves.toBe(0);
+        answer(200, { alerts: "x" });
+        await expect(loadAlertCount()).resolves.toBe(0);
+        vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+        await expect(loadAlertCount()).resolves.toBe(0);
     });
 });

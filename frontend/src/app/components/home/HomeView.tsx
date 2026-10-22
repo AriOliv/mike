@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, Diamond, FolderInput, Upload } from "lucide-rea
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { ActivityFeed } from "@/app/components/shared/ActivityFeed";
 import { StatTiles } from "@/app/components/ui/stat-tiles";
+import { CriticalAlertsStrip } from "@/app/components/requests/CriticalAlerts";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { TableEmptyState } from "@/app/components/shared/TablePrimitive";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -354,6 +355,8 @@ export function HomeView() {
                                 </div>
                             ) : null}
                         </section>
+
+                        <CriticalAlertsStrip className="mt-5" />
 
                         <StatTiles
                             className="mt-5"

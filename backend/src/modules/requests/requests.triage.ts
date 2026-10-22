@@ -122,10 +122,25 @@ export function parseTriage(raw: string): TriageModelOutput {
  * registry) when set, else the model the team's first owner uses for
  * tabular reviews or last chatted with. Null means "triage without AI".
  */
-async function triageModel(
+export async function triageModel(
     db: Db,
     orgId: string,
 ): Promise<{ model: string; apiKeys: Awaited<ReturnType<typeof getUserModelSettings>>["api_keys"] } | null> {
+    const owner = await teamOwner(db, orgId);
+    if (!owner) return null;
+    const settings = await getUserModelSettings(owner.user_id, db, { orgId });
+    const model =
+        process.env.LEGAL_TRIAGE_MODEL?.trim() ||
+        settings.tabular_model ||
+        settings.last_selected_chat_model;
+    return model ? { model, apiKeys: settings.api_keys } : null;
+}
+
+/**
+ * The team's first owner or admin: whose model settings the agents use, and
+ * who reads the team's cards for them (a job has no person signed in).
+ */
+export async function teamOwner(db: Db, orgId: string): Promise<{ user_id: string; email: string | null } | null> {
     const { data: owners } = await db
         .from("org_members")
         .select("user_id")
@@ -135,12 +150,8 @@ async function triageModel(
         .limit(1);
     const ownerId = ((owners ?? [])[0] as { user_id?: string } | undefined)?.user_id;
     if (!ownerId) return null;
-    const settings = await getUserModelSettings(ownerId, db, { orgId });
-    const model =
-        process.env.LEGAL_TRIAGE_MODEL?.trim() ||
-        settings.tabular_model ||
-        settings.last_selected_chat_model;
-    return model ? { model, apiKeys: settings.api_keys } : null;
+    const { data: profile } = await db.from("user_profiles").select("email").eq("user_id", ownerId).maybeSingle();
+    return { user_id: ownerId, email: (profile as { email?: string | null } | null)?.email ?? null };
 }
 
 /** The team's members, named for the card. */
