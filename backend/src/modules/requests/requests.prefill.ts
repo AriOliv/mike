@@ -177,6 +177,9 @@ export async function handleIntakePrefill(
     } catch (err) {
         console.error("[requests] intake prefill model failed", { requestId, error: safeError(err) });
         await finishAgentRun(db, runId, { status: "failed", error: "model_failed", modelResolved: selected.model, latencyMs: Date.now() - started });
+        // No key for the model is not going to fix itself between retries:
+        // fail now, so the checklist stops saying it is reading the contract.
+        if (err instanceof Error && /\bnot configured\b/i.test(err.message)) throw new NonRetryableJobError("model_not_configured");
         throw err;
     }
 

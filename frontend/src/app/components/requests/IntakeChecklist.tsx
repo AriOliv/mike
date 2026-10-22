@@ -12,6 +12,9 @@ const FIELD =
     "w-full rounded-lg border border-gray-200 bg-app-surface px-2 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
 type Item = RequestIntake["items"][number];
+
+/** How often the checklist looks again while the agent is reading the contract. */
+export const PREFILL_POLL_MS = 5000;
 type Draft = { value: string; detail: string };
 
 /**
@@ -66,6 +69,16 @@ export function IntakeChecklist({
                     <span className="text-violet-700">· {toConfirm.length} lida{toConfirm.length === 1 ? "" : "s"} no contrato para confirmar</span>
                 ) : null}
             </p>
+            {intake.prefill === "lendo" && !intake.complete ? (
+                <p className="mt-1 flex items-center gap-1.5 text-[11px] text-violet-700" role="status">
+                    <Sparkles className="h-3 w-3" aria-hidden />
+                    O agente está lendo o contrato para preencher o que ele responde.
+                </p>
+            ) : intake.prefill === "falhou" && !intake.complete ? (
+                <p className="mt-1 text-[11px] text-gray-500" role="status">
+                    O agente não conseguiu ler o contrato agora. Responda as perguntas abaixo.
+                </p>
+            ) : null}
 
             <ul className="mt-2 space-y-2">
                 {intake.items.map((item) =>
@@ -310,6 +323,19 @@ export function RequestIntakeSection({
             cancelled = true;
         };
     }, [requestId, reloadKey]);
+    // While the agent reads the contract, look again until it is done; a
+    // failed look keeps the screen as it is and tries again.
+    const reading = intake?.prefill === "lendo";
+    const [missed, setMissed] = useState(0);
+    useEffect(() => {
+        if (!reading) return;
+        const timer = setTimeout(() => {
+            getRequestIntake(requestId)
+                .then(setIntake)
+                .catch(() => setMissed((n) => n + 1));
+        }, PREFILL_POLL_MS);
+        return () => clearTimeout(timer);
+    }, [reading, intake, missed, requestId]);
     if (!intake) return null;
     return (
         <IntakeChecklist
