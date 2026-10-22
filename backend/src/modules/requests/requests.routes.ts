@@ -8,6 +8,8 @@ import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
 import {
     getRequestAnalysis,
+    getTerms,
+    setTerms,
     listCriticalAlerts,
     requestAnalysis,
     answerIntake,
@@ -125,6 +127,22 @@ requestsRouter.get(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await getIntake(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.get(
+    "/:id/terms",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await getTerms(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.put(
+    "/:id/terms",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setTerms(createServerSupabase(), caller(res), req.params.id, body(req)));
     }),
 );
 

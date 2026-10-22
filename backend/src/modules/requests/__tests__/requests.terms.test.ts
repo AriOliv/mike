@@ -7,7 +7,7 @@ import { memoryDb, uuid } from "./memoryDb";
 const enqueue = vi.hoisted(() => ({ enqueueDbJob: vi.fn(async () => ({ id: "job", deduped: false })) }));
 vi.mock("../../../lib/dbq/enqueue", () => enqueue);
 
-import { createRequest, getRequest, parseTerms, termEnd, type RequestTeamView } from "../requests.service";
+import { createRequest, deliverRequest, getRequest, getTerms, parseTerms, setTerms, termEnd, type RequestTeamView } from "../requests.service";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const HEAD = { userId: "aaaaaaaa-0000-4000-8000-000000000001", userEmail: "head@avenia.io" };
@@ -33,7 +33,7 @@ function world() {
                         number, status: "novo", paused_at: null, paused_seconds: 0, assignee_id: null, assigned_at: null,
                         assigned_by: null, summary: null, triage: null, delivery: null, delivered_at: null,
                         source: { channel: "form" }, intake: {}, intake_completed_at: null, critical_alert_at: null,
-                        counterparty_email: null, term_start: null, term_months: null,
+                        counterparty_email: null, term_start: null, term_months: null, terms_inferred: {},
                         idempotency_key: null, created_at: now, updated_at: now,
                     };
                 },
@@ -190,5 +190,120 @@ describe("on a request", () => {
         expect(JSON.stringify(w.table("legal_request_notifications"))).not.toContain("contato@empresa.com");
         expect(w.table("legal_request_notifications").every((n) => n.recipient === "ana@avenia.io")).toBe(true);
         expect(JSON.stringify(w.table("card_events"))).not.toContain("contato@empresa.com");
+    });
+});
+
+describe("answering the terms", () => {
+    const SUGGEST = {
+        counterparty: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A." },
+        term_start: { value: "2026-11-01", quote: "Vigência a partir de 1º de novembro de 2026." },
+        term_months: { value: "24", quote: "prazo de vigência é de 24 meses" },
+    };
+    async function open(extra: Record<string, unknown> = {}) {
+        const w = world();
+        const r = await createRequest(w.db, REQUESTER, { kind: "revisao", counterparty: undefined, context: "Contrato.", ...extra });
+        if (!r.ok) throw new Error(JSON.stringify(r));
+        const id = r.data.request.id;
+        const row = w.table("legal_requests").find((x) => x.id === id)!;
+        return { w, id, row };
+    }
+
+    it("shows what the agent read, with its words, and the computed end", async () => {
+        const { w, id, row } = await open({ term_start: "2026-01-31", term_months: 1 });
+        row.terms_inferred = { counterparty: SUGGEST.counterparty };
+        const view = await getTerms(w.db, HEAD, id);
+        expect(view.ok && view.data).toMatchObject({
+            term_end: "2026-02-28",
+            inferred: { counterparty: { quote: "Contratada: Nuvem Fictícia S.A." } },
+            can_answer: true,
+        });
+    });
+
+    it("confirming copies the suggestion into the real field and drops it from the suggestions", async () => {
+        const { w, id, row } = await open();
+        row.terms_inferred = { ...SUGGEST };
+        const done = await setTerms(w.db, REQUESTER, id, { confirm: ["term_start", "term_months", "nada"] });
+        expect(done.ok && done.data).toMatchObject({ term_start: "2026-11-01", term_months: 24, term_end: "2028-11-01" });
+        expect(row).toMatchObject({ term_start: "2026-11-01", term_months: 24 });
+        expect(Object.keys(row.terms_inferred as object)).toEqual(["counterparty"]);
+
+        const counterparty = await setTerms(w.db, REQUESTER, id, { confirm: ["counterparty"] });
+        expect(counterparty.ok && counterparty.data.counterparty).toBe("Nuvem Fictícia S.A.");
+        expect(row.terms_inferred).toEqual({});
+    });
+
+    it("a value the person typed wins over a confirmation of the same field, and clears the suggestion", async () => {
+        const { w, id, row } = await open();
+        row.terms_inferred = { ...SUGGEST };
+        const done = await setTerms(w.db, REQUESTER, id, { confirm: ["term_months"], term_months: 36, counterparty: "  Nuvem Ltda  ", term_start: "" });
+        expect(done.ok && done.data).toMatchObject({ term_months: 36, counterparty: "Nuvem Ltda", term_start: null });
+        expect(row.terms_inferred).toEqual({});
+    });
+
+    it("an empty value clears the field, and a bad one names it with a 422-style code", async () => {
+        const { w, id, row } = await open({ term_months: 12, term_start: "2026-11-01" });
+        const cleared = await setTerms(w.db, REQUESTER, id, { term_months: "" });
+        expect(cleared.ok && cleared.data.term_months).toBeNull();
+        expect(row.term_months).toBeNull();
+        const bad = await setTerms(w.db, REQUESTER, id, { term_months: 0 });
+        expect(bad).toMatchObject({ ok: false, kind: "validation", code: "field:term_months", detail: "Use um prazo de 1 mês ou mais." });
+        expect(row.term_months).toBeNull();
+    });
+
+    it("changes nothing when nothing was sent", async () => {
+        const { w, id, row } = await open({ term_months: 12 });
+        const before = JSON.stringify(row);
+        const done = await setTerms(w.db, REQUESTER, id, {});
+        expect(done.ok && done.data.term_months).toBe(12);
+        expect(JSON.stringify(row)).toBe(before);
+    });
+
+    it("lets the requester write the other party's e-mail but never reads it back to them", async () => {
+        const { w, id, row } = await open();
+        const saved = await setTerms(w.db, REQUESTER, id, { counterparty_email: "Contato@Empresa.com" });
+        expect(saved.ok && saved.data.counterparty_email).toBeNull();
+        expect(row.counterparty_email).toBe("contato@empresa.com");
+        expect(JSON.stringify(await getTerms(w.db, REQUESTER, id))).not.toContain("contato@empresa.com");
+        const team = await getTerms(w.db, HEAD, id);
+        expect(team.ok && team.data.counterparty_email).toBe("contato@empresa.com");
+    });
+
+    it("keeps strangers out, and a closed request closed", async () => {
+        const { w, id } = await open();
+        const stranger = { userId: "cccccccc-0000-4000-8000-000000000009", userEmail: "x@avenia.io" };
+        expect((await getTerms(w.db, stranger, id)).ok).toBe(false);
+        expect((await setTerms(w.db, stranger, id, { term_months: 5 })).ok).toBe(false);
+        const delivered = await deliverRequest(w.db, HEAD, id, { message: "Pronto." });
+        expect(delivered.ok).toBe(true);
+        expect(await setTerms(w.db, REQUESTER, id, { term_months: 5 })).toMatchObject({ ok: false, kind: "conflict", detail: "Este pedido já foi encerrado." });
+        const view = await getTerms(w.db, REQUESTER, id);
+        expect(view.ok && view.data.can_answer).toBe(false);
+    });
+
+    it("lets an invited guest read the terms without the other party's e-mail, and never change them", async () => {
+        const { w, id, row } = await open({ counterparty_email: "contato@empresa.com", term_months: 12 });
+        const guest = { userId: "dddddddd-0000-4000-8000-000000000001", userEmail: "externo@escritorio.com" };
+        w.table("legal_request_participants").push({
+            request_id: id, email: "externo@escritorio.com", role: "external", label: null,
+            expires_at: "2099-01-01T00:00:00Z", revoked_at: null, created_at: "2026-10-22T00:00:00Z",
+        });
+        const read = await getTerms(w.db, guest, id);
+        expect(read.ok && read.data).toMatchObject({ term_months: 12, counterparty_email: null, can_answer: false });
+        expect(JSON.stringify(read)).not.toContain("contato@empresa.com");
+        expect(await setTerms(w.db, guest, id, { term_months: 5 })).toMatchObject({
+            ok: false,
+            kind: "forbidden",
+            detail: "Os dados do contrato são de quem pediu e do time do Legal.",
+        });
+        expect(row.term_months).toBe(12);
+    });
+
+    it("answers with an internal failure when saving fails", async () => {
+        const { w, id } = await open();
+        const seeded = memoryDb(
+            Object.fromEntries(["legal_teams", "org_members", "user_profiles", "legal_requests", "projects"].map((t) => [t, w.table(t)])),
+            { fail: (t, op) => (t === "legal_requests" && op === "update" ? { message: "boom" } : null) },
+        );
+        expect(await setTerms(seeded.db, REQUESTER, id, { term_months: 5 })).toMatchObject({ ok: false, kind: "error" });
     });
 });
