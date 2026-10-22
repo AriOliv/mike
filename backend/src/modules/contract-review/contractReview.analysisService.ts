@@ -20,13 +20,15 @@ import { getUserModelSettings } from "../user/user.service";
 import { finishAgentRun, recordCardEvent, startAgentRun } from "../contracts/contracts.service";
 import { findPlaybookForContractType, startPlaybookReview } from "../playbooks/playbooks.service";
 import { contractText } from "./contractReview.fichaService";
-import { contractDocument, parseModelJson, requireContractEdit, type Caller } from "./contractReview.shared";
+import { contractDocument, requireContractEdit, type Caller } from "./contractReview.shared";
 import {
     analysisCounts,
     analysisPrompt,
+    analysisRetryPrompt,
     ANALYSIS_PROMPT_VERSION,
     estimateUsage,
     normalizeAnalysis,
+    parseAnalysisAnswer,
     withMissingIntake,
     type AnalysisResult,
     type DroppedCitation,
@@ -38,8 +40,28 @@ export const ANALYST_ANALYSIS_JOB = "contract.analyst_analysis";
 /** The requests module's handler; named here only as a string, so no import. */
 export const ANALYSIS_READY_JOB = "request.analysis_ready";
 export const ANALYST = { id: "agent:analista@1", name: "Agente analista", agent: "analista", version: "1" };
-/** The default when the organization set none: the playbook-sized review needs it (Haiku left rules out). */
+/** The default: the playbook-sized review needs it (Haiku left rules out and broke the JSON). */
 export const DEFAULT_ANALYSIS_MODEL = "claude-sonnet-5-5";
+
+/**
+ * The model the analysis runs on: LEGAL_ANALYSIS_MODEL (an id from the provider
+ * registry) when set, else Sonnet. Never a person's own model settings: a
+ * profile set to a small model for tabular reviews must not change the legal
+ * team's analysis.
+ */
+export function analysisModel(): string {
+    return process.env.LEGAL_ANALYSIS_MODEL?.trim() || DEFAULT_ANALYSIS_MODEL;
+}
+
+/** A failure that carries what the model calls spent, so a failed run still records its cost. */
+class AnalysisAnswerError extends NonRetryableJobError {
+    constructor(
+        reason: "invalid_json" | "incomplete_answer",
+        readonly usage: ReturnType<typeof estimateUsage>,
+    ) {
+        super(reason);
+    }
+}
 
 export type AnalysisStatus = "queued" | "running" | "done" | "failed";
 export type ContractAnalysis = {
@@ -214,8 +236,9 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
     });
     await setRow(db, row.id, { status: "running", error: null });
     try {
+        // Only the API keys come from the requester's settings; the model is the analysis's own.
         const settings = await getUserModelSettings(caller.userId, db, { orgId: row.org_id });
-        const model = settings.tabular_model ?? DEFAULT_ANALYSIS_MODEL;
+        const model = analysisModel();
         const doc = await contractDocument(db, row.project_id);
         if (!doc) throw new NonRetryableJobError("no_document");
         const documentText = await contractText(doc);
@@ -228,23 +251,37 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
             intake: row.intake ?? [],
             playbook: yardstick ? { name: yardstick.name, findings: yardstick.findings } : null,
         });
-        let reported: TokenUsage | null = null;
-        const raw = await completeText({
-            model,
-            systemPrompt: "Você é um analista jurídico brasileiro revisando um contrato para o time jurídico da Avenia. Responda apenas com JSON válido.",
-            user: prompt,
-            maxTokens: 16_000,
-            apiKeys: settings.api_keys,
-            onUsage: (usage) => {
-                reported = usage;
-            },
-        });
-        const { result, dropped } = normalizeAnalysis(parseModelJson(raw), documentText, yardstick?.findings ?? []);
+        // One answer, mended if its JSON slipped; when it is still not the
+        // analysis (cut off or invalid), one more try with a shorter ask.
+        const calls: { input: number; output: number; reported: TokenUsage | null }[] = [];
+        const ask = async (user: string) => {
+            const call = { input: user.length, output: 0, reported: null as TokenUsage | null };
+            calls.push(call);
+            const raw = await completeText({
+                model,
+                systemPrompt: "Você é um analista jurídico brasileiro revisando um contrato para o time jurídico da Avenia. Responda apenas com JSON válido.",
+                user,
+                maxTokens: 16_000,
+                apiKeys: settings.api_keys,
+                onUsage: (usage) => {
+                    call.reported = usage;
+                },
+            });
+            call.output = raw.length;
+            return parseAnalysisAnswer(raw);
+        };
+        let answer = await ask(prompt);
+        if (!answer.ok) {
+            console.warn(`[analysis] ${row.id}: ${answer.reason}, asking once more`);
+            answer = await ask(analysisRetryPrompt(prompt));
+        }
+        if (!answer.ok) throw new AnalysisAnswerError(answer.reason, estimateUsage(model, calls));
+        const { result, dropped } = normalizeAnalysis(answer.value, documentText, yardstick?.findings ?? []);
         const final = withMissingIntake(result, row.intake ?? []);
         if (dropped.length)
             // Counts only: the quotes are contract text.
             console.warn(`[analysis] ${row.id}: ${dropped.length} citation(s) not found in the document were dropped`);
-        const usage = estimateUsage(model, [{ input: prompt.length, output: raw.length, reported }]);
+        const usage = estimateUsage(model, calls);
         const counts = analysisCounts(final);
         const finished = new Date().toISOString();
         await setRow(db, row.id, {
@@ -287,10 +324,20 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
     } catch (error) {
         const permanent = error instanceof NonRetryableJobError;
         const lastAttempt = permanent || job.attempts >= job.max_attempts;
-        await finishAgentRun(db, runId, { status: "failed", error: permanent ? error.message : "error", latencyMs: Date.now() - started });
+        const spent = error instanceof AnalysisAnswerError ? error.usage : null;
+        await finishAgentRun(db, runId, {
+            status: "failed",
+            error: permanent ? error.message : "error",
+            latencyMs: Date.now() - started,
+            tokensIn: spent?.input_tokens,
+            tokensOut: spent?.output_tokens,
+            costUsd: spent?.estimated_cost_usd,
+        });
         await setRow(db, row.id, {
             status: lastAttempt ? "failed" : "queued",
             error: lastAttempt ? analysisFailureText(error) : null,
+            // What the failed calls cost, and why: the reason is a code, never model text.
+            ...(spent && { model: spent.model, usage: { ...spent, prompt_version: ANALYSIS_PROMPT_VERSION, failure: (error as Error).message } }),
         });
         if (lastAttempt)
             await recordCardEvent(db, {
@@ -311,6 +358,8 @@ function analysisFailureText(error: unknown): string {
     const code = error instanceof NonRetryableJobError ? error.message : "";
     if (code === "no_document") return "O contrato não tem documento para analisar.";
     if (code === "unreadable_document") return "Não consegui ler o texto do contrato.";
+    if (code === "invalid_json" || code === "incomplete_answer")
+        return "O modelo devolveu uma análise incompleta duas vezes. Tente de novo; se repetir, o contrato pode ser longo demais para uma análise só.";
     return "A análise falhou. Tente de novo.";
 }
 
