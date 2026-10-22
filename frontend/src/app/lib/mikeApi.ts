@@ -5634,7 +5634,8 @@ export type McpScope =
 export interface McpAccessToken {
     id: string;
     name: string;
-    kind: "pessoal" | "servico";
+    /** "aplicativo": an app the person connected by OAuth (Claude.ai, …). */
+    kind: "pessoal" | "servico" | "aplicativo";
     /** "personal" or an organization id. */
     workspace: string;
     /** The first characters, to recognise a token without showing it. */
@@ -5793,4 +5794,31 @@ export async function previewChatLink(token: string): Promise<{ platform: LegalA
 
 export async function confirmChatLink(token: string): Promise<{ link: ChatLink }> {
     return apiRequest("/chat-links/confirm", jsonInit("POST", { t: token }));
+}
+
+// ── Conectar um aplicativo ao Mike (OAuth do MCP, doc 09 §3.4) ──────────────
+
+export interface McpAuthorizationRequest {
+    id: string;
+    client: { client_id: string; client_name: string | null; redirect_host: string };
+    scopes: McpScope[];
+    expires_at: string;
+}
+
+/** What the consent screen shows: who asks for what, and where the answer goes. */
+export async function getMcpAuthorization(requestId: string): Promise<McpAuthorizationRequest> {
+    return apiRequest(`/mcp-oauth/pedido/${encodeURIComponent(requestId)}`);
+}
+
+/** The person's answer; the browser then goes to `redirect`, back to the app. */
+export async function decideMcpAuthorization(body: {
+    pedido: string;
+    aprovar: boolean;
+    espaco?: string;
+}): Promise<{ redirect: string }> {
+    return apiRequest("/mcp-oauth/decisao", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
 }

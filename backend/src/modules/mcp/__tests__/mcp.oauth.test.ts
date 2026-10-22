@@ -25,6 +25,7 @@ vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn(async () => undefined)
 
 import { buildOAuthRouter, mcpRouter } from "../mcp.routes";
 import { decideAuthorization, exchangeRefresh, revokeOAuthToken } from "../mcp.oauth";
+import { listAccessTokens, revokeAccessToken } from "../mcp.tokens";
 
 const ana = { userId: "00000000-0000-4000-b000-000000000001", userEmail: "ana@exemplo.test" };
 let http: Server;
@@ -194,6 +195,28 @@ describe("OAuth 2.1 for MCP clients", () => {
             body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
         });
         expect(after.status).toBe(401);
+    });
+
+    it("shows the connected app once in the person's tokens, and disconnecting cuts it now", async () => {
+        const { provider } = await connectWithOAuth();
+        const list = await listAccessTokens(state.db as never, ana);
+        if (!list.ok) throw new Error("list");
+        const apps = list.data.filter((t) => t.kind === "aplicativo");
+        expect(apps).toHaveLength(1);
+        expect(apps[0]).toMatchObject({ name: "Claude (teste)", workspace: "personal" });
+        // The hourly access tokens are not listed.
+        expect(list.data.some((t) => t.kind === "oauth")).toBe(false);
+
+        // Someone else cannot disconnect it.
+        expect(await revokeAccessToken(state.db as never, { userId: "00000000-0000-4000-b000-000000000009" }, apps[0].id)).toMatchObject({ kind: "not_found" });
+        expect((await revokeAccessToken(state.db as never, ana, apps[0].id)).ok).toBe(true);
+        const call = await fetch(`${origin}/mcp`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: `Bearer ${provider.saved!.access_token}` },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        });
+        expect(call.status).toBe(401);
+        await expect(exchangeRefresh(state.db as never, { client_id: String(tables.mcp_oauth_clients[0].client_id) }, provider.saved!.refresh_token!, undefined)).rejects.toThrow();
     });
 
     it("tells the client when the person says no, and a request is answered only once", async () => {
