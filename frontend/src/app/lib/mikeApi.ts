@@ -4810,6 +4810,8 @@ export interface RequestIntake {
     answered: number;
     total: number;
     completed_at: string | null;
+    /** The intake agent reading the contract: null when it never ran or had nothing to do. */
+    prefill: "lendo" | "concluido" | "falhou" | null;
     can_answer: boolean;
     template_source: "org" | "padrao";
 }

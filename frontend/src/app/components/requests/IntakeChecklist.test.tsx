@@ -9,7 +9,7 @@ vi.mock("@/app/components/ui/toast", () => toast);
 const errors = vi.hoisted(() => ({ notifyError: vi.fn() }));
 vi.mock("@/app/lib/userFacingError", () => errors);
 
-import { IntakeChecklist, RequestIntakeSection } from "./IntakeChecklist";
+import { IntakeChecklist, PREFILL_POLL_MS, RequestIntakeSection } from "./IntakeChecklist";
 
 const at = "2026-10-22T12:00:00Z";
 function intake(over: Partial<RequestIntake> = {}): RequestIntake {
@@ -49,6 +49,7 @@ function intake(over: Partial<RequestIntake> = {}): RequestIntake {
         answered: 1,
         total: 4,
         completed_at: null,
+        prefill: null,
         can_answer: true,
         template_source: "padrao",
         ...over,
@@ -115,6 +116,15 @@ describe("IntakeChecklist", () => {
         expect(screen.getByText("Checklist completo")).toBeInTheDocument();
     });
 
+    it("says when the agent is reading the contract or could not, and nothing once complete", () => {
+        const { rerender } = render(<IntakeChecklist intake={intake({ prefill: "lendo" })} onAnswer={vi.fn()} />);
+        expect(screen.getByRole("status")).toHaveTextContent("O agente está lendo o contrato");
+        rerender(<IntakeChecklist intake={intake({ prefill: "falhou" })} onAnswer={vi.fn()} />);
+        expect(screen.getByRole("status")).toHaveTextContent("O agente não conseguiu ler o contrato agora. Responda as perguntas abaixo.");
+        rerender(<IntakeChecklist intake={intake({ prefill: "falhou", complete: true })} onAnswer={vi.fn()} />);
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
     it("words the open questions for the team", () => {
         render(<IntakeChecklist intake={intake()} onAnswer={vi.fn()} audience="team" />);
         expect(screen.getByText("Falta saber de quem pediu")).toBeInTheDocument();
@@ -131,6 +141,42 @@ describe("RequestIntakeSection", () => {
         await waitFor(() => expect(api.answerRequestIntake).toHaveBeenCalledWith("r1", { confirm: ["valor"] }));
         await waitFor(() => expect(onChanged).toHaveBeenCalled());
         expect(toast.showToast).toHaveBeenCalledWith(expect.objectContaining({ message: "Checklist completo. O Legal já pode analisar o contrato." }));
+    });
+
+    it("looks again while the agent reads the contract, even after a failed look", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            api.getRequestIntake
+                .mockResolvedValueOnce(intake({ prefill: "lendo" }))
+                .mockRejectedValueOnce(new Error("rede"))
+                .mockResolvedValueOnce(intake({ prefill: "concluido" }));
+            render(<RequestIntakeSection requestId="r1" audience="requester" />);
+            expect(await screen.findByRole("status")).toHaveTextContent("O agente está lendo o contrato");
+            await vi.advanceTimersByTimeAsync(PREFILL_POLL_MS);
+            await waitFor(() => expect(api.getRequestIntake).toHaveBeenCalledTimes(2));
+            // A failed look keeps what is on screen and tries again.
+            expect(screen.getByRole("status")).toBeInTheDocument();
+            await vi.advanceTimersByTimeAsync(PREFILL_POLL_MS);
+            await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+            expect(api.getRequestIntake).toHaveBeenCalledTimes(3);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("stops looking once the agent is done", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            api.getRequestIntake.mockResolvedValueOnce(intake({ prefill: "lendo" })).mockResolvedValue(intake({ prefill: "concluido" }));
+            render(<RequestIntakeSection requestId="r1" audience="requester" />);
+            await screen.findByRole("status");
+            await vi.advanceTimersByTimeAsync(PREFILL_POLL_MS);
+            await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+            await vi.advanceTimersByTimeAsync(PREFILL_POLL_MS * 3);
+            expect(api.getRequestIntake).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("tells the person when saving fails, and renders nothing when it cannot load", async () => {
