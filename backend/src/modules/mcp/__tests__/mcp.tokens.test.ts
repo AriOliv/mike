@@ -18,7 +18,8 @@ import { fakeDb } from "./fakeDb";
 const NOW = new Date("2026-10-21T12:00:00Z");
 const ORG = "00000000-0000-4000-a000-0000000000aa";
 const ana = { userId: "00000000-0000-4000-b000-000000000001", userEmail: "ana@exemplo.test" };
-const users = { [ana.userId]: { email: "Ana@Exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z" } };
+const TOTP = [{ factor_type: "totp", status: "verified" }];
+const users = { [ana.userId]: { email: "Ana@Exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z", factors: TOTP } };
 
 describe("access tokens", () => {
     it("creates a token shown once, storing only its hash, with the default read scopes", async () => {
@@ -48,6 +49,19 @@ describe("access tokens", () => {
         expect(await createAccessToken(db, ana, { name: "x", scopes: [] }, NOW)).toMatchObject({ kind: "validation" });
         expect(await createAccessToken(db, ana, { name: "x", expires_in_days: 91 }, NOW)).toMatchObject({ kind: "validation", detail: "A validade vai de 1 a 90 dias." });
         expect(await createAccessToken(db, ana, { name: "x", workspace: "00000000-0000-4000-a000-0000000000bb" }, NOW)).toMatchObject({ kind: "not_found" });
+    });
+
+    it("never creates a token for an account protected by a password alone", async () => {
+        for (const factors of [[], [{ factor_type: "totp", status: "unverified" }], [{ factor_type: "phone", status: "verified" }]]) {
+            const { db, tables } = fakeDb({}, { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z", factors } });
+            expect(await createAccessToken(db, ana, { name: "Claude" }, NOW)).toEqual({
+                ok: false,
+                kind: "forbidden",
+                detail: "Ative a verificação em duas etapas em Configurações → Segurança para criar um token de acesso.",
+                code: "mfa_enrollment_required",
+            });
+            expect(tables.mcp_access_tokens ?? []).toEqual([]);
+        }
     });
 
     it("caps active tokens per person", async () => {
@@ -88,7 +102,7 @@ describe("authenticateToken", () => {
         const r = await authenticateToken(db, `Bearer ${token}`, NOW);
         expect(r).toMatchObject({ ok: true, token: { userId: ana.userId, userEmail: "ana@exemplo.test", orgId: null, displayName: "ana@exemplo.test" } });
 
-        const unconfirmed = fakeDb({}, { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: null } });
+        const unconfirmed = fakeDb({}, { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: null, factors: TOTP } });
         const c = await createAccessToken(unconfirmed.db, ana, { name: "x" }, NOW);
         if (!c.ok) throw new Error("setup");
         expect(await authenticateToken(unconfirmed.db, `Bearer ${c.data.token}`, NOW)).toMatchObject({ ok: true, token: { userEmail: "" } });
@@ -115,9 +129,12 @@ describe("authenticateToken", () => {
         const deleting = await withToken({}, { user_profiles: [{ user_id: ana.userId, account_deletion_requested_at: "2026-10-20T00:00:00Z" }] });
         expect(await authenticateToken(deleting.db, `Bearer ${deleting.token}`, NOW)).toEqual({ ok: false, reason: "invalid" });
 
-        const gone = fakeDb({}, {});
+        // The account was deleted after the token was made.
+        const accounts: Record<string, { email: string | null; email_confirmed_at: string | null; factors?: { factor_type: string; status: string }[] }> = { ...users };
+        const gone = fakeDb({}, accounts);
         const g = await createAccessToken(gone.db, ana, { name: "x" }, NOW);
         if (!g.ok) throw new Error("setup");
+        delete accounts[ana.userId];
         expect(await authenticateToken(gone.db, `Bearer ${g.data.token}`, NOW)).toEqual({ ok: false, reason: "invalid" });
     });
 

@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 
 export function fakeDb(
     seed: Record<string, Row[]> = {},
-    users: Record<string, { email: string | null; email_confirmed_at: string | null }> = {},
+    users: Record<string, { email: string | null; email_confirmed_at: string | null; factors?: { factor_type: string; status: string }[] }> = {},
 ) {
     const tables: Record<string, Row[]> = {};
     for (const [k, v] of Object.entries(seed)) tables[k] = v.map((r) => ({ ...r }));

@@ -55,7 +55,7 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((resolve) => http.close(() => resolve())));
 
 beforeEach(() => {
-    const fake = fakeDb({}, { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z" } });
+    const fake = fakeDb({}, { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z", factors: [{ factor_type: "totp", status: "verified" }] } });
     fake.tables.user_profiles = [{ user_id: ana.userId, display_name: "Ana Teste" }];
     state.db = fake.db;
     tables = fake.tables;
