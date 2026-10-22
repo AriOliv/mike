@@ -1,3 +1,4 @@
+import { clientLabel, TOOL_LABELS } from "@/app/lib/mcpTokens";
 import type { AuditEvent, OrgPrivateContentKind } from "@/app/lib/mikeApi";
 
 export interface AuditPrivateAccess {
@@ -69,6 +70,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "export.account": "Dados da conta exportados",
   "export.tabular": "Revisão exportada",
   "export.memory": "Memória exportada",
+  // An agent working in the Mike for the person, over MCP (doc 09 §7).
+  "mcp.tool": "Agente consultou o Mike",
+  "mcp.read": "Agente leu um contrato",
 };
 
 export const SURFACE_LABELS: Record<string, string> = {
@@ -79,6 +83,7 @@ export const SURFACE_LABELS: Record<string, string> = {
   workflows: "Workflows",
   account: "Conta",
   organization: "Organização",
+  mcp: "Agente (MCP)",
 };
 
 export function auditLabel(value: string): string {
@@ -311,6 +316,13 @@ export function auditSummary(event: AuditEvent, personal: boolean): string {
   if (event.action === "document.edited") return `${actor} editou ${name}.`;
   if (event.action === "document.generated")
     return `${actor} gerou ${name}.`;
+  if (event.action === "mcp.tool") {
+    const client = detailText(event, "client");
+    const what = event.title ? TOOL_LABELS[event.title] : undefined;
+    const who = client ? clientLabel(client) : "Um agente";
+    const forWhom = personal ? "em seu nome" : `em nome de ${actor}`;
+    return what ? `${who} ${what} ${forWhom}.` : `${who} consultou o Mike ${forWhom}.`;
+  }
   return `${auditAction(event)} · por ${personal ? "você" : actor}`;
 }
 
