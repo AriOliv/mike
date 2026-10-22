@@ -27,3 +27,22 @@ export async function loadNavRole(signal?: AbortSignal): Promise<NavRole | null>
         return null;
     }
 }
+
+/**
+ * How many open critical alerts the Head has (the Pedidos badge). Zero for
+ * anyone else and on any failure: a missing badge is better than a wrong one.
+ */
+export async function loadAlertCount(signal?: AbortSignal): Promise<number> {
+    try {
+        const response = await authenticatedFetch(`${API_BASE}/requests/alerts`, {
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+            signal,
+        });
+        if (!response.ok) return 0;
+        const body = (await response.json()) as { alerts?: unknown };
+        return Array.isArray(body.alerts) ? body.alerts.length : 0;
+    } catch {
+        return 0;
+    }
+}

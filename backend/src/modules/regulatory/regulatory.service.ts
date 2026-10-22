@@ -11,6 +11,7 @@ export {
     deleteScan,
     runScanNow,
     listChanges,
+    getChange,
     visibleScanIds,
     updateChange,
     createRequestFromChange,
@@ -32,3 +33,4 @@ export {
     enqueueDueRegulatoryScans,
     SCAN_INTERVAL_MS,
 } from "./regulatory.scan";
+export { REGULATORY_TOOLS } from "./regulatory.mcp";

@@ -14,6 +14,8 @@ import { resolveWorkspaceFilter, workspaceMatches } from "../../lib/workspace";
 import type { EditAnnotation } from "@mike/contracts";
 import { extractDocxBodyText, type EditInput } from "../../lib/docxTrackedChanges";
 import { loadActiveVersion } from "../../lib/documentVersions";
+import { extractPdfText } from "../../lib/pdfText";
+import { mergeBatchReviews, playbookReviewBatches } from "./playbooks.batches";
 import {
   applyTrackedEditsToDocument,
   loadCurrentVersionBytes,
@@ -1741,9 +1743,12 @@ async function loadReviewDocument(
   if (!version) throw missing();
   const filename = version.filename?.trim() || "Untitled document";
   const isDocx = version.file_type === "docx" || /\.docx$/i.test(filename);
-  if (!isDocx) return { filename, isDocx, text: null };
+  const isPdf = version.file_type === "pdf" || /\.pdf$/i.test(filename);
+  if (!isDocx && !isPdf) return { filename, isDocx, text: null };
   const current = await loadCurrentVersionBytes(documentId, db, version.id);
   if (!current) throw missing();
+  // A PDF is reviewed from its text; with no version there is no redline.
+  if (isPdf) return { filename, isDocx, text: (await extractPdfText(new Uint8Array(current.bytes).buffer))?.trim() || null };
   return {
     filename, isDocx, text: await extractDocxBodyText(current.bytes),
     version: { id: version.id, storagePath: current.storage_path },
@@ -2004,37 +2009,47 @@ async function runReview({
   try {
     const sources = await listPlaybookSourceRows(db, args.playbookId);
     const scope = args.reviewScope ?? "full";
-    const prompt = reviewPrompt(
-      content,
-      documentText,
-      args.reviewMode,
-      args.instructions,
-      sources,
-      scope,
-    );
-    const raw = sources.length
-      ? await completeReviewWithSources({
-          db,
-          playbookId: args.playbookId,
-          model: args.model,
-          apiKeys,
-          prompt,
-          sources,
-        })
-      : await completeText({
-          model: args.model,
-          systemPrompt: REVIEW_SYSTEM_PROMPT,
-          user: prompt,
-          maxTokens: 20_000,
-          apiKeys,
-        });
-    const parsed = reviewSchema.parse(parseModelJson(raw));
-    const normalized = normalizeFindings(
-      content,
-      documentText,
-      parsed.findings,
-      { flagMissingRules: scope === "full" },
-    );
+    // A long playbook goes in batches of rules, so the model answers every
+    // rule instead of stopping partway (see playbooks.batches.ts). Each batch
+    // is normalized against its own rules, then the results are merged.
+    const reviewBatch = async (batch: PlaybookContent) => {
+      const prompt = reviewPrompt(
+        batch,
+        documentText,
+        args.reviewMode,
+        args.instructions,
+        sources,
+        scope,
+      );
+      const raw = sources.length
+        ? await completeReviewWithSources({
+            db,
+            playbookId: args.playbookId,
+            model: args.model,
+            apiKeys,
+            prompt,
+            sources,
+          })
+        : await completeText({
+            model: args.model,
+            systemPrompt: REVIEW_SYSTEM_PROMPT,
+            user: prompt,
+            maxTokens: 20_000,
+            apiKeys,
+          });
+      const result = reviewSchema.parse(parseModelJson(raw));
+      return {
+        summary: result.summary,
+        findings: normalizeFindings(batch, documentText, result.findings, {
+          flagMissingRules: scope === "full",
+        }),
+      };
+    };
+    const batches = playbookReviewBatches(content);
+    const results: Awaited<ReturnType<typeof reviewBatch>>[] = [];
+    for (const batch of batches) results.push(await reviewBatch(batch));
+    const parsed = mergeBatchReviews(content, results);
+    const normalized = parsed.findings;
     // Held to the scope even if the model reports more.
     const reviewed =
       scope === "issues"

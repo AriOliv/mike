@@ -48,6 +48,7 @@ export {
     ACTOR_TYPES,
     EVENT_SOURCES,
     recordCardEvent,
+    recordAgentRead,
     listCardEvents,
     startAgentRun,
     finishAgentRun,
@@ -73,6 +74,7 @@ export {
 } from "./contracts.autoReview";
 export {
     getHomeSummary,
+    listNoticeDeadlines,
     countAgentReviews,
     REVIEW_AGENTS,
     type HomeSummary,
@@ -80,3 +82,6 @@ export {
     type HomeDeadline,
 } from "./contracts.home";
 export type { Caller } from "./contracts.shared";
+
+export { CONTRACT_TOOLS } from "./contracts.mcp";
+export { getContractText, type ContractText } from "./contracts.text";
