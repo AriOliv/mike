@@ -16,8 +16,9 @@ vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
     },
     needsMfaVerification: vi.fn(),
 }));
+const ws = vi.hoisted(() => ({ workspaceId: "personal" as string | null }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
-    useWorkspace: () => ({ organizations: [{ id: "org-1", name: "Legal Avenia", role: "member", kind: "team" }] }),
+    useWorkspace: () => ({ workspaceId: ws.workspaceId, organizations: [{ id: "org-1", name: "Legal Avenia", role: "member", kind: "team" }] }),
 }));
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -57,6 +58,7 @@ beforeEach(() => {
     vi.mocked(getRequestRole).mockReset().mockResolvedValue({ configured: true, role: "head", area: null, areas: [] });
     vi.mocked(needsMfaVerification).mockReset().mockResolvedValue(false);
     push.mockReset();
+    ws.workspaceId = "personal";
     toast.showToast.mockReset();
     errors.notifyError.mockReset();
     Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => undefined) } });
@@ -163,6 +165,19 @@ describe("Tokens de acesso para agentes", () => {
             fireEvent.click(screen.getByRole("button", { name: "Copiar Token" }));
         });
         expect(toast.showToast).toHaveBeenCalledWith({ tone: "error", message: "Não consegui copiar. Selecione o texto e copie à mão." });
+    });
+
+    it("starts in the space the person is working in", async () => {
+        vi.mocked(listMcpTokens).mockResolvedValue([]);
+        ws.workspaceId = "org-1";
+        await renderPage();
+        fireEvent.click(screen.getByRole("button", { name: "Criar token" }));
+        expect((screen.getByLabelText("Espaço") as HTMLSelectElement).value).toBe("org-1");
+        cleanup();
+        ws.workspaceId = "org-desconhecida";
+        await renderPage();
+        fireEvent.click(screen.getByRole("button", { name: "Criar token" }));
+        expect((screen.getByLabelText("Espaço") as HTMLSelectElement).value).toBe("personal");
     });
 
     it("offers the Painel only to the head of Legal", async () => {
