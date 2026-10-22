@@ -26,6 +26,7 @@ import {
     mcpServerUrl,
     SCOPE_OPTIONS,
     scopesFor,
+    scopesSummary,
     STATE_LABEL,
     tokenState,
     validityLabel,
@@ -249,9 +250,7 @@ export default function AgentTokensPage() {
                                                     {lastUseLabel(t)} · {validityLabel(t)}
                                                 </p>
                                                 <p className="text-[11px] text-gray-400">
-                                                    {t.scopes
-                                                        .map((s) => SCOPE_OPTIONS.find((o) => o.scope === s)?.label ?? s)
-                                                        .join(" · ")}
+                                                    {scopesSummary(t.scopes, offered)}
                                                 </p>
                                             </div>
                                             {live ? (

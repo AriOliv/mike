@@ -31,6 +31,10 @@ export function whoAmITool(catalog: () => readonly AnyMcpTool[]): AnyMcpTool {
                 ferramentas: catalog()
                     .filter((t) => t.access === "read" && allowed(t, ctx))
                     .map((t) => t.name),
+                // Each one asks the person to confirm before it changes anything.
+                acoes_com_confirmacao: catalog()
+                    .filter((t) => t.access === "write" && allowed(t, ctx))
+                    .map((t) => t.name),
             });
         },
         summary: (o) =>

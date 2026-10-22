@@ -20,6 +20,19 @@ export const SCOPE_OPTIONS: readonly { scope: McpScope; label: string; hint: str
 /** What a new token gets unless the person unticks it: reading only. */
 export const DEFAULT_SCOPES: McpScope[] = SCOPE_OPTIONS.map((o) => o.scope);
 
+/**
+ * The permissions line under a token: one phrase when it has everything this
+ * role is offered (all of it reading), else the ones it has, in the screen's
+ * order.
+ */
+export function scopesSummary(scopes: readonly McpScope[], offered: typeof SCOPE_OPTIONS): string {
+    const has = new Set(scopes);
+    if (offered.length > 0 && offered.every((o) => has.has(o.scope))) return "Só leitura · todas as permissões";
+    return SCOPE_OPTIONS.filter((o) => has.has(o.scope))
+        .map((o) => o.label)
+        .join(" · ");
+}
+
 export type LegalRole = { configured: boolean; role: "head" | "team" | "requester" } | null;
 
 /**
@@ -110,6 +123,7 @@ const CLIENT_LABELS: Record<string, string> = {
     codex: "Codex",
     "codex-mcp-client": "Codex",
     cursor: "Cursor",
+    hermes: "Hermes",
     "hermes-docbot": "Hermes",
 };
 
@@ -139,4 +153,5 @@ export const TOOL_LABELS: Record<string, string> = {
     mike_controle_listar: "listou as tabelas de análise",
     mike_controle_ler: "leu uma tabela de análise",
     mike_painel_metricas: "leu o Painel do Legal",
+    mike_agente_config: "leu a configuração do assistente do Legal",
 };

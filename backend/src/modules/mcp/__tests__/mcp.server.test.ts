@@ -119,6 +119,10 @@ describe("/mcp over HTTP", () => {
         expect((await head.listTools()).tools.map((t) => t.name)).toContain("mike_painel_metricas");
         await head.close();
 
+        const agent = await connect(await token({ scopes: ["agente:config"] }));
+        expect((await agent.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou", "mike_agente_config"]);
+        await agent.close();
+
         const narrow = await connect(await token({ scopes: ["prazos:read"] }));
         expect((await narrow.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou", "mike_prazos_proximos"]);
         const refused = await narrow.callTool({ name: "mike_contratos_buscar", arguments: {} });
@@ -193,6 +197,8 @@ describe("tool gating and results", () => {
         scopes: ["contratos:read"],
         clientName: "codex",
         tokenId: "t1",
+        tokenKind: "pessoal",
+        linkId: null,
         actor: { actorType: "agent", actorId: "mcp:codex", actorName: "codex em nome de Ana Teste", onBehalfOf: ana.userEmail, source: "mcp" },
         ...over,
     });

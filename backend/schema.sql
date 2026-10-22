@@ -1260,6 +1260,39 @@ revoke all on public.mcp_access_tokens from anon, authenticated;
 -- never deletes a token; revoking stamps revoked_at.
 grant select, insert, update, delete on public.mcp_access_tokens to service_role;
 
+-- Two-step confirmation of the MCP server's writes (doc 09 §6). The first
+-- call of a write tool changes nothing and returns a confirm_token; only the
+-- same call with that token runs. A row binds the token to who asked
+-- (person + access token + chat identity link), which tool, and the exact
+-- arguments (hash of their canonical JSON): a different argument, another
+-- tool or another person cannot use it. Single use, ten minutes.
+--
+-- Only the SHA-256 of the token is kept. Backend-owned: browser roles get
+-- nothing, RLS on with no policies. Idempotent.
+
+create table if not exists public.mcp_confirmations (
+  id uuid primary key default gen_random_uuid(),
+  token_hash text not null unique,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  access_token_id uuid not null references public.mcp_access_tokens(id) on delete cascade,
+  link_id uuid,
+  tool text not null,
+  args_hash text not null,
+  summary text not null,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_mcp_confirmations_expires
+  on public.mcp_confirmations(expires_at);
+
+alter table public.mcp_confirmations enable row level security;
+revoke all on public.mcp_confirmations from anon, authenticated;
+-- delete too: schema.sql's blanket service_role grant gives it, and fresh
+-- and upgraded installs must match.
+grant select, insert, update, delete on public.mcp_confirmations to service_role;
+
 create index if not exists idx_projects_user
   on public.projects(user_id);
 
@@ -11657,6 +11690,148 @@ grant select, insert, update, delete
   on public.watched_folders, public.contract_reviews, public.home_visits
   to service_role;
 
+-- Migration date: 2026-10-21 (20261021_90_legal_agent.sql)
+--
+-- The legal team's chat agent ("Agente do Legal"): how it behaves in an
+-- organization, and the chat channels it is set up for.
+--
+-- The channel (Slack, WhatsApp, Telegram) only talks; the work and the record
+-- stay in Mike, reached through its MCP server. These rows are what the bot
+-- reads to know who it is, when it answers, who may ask for what and when a
+-- person of the legal team must decide.
+--
+-- No secret lives here. Bot tokens, signing secrets and verify tokens stay in
+-- the deployment's secret store; a channel row keeps only what is safe to
+-- show on a settings page (a workspace name, a bot's @username, the last
+-- digits of a phone number) and its setup status.
+
+create table if not exists public.legal_agent_settings (
+  org_id uuid primary key references public.organizations(id) on delete cascade,
+  -- Off until an owner or admin turns it on: a bot reading this row stays silent.
+  enabled boolean not null default false,
+  display_name text not null default 'Assistente do Legal',
+  -- Who it is and how it works, in the team's words; becomes the bot's persona.
+  persona text not null default '',
+  tone text not null default 'cordial'
+    constraint legal_agent_settings_tone_check check (tone in ('formal', 'cordial', 'direto')),
+  -- {timezone, days: [1..7], start: "HH:MM", end: "HH:MM", outside: "avisa_e_registra" | "so_registra"}
+  hours jsonb not null default '{}'::jsonb,
+  -- [{area, kinds: [request kind]}]: who may ask for what. Empty = anyone, anything.
+  permissions jsonb not null default '[]'::jsonb,
+  -- {risk_levels: [...], kinds: [...], low_confidence: bool, escalate_to_email}
+  -- On top of the fixed rule: signing, sending out and accepting risk always go to a person.
+  escalation jsonb not null default '{}'::jsonb,
+  -- {deadline_days: [30, 7, 1], renewals: bool, radar: bool, digest_time: "HH:MM"}
+  proactive jsonb not null default '{}'::jsonb,
+  updated_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.legal_agent_channels (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  kind text not null
+    constraint legal_agent_channels_kind_check check (kind in ('slack', 'whatsapp', 'telegram')),
+  -- rascunho: being set up; configurado: the setup files were generated and
+  -- someone marked it installed. Nothing here connects a bot by itself.
+  status text not null default 'rascunho'
+    constraint legal_agent_channels_status_check check (status in ('rascunho', 'configurado', 'pausado')),
+  name text not null,
+  -- Non-secret details only (see the note at the top).
+  config jsonb not null default '{}'::jsonb,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_legal_agent_channels_org
+  on public.legal_agent_channels(org_id);
+
+alter table public.legal_agent_settings enable row level security;
+alter table public.legal_agent_channels enable row level security;
+revoke all on public.legal_agent_settings from anon, authenticated;
+revoke all on public.legal_agent_channels from anon, authenticated;
+grant select, insert, update, delete on public.legal_agent_settings to service_role;
+grant select, insert, update, delete on public.legal_agent_channels to service_role;
+
+-- Migration date: 2026-10-22 (20261022_90_chat_identity_links.sql)
+--
+-- Who is talking on a chat channel, for the legal team's agent (doc 10 §6.2).
+--
+-- The chat bot (Hermes) calls Mike with a service token of one organization
+-- and names the person only by their chat identity: <platform>:<team>:<user>.
+-- Mike acts as someone only through a link that person confirmed once, while
+-- logged in to Mike; the e-mail a chat platform reports is never the proof.
+--
+--   chat_identity_links    a confirmed link: (org, platform, team, user) → user_id,
+--                          180 days, revocable
+--   chat_link_challenges   the one-time link the bot hands out when there is no
+--                          link yet: only the SHA-256 of its token is stored, it
+--                          is bound to (org, platform, team, user), lasts 15 min
+--                          and works once. The link is made for whoever confirms
+--                          it (their session), so opening someone else's link
+--                          only links yourself.
+--
+-- A link is only honoured for a workspace the organization registered on one
+-- of its agent channels (legal_agent_channels.platform_team_id), so a link
+-- made in another company's Slack cannot be used here.
+
+alter table public.legal_agent_channels
+  add column if not exists platform_team_id text;
+
+create unique index if not exists idx_legal_agent_channels_team
+  on public.legal_agent_channels(org_id, kind, platform_team_id)
+  where platform_team_id is not null;
+
+create table if not exists public.chat_identity_links (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  platform text not null
+    constraint chat_identity_links_platform_check check (platform in ('slack', 'whatsapp', 'telegram')),
+  platform_team_id text not null,
+  platform_user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  confirmed_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '180 days'),
+  revoked_at timestamptz,
+  -- The service token whose call led to this link, for the admin's list.
+  created_via_token_id uuid,
+  created_at timestamptz not null default now()
+);
+
+-- One live link per chat identity in an organization.
+create unique index if not exists idx_chat_identity_links_active
+  on public.chat_identity_links(org_id, platform, platform_team_id, platform_user_id)
+  where revoked_at is null;
+
+create index if not exists idx_chat_identity_links_user
+  on public.chat_identity_links(user_id, created_at desc);
+
+create table if not exists public.chat_link_challenges (
+  id uuid primary key default gen_random_uuid(),
+  token_hash text not null unique,
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  platform text not null
+    constraint chat_link_challenges_platform_check check (platform in ('slack', 'whatsapp', 'telegram')),
+  platform_team_id text not null,
+  platform_user_id text not null,
+  created_via_token_id uuid,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_chat_link_challenges_expiry
+  on public.chat_link_challenges(expires_at) where used_at is null;
+
+alter table public.chat_identity_links enable row level security;
+alter table public.chat_link_challenges enable row level security;
+revoke all on public.chat_identity_links from anon, authenticated;
+revoke all on public.chat_link_challenges from anon, authenticated;
+grant select, insert, update, delete on public.chat_identity_links to service_role;
+grant select, insert, update, delete on public.chat_link_challenges to service_role;
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -11831,6 +12006,9 @@ insert into public.schema_migrations (filename) values
   ('20261020_99_requester_area.sql'),
   ('20261021_01_chat_subagent_runs.sql'),
   ('20261021_02_user_subagent_defaults.sql'),
+  ('20261021_90_legal_agent.sql'),
   ('20261021_91_mcp_access_tokens.sql'),
-  ('20261022_91_request_intake.sql')
+  ('20261022_90_chat_identity_links.sql'),
+  ('20261022_91_request_intake.sql'),
+  ('20261022_95_mcp_confirmations.sql')
 on conflict (filename) do nothing;
