@@ -7,9 +7,10 @@ import { memoryDb, uuid } from "./memoryDb";
 
 const llm = vi.hoisted(() => ({ completeText: vi.fn() }));
 vi.mock("../../../lib/llm", () => llm);
-vi.mock("../../user/user.service", () => ({
-    getUserModelSettings: vi.fn(async () => ({ tabular_model: "test-model", last_selected_chat_model: null, api_keys: {} })),
+const settings = vi.hoisted(() => ({
+    getUserModelSettings: vi.fn(async (): Promise<Record<string, unknown>> => ({ tabular_model: "test-model", last_selected_chat_model: null, api_keys: {} })),
 }));
+vi.mock("../../user/user.service", () => settings);
 const enqueue = vi.hoisted(() => ({ enqueueDbJob: vi.fn(async () => ({ id: "job", deduped: false })) }));
 vi.mock("../../../lib/dbq/enqueue", () => enqueue);
 const text = vi.hoisted(() => ({
@@ -390,6 +391,16 @@ describe("the intake agent", () => {
         w.table("legal_requests")[0].status = "entregue";
         expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ skipped: "closed" });
         expect(await handleIntakePrefill(w.db, { payload: { request_id: "nope" } })).toEqual({ skipped: "missing" });
+    });
+
+    it("says there is no model before waiting on the contract's text", async () => {
+        const w = world();
+        const id = await newRequest(w);
+        withDocument(w, id);
+        settings.getUserModelSettings.mockResolvedValueOnce({ tabular_model: null, last_selected_chat_model: null, api_keys: {} });
+        text.read.mockImplementation(() => ({ revision: "r1", status: "processing", text: null, textless_page_count: null }));
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ skipped: "no_model" });
+        expect(text.read).not.toHaveBeenCalled();
     });
 
     it("gives up at once when no model key is set, instead of retrying", async () => {
