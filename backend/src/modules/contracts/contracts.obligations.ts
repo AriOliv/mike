@@ -16,11 +16,40 @@ import {
     requireProjectEdit,
     type Caller,
 } from "./contracts.shared";
+import { saoPauloDate } from "./contracts.home";
 
 const MARKS = ["recorrente", "critico", "tarefa"] as const;
 
 const COLUMNS =
-    "id, project_id, title, mark, due_date, done, note, source_quote, created_at, updated_at";
+    "id, project_id, title, mark, due_date, done, note, source_quote, owner_email, alert_days, created_at, updated_at";
+
+/** Warn 30 days before the end unless the deadline says otherwise. */
+export const DEFAULT_ALERT_DAYS = 30;
+
+function isEmail(value: string): boolean {
+    const at = value.indexOf("@");
+    return at > 0 && at === value.lastIndexOf("@") && value.indexOf(".", at) > at + 1 && !/[\s,()]/.test(value) && value.length <= 254;
+}
+
+/** The owner: an e-mail, lower-cased; null clears it. */
+function parseOwner(value: unknown): { ok: true; value: string | null } | { ok: false; detail: string } {
+    if (value === null || value === "") return { ok: true, value: null };
+    const text = normalizeString(value)?.toLowerCase();
+    if (!text || !isEmail(text)) return { ok: false, detail: "Informe o e-mail de quem cuida do prazo." };
+    return { ok: true, value: text };
+}
+
+function parseAlertDays(value: unknown): { ok: true; value: number } | { ok: false; detail: string } {
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 365) return { ok: true, value };
+    return { ok: false, detail: "A antecedência do alerta é um número de dias entre 0 e 365." };
+}
+
+/** A deadline is mine when I made it or when I am its owner. */
+function mineFilter(caller: Caller): string {
+    const email = caller.userEmail?.trim().toLowerCase();
+    const own = `user_id.eq.${caller.userId}`;
+    return email && isEmail(email) ? `${own},owner_email.eq.${email}` : own;
+}
 
 export type Obligation = Record<string, unknown> & { id: string };
 
@@ -32,7 +61,7 @@ export async function listObligations(
     let q = db
         .from("obligations")
         .select(COLUMNS + ", projects(name, counterparty, lane)")
-        .eq("user_id", caller.userId)
+        .or(mineFilter(caller))
         .order("due_date", { ascending: true });
     if (isIsoDate(query.from)) q = q.gte("due_date", query.from);
     if (isIsoDate(query.to)) q = q.lte("due_date", query.to);
@@ -57,6 +86,11 @@ export async function createObligation(
         return failure("validation", `mark must be one of: ${MARKS.join(", ")}`);
     }
 
+    const owner = "owner_email" in body ? parseOwner(body.owner_email) : ({ ok: true, value: null } as const);
+    if (!owner.ok) return failure("validation", owner.detail);
+    const alertDays = "alert_days" in body ? parseAlertDays(body.alert_days) : ({ ok: true, value: DEFAULT_ALERT_DAYS } as const);
+    if (!alertDays.ok) return failure("validation", alertDays.detail);
+
     const projectId = normalizeString(body.project_id);
     if (projectId) {
         const access = await requireProjectEdit(db, caller, projectId);
@@ -73,6 +107,8 @@ export async function createObligation(
             due_date: dueDate.trim(),
             note: normalizeString(body.note),
             source_quote: normalizeString(body.source_quote),
+            owner_email: owner.value,
+            alert_days: alertDays.value,
         })
         .select(COLUMNS)
         .single();
@@ -105,6 +141,16 @@ export async function updateObligation(
         patch.mark = body.mark;
     }
     if ("note" in body) patch.note = normalizeString(body.note);
+    if ("owner_email" in body) {
+        const owner = parseOwner(body.owner_email);
+        if (!owner.ok) return failure("validation", owner.detail);
+        patch.owner_email = owner.value;
+    }
+    if ("alert_days" in body) {
+        const alertDays = parseAlertDays(body.alert_days);
+        if (!alertDays.ok) return failure("validation", alertDays.detail);
+        patch.alert_days = alertDays.value;
+    }
 
     if (Object.keys(patch).length === 0) return failure("validation", "Nothing to update");
     patch.updated_at = new Date().toISOString();
@@ -113,7 +159,7 @@ export async function updateObligation(
         .from("obligations")
         .update(patch)
         .eq("id", id)
-        .eq("user_id", caller.userId)
+        .or(mineFilter(caller))
         .select(COLUMNS)
         .maybeSingle();
     if (error) return internalFailure(error);
@@ -137,4 +183,38 @@ export async function deleteObligation(
     // Only for a row this caller really deleted, and by the stored id.
     for (const row of (data ?? []) as { id: string }[]) void removeCalendarEvent(row.id);
     return ok(null);
+}
+
+export type ObligationAlert = Obligation & { days_left: number };
+
+/**
+ * The deadlines asking for attention from this person today: theirs (made by
+ * them with no other owner, or owned by them), not done, whose warning window
+ * has opened (due date minus `alert_days`) — overdue ones included. Computed
+ * on read, so a changed owner or lead time takes effect at once.
+ */
+export async function listObligationAlerts(
+    db: Db,
+    caller: Caller,
+    now: Date = new Date(),
+): Promise<ServiceResult<ObligationAlert[]>> {
+    const today = saoPauloDate(now);
+    const { data, error } = await db
+        .from("obligations")
+        .select(COLUMNS + ", projects(name, counterparty, lane)")
+        .or(mineFilter(caller))
+        .eq("done", false)
+        .order("due_date", { ascending: true });
+    if (error) return internalFailure(error);
+    const email = caller.userEmail?.trim().toLowerCase() ?? null;
+    const alerts = ((data ?? []) as unknown as (Obligation & { due_date: string; alert_days: number; owner_email: string | null; user_id?: string })[])
+        // Owned by someone else (made by me, handed on): theirs to be warned.
+        .filter((row) => !row.owner_email || row.owner_email === email)
+        .map((row) => ({ ...row, days_left: daysBetween(today, row.due_date) }))
+        .filter((row) => row.days_left <= row.alert_days);
+    return ok(alerts as ObligationAlert[]);
+}
+
+function daysBetween(from: string, to: string): number {
+    return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }

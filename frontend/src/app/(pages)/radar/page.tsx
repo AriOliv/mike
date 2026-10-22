@@ -4,11 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import {
+    getObligationAlerts,
     getObligations,
     updateObligation,
     type Obligation,
+    type ObligationAlert,
     type ObligationMark,
 } from "@/app/lib/mikeApi";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { ObligationOwnerEditor } from "@/app/components/radar/ObligationOwnerEditor";
+import { dueLabel } from "@/app/lib/obligations";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { RadarCalendar } from "@/app/components/radar/RadarCalendar";
 
@@ -42,6 +47,9 @@ function daysUntil(date: string): number {
 
 export default function RadarPage() {
     const router = useRouter();
+    const { user } = useAuth();
+    const me = user?.email?.toLowerCase() ?? null;
+    const [alerts, setAlerts] = useState<ObligationAlert[]>([]);
     const [items, setItems] = useState<Obligation[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -49,7 +57,12 @@ export default function RadarPage() {
 
     const load = useCallback(async () => {
         try {
-            setItems(await getObligations());
+            const [all, mine] = await Promise.all([
+                getObligations(),
+                getObligationAlerts().catch(() => [] as ObligationAlert[]),
+            ]);
+            setItems(all);
+            setAlerts(mine);
             setError(null);
         } catch (e) {
             setError(e instanceof Error ? e.message : "Failed to load deadlines");
@@ -76,11 +89,14 @@ export default function RadarPage() {
 
     async function markDone(item: Obligation) {
         const previous = items;
+        const previousAlerts = alerts;
         setItems((xs) => xs.filter((x) => x.id !== item.id)); // default view hides done
+        setAlerts((xs) => xs.filter((x) => x.id !== item.id));
         try {
             await updateObligation(item.id, { done: true });
         } catch (e) {
             setItems(previous);
+            setAlerts(previousAlerts);
             setError(e instanceof Error ? e.message : "Could not update the deadline");
         }
     }
@@ -136,6 +152,29 @@ export default function RadarPage() {
             )}
 
             <div className="flex-1 overflow-y-auto px-6 pb-8">
+                {alerts.length > 0 && (
+                    <section aria-label="Pedem sua atenção" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                        <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-amber-800">
+                            Pedem sua atenção · {alerts.length}
+                        </h2>
+                        <ul className="space-y-1.5">
+                            {alerts.map((a) => (
+                                <li key={a.id} className="flex items-baseline justify-between gap-3 text-sm">
+                                    <span className="min-w-0 truncate text-gray-800">
+                                        {a.title}
+                                        {a.projects?.counterparty || a.projects?.name ? (
+                                            <span className="text-gray-500"> · {a.projects.counterparty || a.projects.name}</span>
+                                        ) : null}
+                                    </span>
+                                    <span className={`shrink-0 text-xs ${a.days_left < 0 ? "text-red-600" : "text-amber-800"}`}>
+                                        {dueLabel(a.days_left)}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+                )}
+
                 {items.length === 0 && (
                     <div className="rounded-xl border border-dashed border-gray-200 px-4 py-12 text-center text-sm text-gray-400">
                         No upcoming deadlines. Obligations extracted from contracts show up here.
@@ -192,6 +231,14 @@ export default function RadarPage() {
                                                     {item.projects.counterparty || item.projects.name}
                                                 </button>
                                             )}
+                                            <ObligationOwnerEditor
+                                                item={item}
+                                                me={me}
+                                                onSaved={(next) => {
+                                                    setItems((xs) => xs.map((x) => (x.id === next.id ? { ...x, ...next } : x)));
+                                                    void getObligationAlerts().then(setAlerts, () => undefined);
+                                                }}
+                                            />
                                             {item.source_quote && (
                                                 <p className="mt-1 line-clamp-2 border-l-2 border-gray-200 pl-2 text-[11px] italic text-gray-400">
                                                     {item.source_quote}

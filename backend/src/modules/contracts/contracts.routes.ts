@@ -26,6 +26,7 @@ import {
     getContractTerms,
     getDossier,
     integrationStatus,
+    listObligationAlerts,
     listObligations,
     listCardEvents,
     listPipeline,
@@ -86,6 +87,15 @@ obligationsRouter.get(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await listObligations(createServerSupabase(), caller(res), req.query));
+    }),
+);
+
+// Before "/:id": the alerts waiting for this person today.
+obligationsRouter.get(
+    "/alerts",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await listObligationAlerts(createServerSupabase(), caller(res)));
     }),
 );
 

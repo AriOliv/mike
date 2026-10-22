@@ -18,7 +18,10 @@ export {
     createObligation,
     updateObligation,
     deleteObligation,
+    listObligationAlerts,
+    DEFAULT_ALERT_DAYS,
     type Obligation,
+    type ObligationAlert,
 } from "./contracts.obligations";
 export { getDossier, putDossier, type Dossier } from "./contracts.dossiers";
 export {
