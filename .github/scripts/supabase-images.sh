@@ -21,8 +21,10 @@ MIRROR="${MIRROR:-ghcr.io/$(tr 'A-Z' 'a-z' <<<"$REPO")-ci-mirror}"
 # What CI's stacks pull: the services they start (the rest is excluded with -x
 # in every job) plus realtime and storage-api, whose images the CLI still runs
 # as one-off migration jobs while starting the database (they are enabled in
-# the generated config.toml; -x drops only their long-running containers).
-SERVICES="${SERVICES:-postgres gotrue postgrest kong realtime storage-api}"
+# the generated config.toml; -x drops only their long-running containers), and
+# edge-runtime, which it runs to cache the migrations catalog (a warning, not a
+# failure, without it).
+SERVICES="${SERVICES:-postgres gotrue postgrest kong realtime storage-api edge-runtime}"
 EXTRA="${EXTRA:-rustfs/rustfs:latest}"
 
 # "<repository>:<tag>" for every FROM in the CLI's Dockerfile at that version
