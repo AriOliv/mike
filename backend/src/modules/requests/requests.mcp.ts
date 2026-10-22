@@ -15,7 +15,7 @@
 
 import { z } from "zod";
 import { failure, ok, type ServiceResult } from "../../lib/serviceResult";
-import { defineTool, type AnyMcpTool, type McpContext, type McpToolAnnotations } from "../mcp/mcp.service";
+import { defineTool, uuidId, type AnyMcpTool, type McpContext, type McpToolAnnotations } from "../mcp/mcp.service";
 import type { Caller } from "./requests.access";
 import {
     assignRequest,
@@ -72,12 +72,6 @@ const SLA_LABELS: Record<string, string> = {
     pausado: "pausado até quem pediu responder",
     encerrado: "encerrado",
 };
-
-/**
- * A document id. Not z.string().uuid(): zod 4 checks the RFC version and
- * variant and refuses ids Postgres accepts (the seed's fixed ones).
- */
-const documentId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 
 const pedidoRef = z
     .string()
@@ -426,7 +420,7 @@ const criarInput = {
         .optional()
         .describe("AAAA-MM-DD, se a pessoa precisa antes do prazo do Legal."),
     anexos: z
-        .array(documentId)
+        .array(uuidId())
         .max(5)
         .optional()
         .describe("Ids de documentos que a própria pessoa já subiu no Mike."),

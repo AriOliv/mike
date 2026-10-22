@@ -53,6 +53,7 @@ vi.mock("../../user/user.service", () => ({
 }));
 const playbooks = vi.hoisted(() => ({
     createPlaybook: vi.fn(),
+    findPlaybookForContractType: vi.fn(),
     getPlaybookRunById: vi.fn(),
     listPlaybooks: vi.fn(),
     playbookConfiguration: vi.fn(),
@@ -158,6 +159,21 @@ describe("startContractReview", () => {
             playbook_id: "pb-1",
             user_id: "u1",
         });
+    });
+
+    it("reviews an NDA with the organization's NDA playbook instead of the Avenia one", async () => {
+        const fake = fakeDb({ documents: [{ data: [{ id: "d1" }] }], projects: [{ data: { contract_type: "NDA" } }] });
+        playbooks.findPlaybookForContractType.mockResolvedValueOnce({ id: "pb-nda", name: "NDA Avenia" });
+        playbooks.startPlaybookReview.mockResolvedValue({ run: { id: "run-3", status: "running" }, done: Promise.resolve() });
+        await startContractReview(fake.db, caller, "p1", {});
+        expect(playbooks.findPlaybookForContractType).toHaveBeenCalledWith(expect.anything(), {
+            userId: "u1",
+            userEmail: "duda@avenia.io",
+            orgId: "org-1",
+            contractType: "NDA",
+        });
+        expect(playbooks.listPlaybooks).not.toHaveBeenCalled();
+        expect(playbooks.startPlaybookReview).toHaveBeenCalledWith(expect.objectContaining({ playbookId: "pb-nda" }));
     });
 
     it("uses the playbook and model asked for", async () => {
