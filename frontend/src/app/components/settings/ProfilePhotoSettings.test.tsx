@@ -8,7 +8,7 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({ useUserProfile: () => ({ p
 vi.mock("@/app/lib/orgLogoImage", async (original) => ({ ...(await original<typeof import("@/app/lib/orgLogoImage")>()), renderOrgLogo: state.render }));
 const PHOTO = "data:image/png;base64,iVBORw0KGgo=";
 function upload(file = new File(["image"], "portrait.png", { type: "image/png" })) {
-  fireEvent.change(screen.getByLabelText("Upload profile photo"), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText("Enviar foto de perfil"), { target: { files: [file] } });
 }
 beforeEach(() => {
   state.photo = null;
@@ -56,7 +56,7 @@ describe("ProfilePhotoSettings", () => {
     const save = await screen.findByRole("button", { name: "Save" });
     await waitFor(() => expect(save).toBeEnabled());
     fireEvent.click(save);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save your profile photo. Try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não consegui salvar sua foto de perfil. Tente de novo.");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     fireEvent.click(save);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -64,7 +64,7 @@ describe("ProfilePhotoSettings", () => {
   it("opens the saved photo for editing and enables Save only after a crop change", async () => {
     state.photo = PHOTO;
     render(<ProfilePhotoSettings />);
-    const edit = screen.getByRole("button", { name: "Edit" });
+    const edit = screen.getByRole("button", { name: "Editar" });
     expect(edit).toHaveClass("bg-blue-600/90");
     expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
     fireEvent.click(edit);
@@ -86,9 +86,9 @@ describe("ProfilePhotoSettings", () => {
     state.photo = PHOTO;
     state.save.mockRejectedValueOnce(new Error("network"));
     render(<ProfilePhotoSettings />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save your profile photo. Try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não consegui salvar sua foto de perfil. Tente de novo.");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -96,7 +96,7 @@ describe("ProfilePhotoSettings", () => {
   it("removes the existing photo", async () => {
     state.photo = PHOTO;
     render(<ProfilePhotoSettings />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Remove" })));
     expect(state.save).toHaveBeenCalledWith(null);
   });
