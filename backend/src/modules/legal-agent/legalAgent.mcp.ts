@@ -12,12 +12,15 @@ import type { agentConfigForBot } from "./legalAgent.settings";
 
 type AgentConfig = ReturnType<typeof agentConfigForBot>;
 
-/** The part of the MCP server's context this tool reads. */
+/**
+ * The part of the MCP server's McpContext this tool reads (a structural
+ * subset, so the server's context fits as is).
+ */
 export type AgentToolContext = {
     db: Db;
-    /** The organization the token belongs to; personal workspaces have no agent. */
+    /** The token's workspace: an org id, "personal", or null. Personal has no agent. */
     workspace: string | null;
-    /** The channel the bot says it speaks on (X-Mike-Channel), when it says. */
+    /** The channel the bot says it speaks on (X-Mike-Channel), when the server passes it. */
     channel?: string | null;
 };
 
@@ -31,7 +34,7 @@ export const agentConfigTool = {
         "quem pode pedir o quê, quando passar para uma pessoa do Legal e os avisos que ele dá sozinho. " +
         "Leia no começo da conversa. Não traz segredo nem lista de pessoas.",
     input,
-    scope: "agente:config",
+    scope: "agente:config" as const,
     roles: ["head", "team", "requester"] as const,
     access: "read" as const,
     annotations: { readOnlyHint: true, openWorldHint: false },
