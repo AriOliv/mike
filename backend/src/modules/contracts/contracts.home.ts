@@ -166,6 +166,69 @@ async function inChunks<T>(
     return out;
 }
 
+/**
+ * The notice deadlines (aviso prévio) of the contracts the caller sees in
+ * `workspace`, soonest first, up to `daysAhead` days: the home screen's list
+ * with a longer window, for agents (doc 09 §4.1). Read only: unlike
+ * getHomeSummary it never records a visit, so an agent's read does not move
+ * the person's "new since your last visit".
+ */
+export async function listNoticeDeadlines(
+    db: Db,
+    caller: Caller,
+    options: { daysAhead: number; workspace: WorkspaceFilter; counterparty?: string | null },
+    now: Date = new Date(),
+): Promise<ServiceResult<HomeDeadline[]>> {
+    try {
+        const ids = await listAccessibleProjectIds(caller.userId, caller.userEmail, db);
+        const projects = (
+            await inChunks<{ id: string; org_id: string | null; name: string; counterparty: string | null }>(ids, (slice) =>
+                db.from("projects").select("id, org_id, name, counterparty").in("id", slice).is("archived_at", null),
+            )
+        ).filter((p) => workspaceMatches(options.workspace, p.org_id));
+        const needle = options.counterparty?.trim().toLowerCase() || null;
+        const byId = new Map(
+            projects
+                .filter((p) => !needle || (p.counterparty ?? "").toLowerCase().includes(needle) || p.name.toLowerCase().includes(needle))
+                .map((p) => [p.id, p]),
+        );
+        const terms = await inChunks<{
+            project_id: string;
+            notice_deadline: string | null;
+            notice_days: number | null;
+            term_end: string | null;
+            auto_renewal: boolean | null;
+        }>([...byId.keys()], (slice) =>
+            db
+                .from("contract_terms")
+                .select("project_id, notice_deadline, notice_days, term_end, auto_renewal")
+                .in("project_id", slice),
+        );
+        const today = saoPauloDate(now);
+        return ok(
+            terms
+                .filter((t) => t.notice_deadline && byId.has(t.project_id))
+                .map((t) => {
+                    const card = byId.get(t.project_id)!;
+                    return {
+                        project_id: t.project_id,
+                        project_name: card.name,
+                        counterparty: card.counterparty,
+                        notice_deadline: t.notice_deadline!,
+                        notice_days: t.notice_days,
+                        term_end: t.term_end,
+                        auto_renewal: t.auto_renewal,
+                        days_left: daysBetween(today, t.notice_deadline!),
+                    };
+                })
+                .filter((d) => d.days_left >= 0 && d.days_left <= options.daysAhead)
+                .sort((a, b) => a.days_left - b.days_left || a.project_name.localeCompare(b.project_name, "pt-BR")),
+        );
+    } catch (error) {
+        return internalFailure(error);
+    }
+}
+
 /** The agents whose succeeded runs count as reviewing a contract. */
 export const REVIEW_AGENTS = ["revisor"] as const;
 

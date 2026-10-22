@@ -60,3 +60,5 @@ export {
     type Redline,
 } from "./contractReview.analysis";
 export type { Caller } from "./contractReview.shared";
+
+export { CONTRACT_REVIEW_TOOLS } from "./contractReview.mcp";
