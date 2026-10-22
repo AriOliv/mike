@@ -1,0 +1,45 @@
+# Mirrors the container images CI's local Supabase stack pulls (and the e2e
+# job's RustFS) into this repo's GHCR, same tags and digests. Public registries
+# throttle anonymous pulls (toomanyrequests), which stalls stack-tests,
+# schema-drift and e2e on every PR; those jobs pull from this mirror when it is
+# complete and fall back to the public registries when it is not
+# (.github/scripts/supabase-images.sh use).
+#
+# Run it by hand after a Supabase CLI bump in those workflows; the weekly run
+# keeps `rustfs:latest` current. Auth is the job's own GITHUB_TOKEN: no secret.
+name: CI image mirror
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+  # also when this mirror's own files change on a branch of this repo (not a
+  # fork: those get no packages: write), so a PR changing it proves itself
+  push:
+    paths:
+      - .github/scripts/supabase-images.sh
+      - .github/workflows/ci-image-mirror.yml
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-image-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror CI images to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Mirror images
+        run: .github/scripts/supabase-images.sh mirror

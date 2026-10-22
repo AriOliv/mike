@@ -2,8 +2,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 import {
     awaitCellTerminal,
+    claimCellsForGeneration,
     targetPendingCells,
 } from "../tabular.generateStream";
+import { CELL_ID_BATCH_SIZE } from "../tabular.shared";
+import { makeFakeDb } from "./fakeDb";
 
 const COLUMNS = [
     { index: 0, name: "A", prompt: "a" },
@@ -163,5 +166,35 @@ describe("awaitCellTerminal", () => {
 
         // Flag unset above — the DB poll alone resolved it.
         expect(process.env.ASYNC_TABULAR_EXTRACTION).toBeUndefined();
+    });
+});
+
+describe("claimCellsForGeneration", () => {
+    it("stamps a large review's cells in batches the gateway accepts", async () => {
+        // 17 documents under 28 columns: one `.in("id", …)` with every cell id
+        // overflows the request URL (414 at the gateway).
+        const columns = Array.from({ length: 28 }, (_, index) => ({ index, name: `C${index}`, prompt: "p" }));
+        const rows = Array.from({ length: 17 }, (_, i) => ({ id: `row-${i}`, document_id: `doc-${i}` }));
+        const cellMap = new Map<string, Record<string, unknown>>();
+        for (const row of rows)
+            for (const col of columns)
+                cellMap.set(`${row.id}:${col.index}`, { id: `${row.id}-${col.index}`, status: "pending" });
+        const fake = makeFakeDb();
+
+        await claimCellsForGeneration({
+            db: fake.db,
+            reviewId: "rev-1",
+            generationId: "gen-1",
+            columns,
+            rows: rows as never,
+            cellMap,
+        });
+
+        const updates = fake.calls.filter((call) => call.table === "tabular_cells" && call.op === "update");
+        const stamped = updates.flatMap((call) => call.filters.id as string[]);
+        expect(updates.length).toBe(Math.ceil(476 / CELL_ID_BATCH_SIZE));
+        for (const call of updates) expect((call.filters.id as string[]).length).toBeLessThanOrEqual(CELL_ID_BATCH_SIZE);
+        expect(new Set(stamped).size).toBe(476);
+        expect(updates.every((call) => (call.payload as { generation_id: string }).generation_id === "gen-1")).toBe(true);
     });
 });

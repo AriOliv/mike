@@ -206,7 +206,7 @@ describe("LoginPage", () => {
         // The session lives in an httpOnly cookie, so the context must re-read
         // it before the router leaves for a gated route.
         expect(refreshSession).toHaveBeenCalled();
-        expect(push).toHaveBeenCalledWith("/assistant");
+        expect(push).toHaveBeenCalledWith("/inicio");
         expect(completeUserOnboarding).not.toHaveBeenCalled();
     });
 
@@ -241,7 +241,7 @@ describe("LoginPage", () => {
             "/onboarding/profile",
         );
         expect(completeUserOnboarding).toHaveBeenCalledWith();
-        expect(push).toHaveBeenCalledWith("/assistant");
+        expect(push).toHaveBeenCalledWith("/inicio");
     });
 
     it("does not register an account after a network failure", async () => {
@@ -265,7 +265,7 @@ describe("LoginPage", () => {
         await userEvent.click(screen.getByRole("button", { name: "Retry" }));
         expect(login).toHaveBeenLastCalledWith("guest@mike.local", "secret");
         expect(signup).not.toHaveBeenCalled();
-        expect(push).toHaveBeenCalledWith("/assistant");
+        expect(push).toHaveBeenCalledWith("/inicio");
     });
 });
 

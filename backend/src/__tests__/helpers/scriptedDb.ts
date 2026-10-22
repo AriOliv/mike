@@ -54,14 +54,14 @@ export function scriptedDb(steps: Step[]) {
         reject: (error: unknown) => unknown,
       ) => settle().then(resolve, reject),
     };
-    for (const op of ["update", "insert", "delete"]) {
+    for (const op of ["update", "insert", "upsert", "delete"]) {
       builder[op] = (payload?: unknown) => {
         call.op = op;
         call.payload = payload;
         return builder;
       };
     }
-    for (const filter of ["eq", "is", "in", "not", "or", "order", "range", "limit"]) {
+    for (const filter of ["eq", "is", "in", "not", "or", "order", "range", "limit", "gte", "lt", "lte", "neq", "contains"]) {
       builder[filter] = (...args: unknown[]) => {
         call.filters.push([filter, ...args]);
         return builder;

@@ -56,7 +56,7 @@ describe("OnboardingInvitationsPage", () => {
         expect(mocks.completeOnboarding).not.toHaveBeenCalled();
         await user.click(screen.getByRole("button", { name: "Finish" }));
         expect(mocks.completeOnboarding).toHaveBeenCalledExactlyOnceWith();
-        expect(mocks.replace).toHaveBeenCalledWith("/assistant");
+        expect(mocks.replace).toHaveBeenCalledWith("/inicio");
     });
 
     it("lets users finish without accepting an invitation", async () => {
@@ -66,7 +66,7 @@ describe("OnboardingInvitationsPage", () => {
         await user.click(screen.getByRole("button", { name: "Finish" }));
         expect(mocks.accept).not.toHaveBeenCalled();
         expect(mocks.completeOnboarding).toHaveBeenCalledOnce();
-        expect(mocks.replace).toHaveBeenCalledWith("/assistant");
+        expect(mocks.replace).toHaveBeenCalledWith("/inicio");
     });
 
     it("lets users finish when they have no pending invitations", async () => {
@@ -75,7 +75,7 @@ describe("OnboardingInvitationsPage", () => {
         render(<OnboardingInvitationsPage />);
         expect(await screen.findByText(/You have no pending invitations/)).toBeVisible();
         await user.click(screen.getByRole("button", { name: "Finish" }));
-        expect(mocks.replace).toHaveBeenCalledWith("/assistant");
+        expect(mocks.replace).toHaveBeenCalledWith("/inicio");
     });
 
     it("allows returning to practice without completing onboarding", async () => {
@@ -98,6 +98,6 @@ describe("OnboardingInvitationsPage", () => {
         expect(mocks.replace).not.toHaveBeenCalled();
         await user.click(screen.getByRole("button", { name: "Finish" }));
         expect(mocks.accept).toHaveBeenCalledOnce();
-        expect(mocks.replace).toHaveBeenCalledWith("/assistant");
+        expect(mocks.replace).toHaveBeenCalledWith("/inicio");
     });
 });

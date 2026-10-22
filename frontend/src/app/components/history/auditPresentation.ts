@@ -1,3 +1,4 @@
+import { clientLabel, TOOL_LABELS } from "@/app/lib/mcpTokens";
 import type { AuditEvent, OrgPrivateContentKind } from "@/app/lib/mikeApi";
 
 export interface AuditPrivateAccess {
@@ -27,58 +28,62 @@ export function auditPrivateAccess(
 
 export const ACTION_LABELS: Record<string, string> = {
   "org.private_content.permission_changed":
-    "Private content permission changed",
-  "org.private_content.opened": "Private content accessed",
-  "org.private_content.closed": "Private content access ended",
-  "org.api_key.saved": "Provider key saved",
-  "org.api_key.removed": "Provider key removed",
-  "org.api_key.enabled": "Provider key enabled",
-  "org.api_key.disabled": "Provider key disabled",
-  "org.personal_api_keys.allowed": "Personal keys allowed",
-  "org.personal_api_keys.blocked": "Personal keys blocked",
-  "org.created": "Organization created",
-  "org.deleted": "Organization deleted",
-  "org.restored": "Organization restored",
-  "org.purged": "Organization permanently deleted",
-  "org.invite.created": "Invitation sent",
-  "org.invite.accepted": "Invitation accepted",
-  "org.invite.declined": "Invitation declined",
-  "org.invite.cancelled": "Invitation cancelled",
-  "org.invite.resent": "Invitation resent",
-  "org.member.role_changed": "Member role changed",
-  "org.logo.updated": "Logo updated",
-  "org.logo.removed": "Logo removed",
-  "org.router_models.updated": "Models updated",
-  "org.departure.item.transferred": "Departed work transferred",
-  "org.departure.item.archived": "Departed work archived",
-  "org.departure.item.recovered": "Departed work recovered",
-  "org.departure.item.deleted": "Departed work deleted",
-  "org.departure.item.expired": "Departed work expired",
-  "org.departure.member.departed": "Member departed",
-  "org.member.removed": "Member removed",
-  "org.member.left": "Member left",
-  "org.data.deleted": "Organization data deleted",
-  "chat.message": "Chat message sent",
-  "document.uploaded": "Document uploaded",
-  "document.generated": "Document generated",
-  "document.edited": "Document edited",
-  "workflow.applied": "Workflow applied",
-  "tabular.created": "Review created",
-  "tabular.generated": "Review run completed",
-  "export.chats": "Chats exported",
-  "export.account": "Account data exported",
-  "export.tabular": "Review exported",
-  "export.memory": "Memory exported",
+    "Permissão de conteúdo privado alterada",
+  "org.private_content.opened": "Conteúdo privado acessado",
+  "org.private_content.closed": "Acesso a conteúdo privado encerrado",
+  "org.api_key.saved": "Chave de provedor salva",
+  "org.api_key.removed": "Chave de provedor removida",
+  "org.api_key.enabled": "Chave de provedor ativada",
+  "org.api_key.disabled": "Chave de provedor desativada",
+  "org.personal_api_keys.allowed": "Chaves pessoais permitidas",
+  "org.personal_api_keys.blocked": "Chaves pessoais bloqueadas",
+  "org.created": "Organização criada",
+  "org.deleted": "Organização excluída",
+  "org.restored": "Organização restaurada",
+  "org.purged": "Organização excluída de vez",
+  "org.invite.created": "Convite enviado",
+  "org.invite.accepted": "Convite aceito",
+  "org.invite.declined": "Convite recusado",
+  "org.invite.cancelled": "Convite cancelado",
+  "org.invite.resent": "Convite reenviado",
+  "org.member.role_changed": "Papel de membro alterado",
+  "org.logo.updated": "Logo atualizado",
+  "org.logo.removed": "Logo removido",
+  "org.router_models.updated": "Modelos atualizados",
+  "org.departure.item.transferred": "Trabalho de quem saiu transferido",
+  "org.departure.item.archived": "Trabalho de quem saiu arquivado",
+  "org.departure.item.recovered": "Trabalho de quem saiu recuperado",
+  "org.departure.item.deleted": "Trabalho de quem saiu excluído",
+  "org.departure.item.expired": "Trabalho de quem saiu expirado",
+  "org.departure.member.departed": "Membro saiu",
+  "org.member.removed": "Membro removido",
+  "org.member.left": "Membro deixou a organização",
+  "org.data.deleted": "Dados da organização excluídos",
+  "chat.message": "Mensagem enviada",
+  "document.uploaded": "Documento enviado",
+  "document.generated": "Documento gerado",
+  "document.edited": "Documento editado",
+  "workflow.applied": "Workflow aplicado",
+  "tabular.created": "Revisão criada",
+  "tabular.generated": "Revisão concluída",
+  "export.chats": "Conversas exportadas",
+  "export.account": "Dados da conta exportados",
+  "export.tabular": "Revisão exportada",
+  "export.memory": "Memória exportada",
+  // An agent working in the Mike for the person, over MCP (doc 09 §7).
+  "mcp.tool": "Agente consultou o Mike",
+  "mcp.read": "Agente leu um contrato",
 };
 
 export const SURFACE_LABELS: Record<string, string> = {
-  assistant: "Assistant",
-  project: "Project",
+  assistant: "Assistente",
+  project: "Projeto",
   word: "Word",
-  tabular: "Tabular",
+  tabular: "Tabela",
   workflows: "Workflows",
-  account: "Account",
-  organization: "Organization",
+  account: "Conta",
+  organization: "Organização",
+  mcp: "Agente (MCP)",
 };
 
 export function auditLabel(value: string): string {
@@ -92,17 +97,17 @@ export function auditAction(event: AuditEvent): string {
   // Failed or cancelled operations must not read as successful changes.
   if (event.status === "completed") return label;
   const operations: Record<string, string> = {
-    "chat.message": "Chat message",
-    "document.uploaded": "Document upload",
-    "document.generated": "Document generation",
-    "document.edited": "Document edit",
-    "workflow.applied": "Workflow application",
-    "tabular.created": "Review creation",
-    "tabular.generated": "Review run",
-    "export.chats": "Chat export",
-    "export.account": "Account export",
-    "export.tabular": "Review export",
-    "export.memory": "Memory export",
+    "chat.message": "Envio de mensagem",
+    "document.uploaded": "Envio de documento",
+    "document.generated": "Geração de documento",
+    "document.edited": "Edição de documento",
+    "workflow.applied": "Aplicação de workflow",
+    "tabular.created": "Criação de revisão",
+    "tabular.generated": "Execução de revisão",
+    "export.chats": "Exportação de conversas",
+    "export.account": "Exportação da conta",
+    "export.tabular": "Exportação de revisão",
+    "export.memory": "Exportação de memória",
   };
   return operations[event.action] ?? label;
 }
@@ -112,16 +117,38 @@ function detailText(event: AuditEvent, key: string): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+/** Shown as the actor of events the system did on its own. */
+export const SYSTEM_ACTOR = "Sistema";
+
 export function auditActor(event: AuditEvent): string {
   return (
     event.user_display_name ||
     event.user_email ||
     (event.action === "org.purged" ||
     event.action === "org.departure.item.expired"
-      ? "System"
-      : "Unknown user")
+      ? SYSTEM_ACTOR
+      : "Pessoa desconhecida")
   );
 }
+
+// `type` is the subject's kind, which the icons and checks compare;
+// `label` is how it reads on screen.
+const SUBJECT_TYPE_LABELS: Record<string, string> = {
+  Item: "Item",
+  Recipient: "Destinatário",
+  Member: "Membro",
+  Provider: "Provedor",
+  Organization: "Organização",
+  Document: "Documento",
+  Chat: "Conversa",
+  Workflow: "Workflow",
+  Review: "Revisão",
+  Chats: "Conversas",
+  Account: "Conta",
+  Memory: "Memória",
+  Project: "Projeto",
+  "Tabular Review": "Revisão",
+};
 
 export function auditSubject(event: AuditEvent) {
   const action = event.action;
@@ -173,6 +200,7 @@ export function auditSubject(event: AuditEvent) {
     context.push(SURFACE_LABELS[event.surface] ?? auditLabel(event.surface));
   return {
     type,
+    label: SUBJECT_TYPE_LABELS[type] ?? type,
     name: name ?? "-",
     context: [...new Set(context)].join(" · "),
   };
@@ -187,8 +215,8 @@ export function auditSubjectEmail(event: AuditEvent): string | null {
 
 export function auditTimestamp(value: string, exact = false): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Date unavailable";
-  return date.toLocaleString(undefined, {
+  if (Number.isNaN(date.getTime())) return "Data indisponível";
+  return date.toLocaleString("pt-BR", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -209,66 +237,93 @@ export function auditDetailFields(event: AuditEvent): AuditDetailField[] {
     else if (typeof value === "number" && Number.isFinite(value))
       fields.push({ label, value: String(value) });
     else if (typeof value === "boolean")
-      fields.push({ label, value: value ? "Yes" : "No" });
+      fields.push({ label, value: value ? "Sim" : "Não" });
   };
   const role = detailText(event, "role");
   const previous = detailText(event, "previous_role");
   if (event.action === "org.member.role_changed") {
     if (previous && role)
       add(
-        event.status === "completed" ? "Role" : "Requested role change",
-        `${auditLabel(previous)} → ${auditLabel(role)}`,
+        event.status === "completed" ? "Papel" : "Mudança de papel pedida",
+        `${auditRoleLabel(previous)} → ${auditRoleLabel(role)}`,
       );
-    else if (role) add("Role", auditLabel(role));
-    else if (previous) add("Previous role", auditLabel(previous));
+    else if (role) add("Papel", auditRoleLabel(role));
+    else if (previous) add("Papel anterior", auditRoleLabel(previous));
   } else if (event.action.startsWith("org.invite.") && role)
-    add("Invited role", auditLabel(role));
-  else if (previous) add("Previous role", auditLabel(previous));
+    add("Papel do convite", auditRoleLabel(role));
+  else if (previous) add("Papel anterior", auditRoleLabel(previous));
   if (
     event.action.startsWith("org.departure.") ||
     event.action.startsWith("org.member.")
   ) {
-    add("Items transferred", detail.transferred);
-    add("Items archived", detail.archived);
+    add("Itens transferidos", detail.transferred);
+    add("Itens arquivados", detail.archived);
   }
   if (event.action === "org.router_models.updated")
-    add("Models available", detail.model_count);
+    add("Modelos disponíveis", detail.model_count);
   if (
     event.action.startsWith("org.api_key.") ||
     event.action === "org.private_content.permission_changed"
   )
-    add("Enabled", detail.enabled);
-  if (event.action === "org.private_content.opened") add("Access", "Read-only");
+    add("Ativada", detail.enabled);
+  if (event.action === "org.private_content.opened") add("Acesso", "Só leitura");
   const purgeAfter = detailText(event, "purge_after");
   if (purgeAfter && !Number.isNaN(new Date(purgeAfter).getTime()))
-    add("Scheduled deletion", auditTimestamp(purgeAfter, true));
+    add("Exclusão agendada", auditTimestamp(purgeAfter, true));
   if (event.action.startsWith("export.")) {
-    add("Format", detail.format);
-    add("Documents exported", detail.document_count);
-    add("Chats exported", detail.chat_count);
+    add("Formato", detail.format);
+    add("Documentos exportados", detail.document_count);
+    add("Conversas exportadas", detail.chat_count);
   }
   return fields;
 }
 
+const ROLE_LABELS: Record<string, string> = {
+  owner: "Titular",
+  admin: "Admin",
+  member: "Membro",
+};
+
+function auditRoleLabel(role: string): string {
+  return ROLE_LABELS[role] ?? auditLabel(role);
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  completed: "Concluído",
+  cancelled: "Cancelado",
+  failed: "Falhou",
+};
+
+export function auditStatusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? auditLabel(status);
+}
+
 export function auditSummary(event: AuditEvent, personal: boolean): string {
-  const actor = personal ? "You" : auditActor(event);
+  const actor = personal ? "Você" : auditActor(event);
   const subject = auditSubject(event);
   if (event.status !== "completed")
-    return `${auditAction(event)} ${event.status === "failed" ? "failed" : event.status === "cancelled" ? "was cancelled" : `is ${event.status}`}.`;
+    return `${auditAction(event)}: ${event.status === "failed" ? "falhou" : event.status === "cancelled" ? "cancelada" : auditStatusLabel(event.status).toLowerCase()}.`;
   const name =
-    subject.name === "-" ? `the ${subject.type.toLowerCase()}` : subject.name;
+    subject.name === "-" ? subject.label.toLowerCase() : subject.name;
   if (event.action === "org.member.role_changed")
-    return `${actor} changed the organization role for ${name}.`;
+    return `${actor} mudou o papel de ${name} na organização.`;
   if (
     event.action === "org.invite.created" ||
     event.action === "org.invite.resent"
   )
-    return `${actor} ${event.action.endsWith("resent") ? "resent an invitation to" : "invited"} ${name}.`;
-  if (event.action === "document.uploaded") return `${actor} uploaded ${name}.`;
-  if (event.action === "document.edited") return `${actor} edited ${name}.`;
+    return `${actor} ${event.action.endsWith("resent") ? "reenviou o convite para" : "convidou"} ${name}.`;
+  if (event.action === "document.uploaded") return `${actor} enviou ${name}.`;
+  if (event.action === "document.edited") return `${actor} editou ${name}.`;
   if (event.action === "document.generated")
-    return `${actor} generated ${name}.`;
-  return `${auditAction(event)} by ${personal ? "you" : actor}`;
+    return `${actor} gerou ${name}.`;
+  if (event.action === "mcp.tool") {
+    const client = detailText(event, "client");
+    const what = event.title ? TOOL_LABELS[event.title] : undefined;
+    const who = client ? clientLabel(client) : "Um agente";
+    const forWhom = personal ? "em seu nome" : `em nome de ${actor}`;
+    return what ? `${who} ${what} ${forWhom}.` : `${who} consultou o Mike ${forWhom}.`;
+  }
+  return `${auditAction(event)} · por ${personal ? "você" : actor}`;
 }
 
 export function auditDestination(
@@ -277,26 +332,26 @@ export function auditDestination(
   if (event.review_id)
     return {
       href: `/tabular-reviews/${encodeURIComponent(event.review_id)}`,
-      label: "Open review",
+      label: "Abrir revisão",
     };
   if (event.chat_id && event.surface !== "word")
     return {
       href: event.project_id
         ? `/projects/${encodeURIComponent(event.project_id)}/assistant/chat/${encodeURIComponent(event.chat_id)}`
         : `/assistant/chat/${encodeURIComponent(event.chat_id)}`,
-      label: "Open chat",
+      label: "Abrir conversa",
     };
   if (event.project_id)
     return {
       href: `/projects/${encodeURIComponent(event.project_id)}`,
-      label: "Open project",
+      label: "Abrir projeto",
     };
   const access = auditPrivateAccess(event);
   if (access && ["project", "chat", "tabular_review"].includes(access.kind)) {
     const target = {
-      project: { path: "/projects/", label: "Open project" },
-      chat: { path: "/assistant/chat/", label: "Open chat" },
-      tabular_review: { path: "/tabular-reviews/", label: "Open review" },
+      project: { path: "/projects/", label: "Abrir projeto" },
+      chat: { path: "/assistant/chat/", label: "Abrir conversa" },
+      tabular_review: { path: "/tabular-reviews/", label: "Abrir revisão" },
     }[access.kind as "project" | "chat" | "tabular_review"];
     return {
       href: `${target.path}${encodeURIComponent(access.item_id)}`,

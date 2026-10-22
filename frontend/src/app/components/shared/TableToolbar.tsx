@@ -70,18 +70,21 @@ export function TableToolbar<T extends string>({
     return (
         <div
             className={cn(
-                "mx-3 mb-2 flex h-10 items-center md:mx-6.5",
+                "mx-3 mb-2 flex min-h-10 items-center md:mx-6.5",
                 className,
             )}
         >
             {(leading || hasItems) && (
-                <div className="-my-2 flex min-w-0 flex-1 items-center gap-1.5 py-2">
+                // Tabs never scroll out of sight: on a narrow screen the ones
+                // that do not fit move to a second line, each label whole.
+                <div className="-my-2 flex min-w-0 flex-1 flex-wrap items-center gap-1.5 py-2">
                     {leading}
                     {items.map((item) => (
                         <TabPillButtonUI
                             key={item.id}
                             active={active === item.id}
                             onClick={() => onChange?.(item.id)}
+                            className="shrink-0 whitespace-nowrap"
                         >
                             {item.label}
                         </TabPillButtonUI>

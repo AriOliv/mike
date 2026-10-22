@@ -31,6 +31,7 @@ export {
   startPlaybookReview,
   INTERRUPTED_RUN_ERROR,
   listPlaybookRuns,
+  getPlaybookRunById,
   listAllPlaybookRuns,
   listPlaybookRunHistory,
   playbookRunStatuses,
@@ -51,6 +52,11 @@ export {
   PLAYBOOK_SOURCE_CONTENT_TYPES,
   type PublicPlaybookSource,
 } from "./playbooks.sources";
+
+export {
+  findPlaybookForContractType,
+  playbookForContractType,
+} from "./playbooks.byType";
 
 export {
   playbookImportPrefix,

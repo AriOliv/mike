@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   organizations: [] as Org[] | null,
   setWorkspace: vi.fn(),
   push: vi.fn(),
-  pathname: "/assistant",
+  pathname: "/inicio",
   showToast: vi.fn(),
   chats: [] as Chat[],
 }));
@@ -105,19 +105,32 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.workspaceId = "personal";
   state.organizations = [];
-  state.pathname = "/assistant";
+  state.pathname = "/inicio";
   state.chats = [];
   vi.mocked(listTabularReviews).mockResolvedValue([]);
   vi.mocked(listProjectsPage).mockResolvedValue([]);
 });
 
 describe("AppSidebar workspace switcher", () => {
+  it("lets a short screen scroll down to History instead of squeezing it under the footer", () => {
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Histórico" });
+    // The region takes only the room left, never the whole list's height...
+    expect(region).toHaveClass("basis-0", "overflow-y-auto");
+    // ...and keeps a floor of a few rows inside lists that never shrink below
+    // their content, so the sidebar's own scroll reaches it.
+    const section = region.parentElement!;
+    expect(section).toHaveClass("min-h-40");
+    expect(section.parentElement).not.toHaveClass("min-h-0");
+    expect(section.parentElement!.parentElement).toHaveClass("overflow-y-auto");
+  });
+
   it("updates a review's running/completed icon without remounting any History rows", async () => {
     state.chats = [{ id: "chat", title: "Keep this chat", updated_at: "2026-10-14T00:00:00Z" } as Chat];
     const review = { id: "review", title: "Running review", updated_at: "2026-10-15T00:00:00Z", is_running: true } as TabularReview;
     vi.mocked(listTabularReviews).mockResolvedValueOnce([review]);
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
-    const history = within(screen.getByRole("region", { name: "History" }));
+    const history = within(screen.getByRole("region", { name: "Histórico" }));
     const row = await history.findByRole("link", { name: "Tabular review: Running review (Running)" });
     const chat = history.getByRole("button", { name: "Keep this chat" });
     let resolve!: (rows: TabularReview[]) => void;
@@ -142,9 +155,9 @@ describe("AppSidebar workspace switcher", () => {
     ] as TabularReview[]);
     state.pathname = "/projects/matter/tabular-reviews/project-review";
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "History" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Histórico" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByText("Assistant History")).toBeNull();
-    const history = within(screen.getByRole("region", { name: "History" }));
+    const history = within(screen.getByRole("region", { name: "Histórico" }));
     const projectReview = await history.findByRole("link", { name: "Tabular review: Matter Alpha: Older review edited today" });
     expect(projectReview).toHaveAttribute("title", "Matter Alpha: Older review edited today");
     expect(projectReview).toHaveTextContent("Matter Alpha: Older review edited today");
@@ -178,7 +191,7 @@ describe("AppSidebar workspace switcher", () => {
     // Still the way home, whatever it is called.
     expect(screen.getByRole("link", { name: "Acme LLP" })).toHaveAttribute(
       "href",
-      "/assistant",
+      "/inicio",
     );
   });
 
@@ -188,7 +201,7 @@ describe("AppSidebar workspace switcher", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     expect(heading()).toHaveTextContent("Mike");
-    expect(screen.queryByText("Personal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pessoal")).not.toBeInTheDocument();
   });
 
   it("shows a placeholder, not Mike, while a remembered organization's name loads", () => {
@@ -241,7 +254,7 @@ describe("AppSidebar workspace switcher", () => {
     await openAccountMenu(user);
     const options = screen.getAllByRole("menuitemradio");
     expect(options.map((option) => option.textContent)).toEqual([
-      "Personal",
+      "Pessoal",
       "Acme LLP",
       "Beta Chambers",
     ]);
@@ -250,7 +263,7 @@ describe("AppSidebar workspace switcher", () => {
       screen.getByRole("menuitemradio", { name: "Acme LLP" }),
     ).toHaveAttribute("aria-checked", "true");
     expect(
-      screen.getByRole("menuitemradio", { name: "Personal" }),
+      screen.getByRole("menuitemradio", { name: "Pessoal" }),
     ).toHaveAttribute("aria-checked", "false");
     // The rest of the account menu is still there.
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
@@ -263,7 +276,7 @@ describe("AppSidebar workspace switcher", () => {
 
     await openAccountMenu(user);
     const label = screen.getByText("Workspace");
-    const option = screen.getByRole("menuitemradio", { name: "Personal" });
+    const option = screen.getByRole("menuitemradio", { name: "Pessoal" });
     const horizontalPadding = (element: HTMLElement) =>
       [...element.classList].filter((name) => /^px-/.test(name));
     expect(horizontalPadding(label)).toEqual(horizontalPadding(option));
@@ -275,7 +288,7 @@ describe("AppSidebar workspace switcher", () => {
     // `hidden`: the open menu takes the rest of the page out of the
     // accessibility tree.
     expect(
-      screen.getByRole("button", { name: "Recent Projects", hidden: true }),
+      screen.getByRole("button", { name: "Projetos recentes", hidden: true }),
     ).toHaveClass("text-xs", "font-semibold");
     expect(label).not.toHaveClass("uppercase");
     expect(label).not.toHaveClass("tracking-wider");
@@ -340,7 +353,7 @@ describe("AppSidebar workspace switcher", () => {
     // Said in a notice that goes sooner than an ordinary one.
     expect(state.showToast).toHaveBeenCalledExactlyOnceWith({
       tone: "info",
-      title: "Switched to Beta Chambers",
+      title: "Agora em Beta Chambers",
       message: undefined,
       durationMs: 2500,
       dedupeKey: "workspace-switch",
@@ -354,9 +367,9 @@ describe("AppSidebar workspace switcher", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     await openAccountMenu(user);
-    await user.click(screen.getByRole("menuitemradio", { name: "Personal" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Pessoal" }));
     expect(state.showToast).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ title: "Switched to Personal" }),
+      expect.objectContaining({ title: "Agora em Pessoal" }),
     );
   });
 
@@ -372,16 +385,16 @@ describe("AppSidebar workspace switcher", () => {
     );
     // The switcher is navigation. The list being left is not reloaded for
     // the new workspace first: the workspace has not changed yet.
-    expect(state.push).toHaveBeenCalledExactlyOnceWith("/assistant");
+    expect(state.push).toHaveBeenCalledExactlyOnceWith("/inicio");
     expect(state.setWorkspace).not.toHaveBeenCalled();
     expect(state.showToast).not.toHaveBeenCalled();
 
-    state.pathname = "/assistant";
+    state.pathname = "/inicio";
     view.rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
     expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith(BETA.id);
     // The notice comes with the switch, not before it.
     expect(state.showToast).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ title: "Switched to Beta Chambers" }),
+      expect.objectContaining({ title: "Agora em Beta Chambers" }),
     );
 
     // Once only: moving on from home does not switch again.
@@ -543,8 +556,8 @@ describe("AppSidebar workspace switcher", () => {
   it("lines the empty projects placeholder up with the Recent Projects button", async () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    const placeholder = await screen.findByText("No projects yet");
-    const button = screen.getByRole("button", { name: "Recent Projects" });
+    const placeholder = await screen.findByText("Nenhum projeto ainda");
+    const button = screen.getByRole("button", { name: "Projetos recentes" });
     const horizontalPadding = (element: HTMLElement) =>
       [...element.classList].filter((name) => /^px-/.test(name));
     expect(horizontalPadding(placeholder)).toEqual(horizontalPadding(button));

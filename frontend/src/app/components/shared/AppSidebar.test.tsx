@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listProjectsPage } from "@/app/lib/mikeApi";
+import { loadNavRole } from "@/app/lib/navRole";
 import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
 import { AppSidebar } from "./AppSidebar";
 
@@ -18,6 +19,10 @@ vi.mock("next/image", () => ({
 
 vi.mock("@/app/lib/mikeApi", () => ({
     listProjectsPage: vi.fn(),
+}));
+
+vi.mock("@/app/lib/navRole", () => ({
+    loadNavRole: vi.fn(async () => null),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -76,7 +81,7 @@ describe("AppSidebar failures", () => {
 
         await waitFor(() =>
             expect(screen.getByRole("alert")).toHaveTextContent(
-                "Couldn't load your recent projects",
+                "Não consegui carregar seus projetos recentes",
             ),
         );
     });
@@ -90,7 +95,7 @@ describe("AppSidebar failures", () => {
         renderSidebar();
 
         await waitFor(() => screen.getByRole("alert"));
-        await user.click(screen.getByRole("button", { name: "Retry" }));
+        await user.click(screen.getByRole("button", { name: "Tentar de novo" }));
 
         await waitFor(() =>
             expect(listProjectsPage).toHaveBeenCalledTimes(2),
@@ -110,11 +115,36 @@ describe("AppSidebar failures", () => {
 
         await waitFor(() =>
             expect(screen.getByRole("alert")).toHaveTextContent(
-                "Couldn't sign out",
+                "Não consegui sair",
             ),
         );
         expect(
-            screen.getByRole("button", { name: "Retry" }),
+            screen.getByRole("button", { name: "Tentar de novo" }),
         ).toBeInTheDocument();
+    });
+});
+
+describe("AppSidebar menu by role", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(listProjectsPage).mockResolvedValue([]);
+    });
+
+    it("shows the Legal team the whole menu", async () => {
+        vi.mocked(loadNavRole).mockResolvedValue("team");
+        renderSidebar();
+        await waitFor(() => expect(loadNavRole).toHaveBeenCalled());
+        expect(screen.getByText("Esteira")).toBeInTheDocument();
+        expect(screen.getByText("Mais")).toBeInTheDocument();
+        expect(screen.getByText("Projetos recentes")).toBeInTheDocument();
+    });
+
+    it("hides the team's workstation from someone who only asks the Legal team", async () => {
+        vi.mocked(loadNavRole).mockResolvedValue("requester");
+        renderSidebar();
+        await waitFor(() => expect(screen.queryByText("Esteira")).not.toBeInTheDocument());
+        expect(screen.queryByText("Mais")).not.toBeInTheDocument();
+        expect(screen.queryByText("Projetos recentes")).not.toBeInTheDocument();
+        expect(screen.queryByText("Histórico")).not.toBeInTheDocument();
     });
 });
