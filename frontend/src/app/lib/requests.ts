@@ -70,6 +70,7 @@ export const CHANNEL_LABEL: Record<string, string> = {
     whatsapp: "WhatsApp",
     email: "E-mail",
     mcp: "Assistente",
+    sistema: "Automático",
 };
 
 export const STEP_LABELS: { step: RequesterStep; label: string }[] = [

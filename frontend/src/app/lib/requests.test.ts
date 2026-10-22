@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LegalRequest, RequestListItem } from "./mikeApi";
 import {
+    CHANNEL_LABEL,
     filterQueue,
     formatDate,
     requestPlan,
@@ -195,3 +196,10 @@ describe("orchestration plan", () => {
         expect(plan.find((s) => s.id === "atribuicao")?.task).toBe("sugerir quem pega");
     });
 });
+
+describe("CHANNEL_LABEL", () => {
+    it("names where a request came from, including the platform itself", () => {
+        expect(CHANNEL_LABEL).toMatchObject({ form: "Formulário", mcp: "Assistente", sistema: "Automático" });
+    });
+});
+

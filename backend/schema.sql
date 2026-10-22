@@ -11907,6 +11907,28 @@ grant select, insert, update, delete on public.contract_analyses, public.contrac
   to service_role;
 
 
+-- ── Fork: a contract's end opens its renewal request (20261022_99) ──
+alter table public.legal_teams
+  add column if not exists renewal_enabled boolean not null default false,
+  add column if not exists renewal_lead_days integer not null default 60;
+
+alter table public.legal_teams
+  drop constraint if exists legal_teams_renewal_lead_days_check;
+alter table public.legal_teams
+  add constraint legal_teams_renewal_lead_days_check check (renewal_lead_days between 1 and 365);
+
+create table if not exists public.contract_renewal_requests (
+  project_id uuid not null references public.projects(id) on delete cascade,
+  term_end date not null,
+  request_id uuid references public.legal_requests(id) on delete set null,
+  created_at timestamptz not null default now(),
+  primary key (project_id, term_end)
+);
+
+alter table public.contract_renewal_requests enable row level security;
+revoke all on public.contract_renewal_requests from anon, authenticated;
+grant select, insert, update, delete on public.contract_renewal_requests to service_role;
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12087,5 +12109,6 @@ insert into public.schema_migrations (filename) values
   ('20261022_91_request_intake.sql'),
   ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
-  ('20261022_97_card_events_cascade.sql')
+  ('20261022_97_card_events_cascade.sql'),
+  ('20261022_99_renewal_requests.sql')
 on conflict (filename) do nothing;

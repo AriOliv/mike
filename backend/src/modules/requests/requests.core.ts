@@ -70,7 +70,7 @@ export type CreateRequestInput = {
     requester_name?: unknown;
     /** The requesting area; remembered for next time. The chat bot sends it from the person's profile. */
     requester_area?: unknown;
-    /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp", ...} */
+    /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp" | "sistema", ...}; "sistema" is the platform itself (a renewal opened by a contract's end). */
     source?: unknown;
     /** Checklist answers given with the request: {key: value | {value, detail}}. */
     intake?: unknown;
@@ -139,7 +139,7 @@ export type Participant = {
 };
 
 function sourceOf(value: unknown): Record<string, unknown> {
-    const allowed = ["form", "slack", "whatsapp", "email", "mcp"];
+    const allowed = ["form", "slack", "whatsapp", "email", "mcp", "sistema"];
     if (!value || typeof value !== "object") return { channel: "form" };
     const src = value as Record<string, unknown>;
     const channel = allowed.includes(String(src.channel)) ? String(src.channel) : "form";
@@ -248,6 +248,9 @@ async function resolveArea(
     given: unknown,
     channel: string,
 ): Promise<{ area: RequesterArea | null; source: "form" | "slack" | "perfil" | null }> {
+    // The platform has no requesting area, and must not borrow the one
+    // remembered for the person it acts through.
+    if (channel === "sistema") return { area: null, source: null };
     const area = normalizeArea(given);
     if (area) {
         const { error } = await db
@@ -389,13 +392,14 @@ export async function createRequest(
     await recordCardEvent(db, {
         projectId,
         orgId: team.org_id,
-        actorType: channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
-        actorId: channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
+        // The platform opening a renewal is the system, not a chat bot acting for someone.
+        actorType: channel === "sistema" ? "system" : channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
+        actorId: channel === "sistema" ? `system:${String(row.source.bot ?? "sistema")}` : channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
         actorName: requesterName ?? requesterEmail,
-        onBehalfOf: channel === "form" ? null : requesterEmail,
+        onBehalfOf: channel === "form" || channel === "sistema" ? null : requesterEmail,
         action: "request.created",
         after: { code: requestCode(row.number), kind: valid.kind, channel, attachments: attached },
-        source: channel === "form" ? "ui" : "mcp",
+        source: channel === "sistema" ? "cron" : channel === "form" ? "ui" : "mcp",
     });
     await queueNotifications(db, [
         {

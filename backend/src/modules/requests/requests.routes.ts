@@ -13,6 +13,8 @@ import {
     answerIntake,
     getIntake,
     getIntakeTemplate,
+    getRenewalSettings,
+    setRenewalSettings,
     setIntakeTemplate,
     assignRequest,
     createRequest,
@@ -97,6 +99,23 @@ requestsRouter.put(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await setIntakeTemplate(createServerSupabase(), caller(res), body(req)));
+    }),
+);
+
+// Whether a contract's end opens its renewal request (before "/:id").
+requestsRouter.get(
+    "/renewal-settings",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await getRenewalSettings(createServerSupabase(), caller(res)));
+    }),
+);
+
+requestsRouter.put(
+    "/renewal-settings",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setRenewalSettings(createServerSupabase(), caller(res), body(req)));
     }),
 );
 
