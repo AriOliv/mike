@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Check, Plug } from "lucide-react";
+import { Check, Plug, ShieldCheck } from "lucide-react";
 import { MfaVerificationPopup, needsMfaVerification } from "@/app/components/popups/MfaVerificationPopup";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { EmptyState } from "@/app/components/ui/empty-state";
@@ -21,11 +21,15 @@ import {
     isMfaRequiredError,
     type McpAuthorizationRequest,
 } from "@/app/lib/mikeApi";
-import { describeError } from "@/app/lib/userFacingError";
+import { describeError, errorCode } from "@/app/lib/userFacingError";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
 /** Where the browser goes next; a seam for the tests. */
-export const navigation = { go: (url: string) => window.location.assign(url) };
+export const navigation = {
+    go: (url: string) => window.location.assign(url),
+    /** Security in a new tab, so this request stays open here. */
+    open: (path: string) => window.open(path, "_blank", "noopener"),
+};
 
 export function McpConsent() {
     const requestId = useSearchParams().get("pedido") ?? "";
@@ -39,6 +43,7 @@ export function McpConsent() {
     const [busy, setBusy] = useState<"aprovar" | "recusar" | null>(null);
     const [mfaOpen, setMfaOpen] = useState(false);
     const [leaving, setLeaving] = useState<"aprovado" | "recusado" | null>(null);
+    const [needsEnrollment, setNeedsEnrollment] = useState(false);
 
     // Start in the space the person is working in, once: never over their choice.
     const [defaulted, setDefaulted] = useState(false);
@@ -75,6 +80,10 @@ export function McpConsent() {
                 setMfaOpen(true);
                 return;
             }
+            if (errorCode(e) === "mfa_enrollment_required") {
+                setNeedsEnrollment(true);
+                return;
+            }
             setError(describeError(e, { lang: "pt", action: approve ? "conectar o aplicativo" : "recusar o pedido" }).message);
         } finally {
             setBusy(null);
@@ -88,7 +97,18 @@ export function McpConsent() {
         <div className="flex h-full flex-col">
             <PageHeader>Conectar um aplicativo</PageHeader>
             <div className="mx-auto w-full max-w-md px-4 py-12">
-                {error ? (
+                {needsEnrollment ? (
+                    <EmptyState
+                        icon={<ShieldCheck />}
+                        title="Ative a verificação em duas etapas"
+                        description="Conectar um aplicativo dá acesso aos seus contratos fora do navegador. Ative a verificação em duas etapas em Configurações → Segurança e volte a esta aba: o pedido continua aberto por alguns minutos."
+                        action={
+                            <PillButtonUI tone="black" size="sm" onClick={() => navigation.open("/settings/security")}>
+                                Abrir Segurança
+                            </PillButtonUI>
+                        }
+                    />
+                ) : error ? (
                     <EmptyState tone="error" icon={<Plug />} title="Não deu para conectar" description={error} />
                 ) : leaving ? (
                     <EmptyState

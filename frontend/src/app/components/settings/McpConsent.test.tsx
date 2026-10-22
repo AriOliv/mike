@@ -44,6 +44,7 @@ beforeEach(() => {
     vi.mocked(decideMcpAuthorization).mockReset().mockResolvedValue({ redirect: "https://claude.ai/api/mcp/auth_callback?code=mike_oac_x" });
     vi.mocked(needsMfaVerification).mockReset().mockResolvedValue(false);
     navigation.go = vi.fn();
+    navigation.open = vi.fn();
 });
 afterEach(cleanup);
 
@@ -100,6 +101,18 @@ describe("Conectar um aplicativo", () => {
             fireEvent.click(screen.getByRole("button", { name: "Permitir acesso" }));
         });
         expect(screen.getByRole("dialog", { name: "Código de verificação" })).toBeTruthy();
+    });
+
+    it("sends an account without a second factor to Segurança, keeping the request", async () => {
+        vi.mocked(decideMcpAuthorization).mockRejectedValue(new MikeApiError({ message: "Ative…", status: 403, code: "mfa_enrollment_required" }));
+        await renderConsent();
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Permitir acesso" }));
+        });
+        expect(screen.getByText("Ative a verificação em duas etapas")).toBeTruthy();
+        fireEvent.click(screen.getByRole("button", { name: "Abrir Segurança" }));
+        expect(navigation.open).toHaveBeenCalledWith("/settings/security");
+        expect(navigation.go).not.toHaveBeenCalled();
     });
 
     it("explains an expired or incomplete request in Portuguese", async () => {

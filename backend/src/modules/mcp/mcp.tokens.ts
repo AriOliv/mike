@@ -190,7 +190,7 @@ export async function createAccessToken(
  * factor of whoever enrolled one (requireMfaIfEnrolled); this refuses the
  * accounts that have none.
  */
-async function requireEnrolledMfa(db: Db, userId: string): Promise<ServiceResult<never> | null> {
+export async function requireEnrolledMfa(db: Db, userId: string): Promise<ServiceResult<never> | null> {
     const { data: account, error } = await db.auth.admin.getUserById(userId);
     if (error) return internalFailure(error);
     const hasTotp = (account.user?.factors ?? []).some((f) => f.factor_type === "totp" && f.status === "verified");

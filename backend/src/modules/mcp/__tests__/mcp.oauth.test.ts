@@ -28,6 +28,7 @@ import { decideAuthorization, exchangeRefresh, revokeOAuthToken } from "../mcp.o
 import { listAccessTokens, revokeAccessToken } from "../mcp.tokens";
 
 const ana = { userId: "00000000-0000-4000-b000-000000000001", userEmail: "ana@exemplo.test" };
+const TOTP = [{ factor_type: "totp", status: "verified" }];
 let http: Server;
 let origin: string;
 let tables: Record<string, Record<string, unknown>[]>;
@@ -78,7 +79,7 @@ afterAll(() => new Promise<void>((resolve) => http.close(() => resolve())));
 beforeEach(() => {
     const fake = fakeDb(
         { user_profiles: [{ user_id: ana.userId, display_name: "Ana Teste" }], org_members: [] },
-        { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z" } },
+        { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z", factors: TOTP } },
     );
     state.db = fake.db;
     tables = fake.tables;
@@ -217,6 +218,24 @@ describe("OAuth 2.1 for MCP clients", () => {
         });
         expect(call.status).toBe(401);
         await expect(exchangeRefresh(state.db as never, { client_id: String(tables.mcp_oauth_clients[0].client_id) }, provider.saved!.refresh_token!, undefined)).rejects.toThrow();
+    });
+
+    it("never connects an app from an account without a second factor, and keeps the request open", async () => {
+        const fake = fakeDb(
+            { user_profiles: [{ user_id: ana.userId, display_name: "Ana Teste" }], org_members: [] },
+            { [ana.userId]: { email: "ana@exemplo.test", email_confirmed_at: "2026-01-01T00:00:00Z", factors: [] } },
+        );
+        state.db = fake.db;
+        const provider = memoryProvider("http://127.0.0.1:65000/callback");
+        await expect(new Client({ name: "x", version: "1" }).connect(new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), { authProvider: provider }))).rejects.toThrow();
+        const requestId = new URL((await fetch(provider.authUrl!, { redirect: "manual" })).headers.get("location")!).searchParams.get("pedido")!;
+
+        expect(await decideAuthorization(fake.db, ana, { requestId, approve: true })).toMatchObject({ kind: "forbidden", code: "mfa_enrollment_required" });
+        expect(fake.tables.mcp_oauth_codes ?? []).toEqual([]);
+        // Not spent: after enrolling, the same request can be approved.
+        fake.tables.mcp_oauth_requests.forEach((r) => expect(r.decided_at ?? null).toBeNull());
+        const no = await decideAuthorization(fake.db, ana, { requestId, approve: false });
+        expect(no.ok && new URL(no.data.redirect).searchParams.get("error")).toBe("access_denied");
     });
 
     it("tells the client when the person says no, and a request is answered only once", async () => {

@@ -14,7 +14,7 @@ import crypto from "crypto";
 import type { Db } from "../../lib/supabase";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { resolveWorkspaceFilter, PERSONAL_WORKSPACE } from "../../lib/workspace";
-import { hashToken } from "./mcp.tokens";
+import { hashToken, requireEnrolledMfa } from "./mcp.tokens";
 import { MCP_SCOPES, type McpScope } from "./mcp.types";
 
 export const OAUTH_PREFIX = { access: "mike_oat_", refresh: "mike_ort_", code: "mike_oac_" } as const;
@@ -213,6 +213,13 @@ export async function decideAuthorization(
 ): Promise<ServiceResult<{ redirect: string }>> {
     const req = await openRequest(db, input.requestId, now);
     if (!req.ok) return req;
+    // Connecting an app gives what a personal token gives, so the same rule:
+    // never from an account protected by a password alone. Checked before the
+    // request is spent, so the person can enrol a second factor and approve.
+    if (input.approve) {
+        const mfa = await requireEnrolledMfa(db, caller.userId);
+        if (mfa) return mfa;
+    }
     const { data: spent, error: spendError } = await db
         .from("mcp_oauth_requests")
         .update({ decided_at: now.toISOString() })
