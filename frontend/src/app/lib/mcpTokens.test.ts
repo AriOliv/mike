@@ -80,6 +80,7 @@ describe("access token words", () => {
     it("names clients and tools in the Legal team's words", () => {
         expect(clientLabel("Codex")).toBe("Codex");
         expect(clientLabel("hermes-docbot")).toBe("Hermes");
+        expect(clientLabel("hermes")).toBe("Hermes");
         expect(clientLabel("outro")).toBe("outro");
         expect(TOOL_LABELS.mike_contratos_ficha).toBe("leu a Ficha de um contrato");
     });

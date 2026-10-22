@@ -123,6 +123,7 @@ const CLIENT_LABELS: Record<string, string> = {
     codex: "Codex",
     "codex-mcp-client": "Codex",
     cursor: "Cursor",
+    hermes: "Hermes",
     "hermes-docbot": "Hermes",
 };
 
