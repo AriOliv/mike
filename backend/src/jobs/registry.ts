@@ -7,6 +7,7 @@ import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../mod
 import { handleRegulatoryScan } from "../modules/regulatory/regulatory.service";
 import { handleRequestNotify, handleRequestTriage } from "../modules/requests/requests.service";
 import { AUTO_REVIEW_JOB, handleAutoReview, markAutoReviewFailed } from "../modules/contracts/contracts.service";
+import { handleNotionSync, NOTION_SYNC_JOB } from "../modules/integrations-notion/notionSync.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
 import { type DbJobHandlers } from "../lib/dbq/types";
 import { type DbJobFailureHook } from "../lib/dbq/runner";
@@ -27,6 +28,7 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   "request.triage": handleRequestTriage,
   "request.notify": (db) => handleRequestNotify(db),
   [AUTO_REVIEW_JOB]: handleAutoReview,
+  [NOTION_SYNC_JOB]: (db, job) => handleNotionSync(db, (job.payload ?? {}) as { org_id?: unknown }),
 };
 export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {
   "conversion.convert": markConversionFailed,

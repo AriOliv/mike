@@ -289,13 +289,18 @@ export function writePage(
     fieldMap: FieldMap,
     stageMap: StageMap,
     only: ReadonlySet<MikeField>,
+    /** Each property's Notion type; a "status" property is written as status, not select. */
+    types: Record<string, string> = {},
 ): Record<string, unknown> {
     const props: Record<string, unknown> = {};
     const date = (value: string | null | undefined) => ({ date: value ? { start: value } : null });
-    const select = (value: string | null | undefined) => ({ select: value ? { name: value } : null });
+    let current = "";
+    const select = (value: string | null | undefined) =>
+        types[current] === "status" ? { status: value ? { name: value } : null } : { select: value ? { name: value } : null };
     const text = (value: string | null | undefined) => ({ rich_text: value ? [{ text: { content: value.slice(0, 2000) } }] : [] });
     for (const [property, field] of Object.entries(fieldMap)) {
         if (!field || !only.has(field)) continue;
+        current = property;
         switch (field) {
             case "name":
                 if (card.name) props[property] = { title: [{ text: { content: card.name.slice(0, 2000) } }] };

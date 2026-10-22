@@ -18,13 +18,19 @@ import {
     saveNotionMapping,
     previewNotionImport,
     applyNotionImport,
+    getNotionSyncStatus,
+    setNotionSyncEnabled,
+    syncNotionNow,
     type NotionImportPlan,
+    type NotionSyncStatus,
     type NotionBoardSchema,
     type NotionConnection,
     type NotionLane,
     type NotionStageTarget,
 } from "@/app/lib/mikeApi";
-import { assign, LANE_LABEL, looksLikeToken, mappingProblems, MATCH_LABEL, OWNER_LABEL, propertiesFor, propertyOf } from "@/app/lib/notionIntegration";
+import { assign, LANE_LABEL, looksLikeToken, mappingProblems, MATCH_LABEL, OWNER_LABEL, propertiesFor, propertyOf, sinceLabel } from "@/app/lib/notionIntegration";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
 import { useOrganizationSettings } from "./OrganizationSettingsShell";
 
@@ -48,11 +54,16 @@ export function NotionIntegration() {
     const [stageMap, setStageMap] = useState<Record<string, NotionStageTarget>>({});
     const [poll, setPoll] = useState(10);
     const [plan, setPlan] = useState<NotionImportPlan | null>(null);
+    const [status, setStatus] = useState<NotionSyncStatus | null>(null);
+    const [confirmOn, setConfirmOn] = useState(false);
 
     const load = useCallback(async () => {
         try {
-            setConn(await getNotionConnection(orgId));
+            const next = await getNotionConnection(orgId);
+            setConn(next);
             setError(null);
+            // The sync state is a nicety on this page: if it fails, the rest still works.
+            if (next.connected) setStatus(await getNotionSyncStatus(orgId).catch(() => null));
         } catch (e) {
             setError(describeError(e, { lang: "pt", action: "carregar a integração com o Notion" }).message);
         }
@@ -153,6 +164,22 @@ export function NotionIntegration() {
                 (done.failed ? `, ${done.failed} com erro (tente de novo; os já importados não se repetem).` : "."),
         });
         setPlan(await previewNotionImport(orgId).catch(() => null));
+    };
+
+    const refreshStatus = async () => setStatus(await getNotionSyncStatus(orgId).catch(() => status));
+
+    const toggleSync = async (enabled: boolean) => {
+        setConfirmOn(false);
+        const done = await run(enabled ? "ligar a sincronia" : "desligar a sincronia", () => setNotionSyncEnabled(orgId, enabled));
+        if (done) await refreshStatus();
+    };
+
+    const syncNow = async () => {
+        const done = await run("sincronizar agora", () => syncNotionNow(orgId));
+        if (done) {
+            showToast({ tone: "success", message: "Sincronia na fila. Em um minuto os dois lados estão iguais." });
+            await refreshStatus();
+        }
     };
 
     const canManage = conn.can_manage;
@@ -351,6 +378,58 @@ export function NotionIntegration() {
                             Salvar mapeamento
                         </PillButtonUI>
                     </div>
+                </section>
+            ) : null}
+
+            {ready && status ? (
+                <section aria-labelledby="notion-sync" className="space-y-3">
+                    <SettingsHeading id="notion-sync">Sincronia</SettingsHeading>
+                    <GlassCardUI>
+                        <SettingsRow>
+                            <div className="space-y-1">
+                                <SettingsLabel>Manter Mike e Notion iguais</SettingsLabel>
+                                <SettingsDescription>
+                                    Ligada, o Mike escreve na base do Notion. O que o Legal muda no Notion (etapa, progresso,
+                                    prioridade, responsável, prazo) vale a última edição; o que o Mike calcula (risco, renovação,
+                                    contraparte) é do Mike.
+                                </SettingsDescription>
+                            </div>
+                            <ToggleSwitchUI
+                                aria-label="Sincronia com o Notion"
+                                checked={status.sync_enabled}
+                                disabled={!canManage || busy}
+                                onCheckedChange={(on) => (on ? setConfirmOn(true) : void toggleSync(false))}
+                            />
+                        </SettingsRow>
+                        <SettingsRow>
+                            <div className="space-y-1" aria-label="Estado da sincronia">
+                                <SettingsLabel>Última sincronia: {sinceLabel(status.last_sync_at)}</SettingsLabel>
+                                <SettingsDescription>
+                                    {status.linked_cards} cards ligados · {status.pending} esperando para ir ao Notion
+                                    {status.failed ? ` · ${status.failed} com erro` : ""}
+                                </SettingsDescription>
+                                {status.last_sync_error ? (
+                                    <p role="alert" className="text-xs text-red-700">
+                                        {status.last_sync_error}
+                                    </p>
+                                ) : null}
+                            </div>
+                            {canManage ? (
+                                <PillButtonUI tone="white" size="sm" onClick={() => void syncNow()} disabled={busy || !status.sync_enabled}>
+                                    Sincronizar agora
+                                </PillButtonUI>
+                            ) : null}
+                        </SettingsRow>
+                    </GlassCardUI>
+                    <ConfirmPopup
+                        open={confirmOn}
+                        title="Ligar a sincronia com o Notion?"
+                        message="O Mike vai passar a escrever na base do Notion desta organização: etapa, progresso, prazos, risco e o link para o Mike em cada card. Confira a importação antes."
+                        confirmLabel="Ligar"
+                        cancelLabel="Cancelar"
+                        onCancel={() => setConfirmOn(false)}
+                        onConfirm={() => void toggleSync(true)}
+                    />
                 </section>
             ) : null}
 

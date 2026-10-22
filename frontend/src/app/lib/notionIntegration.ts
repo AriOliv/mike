@@ -57,3 +57,13 @@ export const MATCH_LABEL: Record<"linked" | "project" | "duplicate" | "new", { l
     duplicate: { label: "Duplicados", hint: "mesmo contrato e contraparte de um card que já existe; são ligados a ele" },
     linked: { label: "Já ligados", hint: "importados antes; ficam como estão" },
 };
+
+/** "há 3 min", "há 2 h", "em 21/10" — when the last sync ran. */
+export function sinceLabel(iso: string | null, now: number = Date.now()): string {
+    if (!iso) return "ainda não sincronizou";
+    const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000));
+    if (minutes < 1) return "agora há pouco";
+    if (minutes < 60) return `há ${minutes} min`;
+    if (minutes < 24 * 60) return `há ${Math.round(minutes / 60)} h`;
+    return `em ${new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
+}

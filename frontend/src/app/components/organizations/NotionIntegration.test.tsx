@@ -11,6 +11,9 @@ const api = vi.hoisted(() => ({
     saveNotionMapping: vi.fn(),
     previewNotionImport: vi.fn(),
     applyNotionImport: vi.fn(),
+    getNotionSyncStatus: vi.fn(),
+    setNotionSyncEnabled: vi.fn(),
+    syncNotionNow: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (actual) => ({ ...(await actual<typeof import("@/app/lib/mikeApi")>()), ...api }));
 vi.mock("./OrganizationSettingsShell", () => ({ useOrganizationSettings: () => ({ orgId: "org-1" }) }));
@@ -57,7 +60,10 @@ const board: NotionBoardSchema = {
     suggested_stage_map: { Revisão: { lane: "revisao", tag: null }, Processos: { lane: "triagem", tag: "Processos" } },
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+    vi.clearAllMocks();
+    api.getNotionSyncStatus.mockResolvedValue({ sync_enabled: false, last_sync_at: null, last_sync_error: null, pending: 0, failed: 0, linked_cards: 0 });
+});
 
 describe("NotionIntegration", () => {
     it("connects with a token, never shows it again, and disconnects", async () => {
@@ -243,5 +249,63 @@ describe("NotionIntegration", () => {
         render(<NotionIntegration />);
         await screen.findByRole("heading", { name: "Base" });
         expect(screen.queryByRole("button", { name: "Simular importação" })).not.toBeInTheDocument();
+    });
+
+    const mapped = () => conn({ connected: true, database_id: "db1", field_map: { Contrato: "name", Etapa: "lane" } });
+
+    it("turns the sync on only after confirming, shows its state and syncs now", async () => {
+        api.getNotionConnection.mockResolvedValue(mapped());
+        api.getNotionSyncStatus
+            .mockResolvedValueOnce({ sync_enabled: false, last_sync_at: null, last_sync_error: null, pending: 0, failed: 0, linked_cards: 12 })
+            .mockResolvedValue({ sync_enabled: true, last_sync_at: new Date().toISOString(), last_sync_error: "O Notion pediu uma pausa.", pending: 3, failed: 1, linked_cards: 12 });
+        api.setNotionSyncEnabled.mockResolvedValue({ sync_enabled: true });
+        api.syncNotionNow.mockResolvedValue({ queued: true });
+        render(<NotionIntegration />);
+        const toggle = await screen.findByRole("switch", { name: "Sincronia com o Notion" });
+        expect(screen.getByText("Última sincronia: ainda não sincronizou")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Sincronizar agora" })).toBeDisabled();
+        fireEvent.click(toggle);
+        expect(api.setNotionSyncEnabled).not.toHaveBeenCalled();
+        fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+        expect(api.setNotionSyncEnabled).not.toHaveBeenCalled();
+        fireEvent.click(toggle);
+        await act(async () => fireEvent.click(await screen.findByRole("button", { name: "Ligar" })));
+        expect(api.setNotionSyncEnabled).toHaveBeenCalledWith("org-1", true);
+        expect(await screen.findByText(/3 esperando para ir ao Notion · 1 com erro/)).toBeInTheDocument();
+        expect(screen.getByRole("alert")).toHaveTextContent("O Notion pediu uma pausa.");
+        await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sincronizar agora" })));
+        expect(api.syncNotionNow).toHaveBeenCalledWith("org-1");
+        expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("Sincronia na fila") }));
+    });
+
+    it("turns the sync off without asking and keeps the old state when a read fails", async () => {
+        api.getNotionConnection.mockResolvedValue(mapped());
+        api.getNotionSyncStatus.mockResolvedValueOnce({ sync_enabled: true, last_sync_at: null, last_sync_error: null, pending: 0, failed: 0, linked_cards: 1 }).mockRejectedValue(new Error("x"));
+        api.setNotionSyncEnabled.mockResolvedValueOnce({ sync_enabled: false }).mockRejectedValueOnce(new Error("x"));
+        api.syncNotionNow.mockRejectedValue(new Error("x"));
+        render(<NotionIntegration />);
+        const toggle = await screen.findByRole("switch", { name: "Sincronia com o Notion" });
+        await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sincronizar agora" })));
+        expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ action: "sincronizar agora" }));
+        await act(async () => fireEvent.click(toggle));
+        expect(api.setNotionSyncEnabled).toHaveBeenCalledWith("org-1", false);
+        expect(screen.getByText(/1 cards ligados/)).toBeInTheDocument();
+        await act(async () => fireEvent.click(toggle));
+        expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ action: "desligar a sincronia" }));
+    });
+
+    it("shows a member the state without the controls, and survives a failed first read", async () => {
+        api.getNotionConnection.mockResolvedValue({ ...mapped(), can_manage: false });
+        render(<NotionIntegration />);
+        expect(await screen.findByRole("switch", { name: "Sincronia com o Notion" })).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "Sincronizar agora" })).not.toBeInTheDocument();
+    });
+
+    it("hides the sync block when its state cannot be read", async () => {
+        api.getNotionConnection.mockResolvedValue(mapped());
+        api.getNotionSyncStatus.mockRejectedValue(new Error("x"));
+        render(<NotionIntegration />);
+        await screen.findByRole("button", { name: "Simular importação" });
+        expect(screen.queryByRole("switch", { name: "Sincronia com o Notion" })).not.toBeInTheDocument();
     });
 });

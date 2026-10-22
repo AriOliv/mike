@@ -40,3 +40,15 @@ export {
     type ImportMatch,
     type ImportResult,
 } from "./notion.import";
+export {
+    handleNotionSync,
+    enqueueDueNotionSyncs,
+    getNotionSyncStatus,
+    setNotionSyncEnabled,
+    syncNotionNow,
+    pullOrg,
+    pushOrg,
+    SYNC_JOB as NOTION_SYNC_JOB,
+    type SyncStatus,
+    type PullResult,
+} from "./notion.sync";

@@ -7,6 +7,9 @@
 //   PUT    /orgs/:orgId/integrations/notion/mapping     save base and mapping
 //   GET    /orgs/:orgId/integrations/notion/import      dry run: what would come in
 //   POST   /orgs/:orgId/integrations/notion/import      import (writes back only with sync on)
+//   GET    /orgs/:orgId/integrations/notion/sync        last sync, errors, pending (any member)
+//   PUT    /orgs/:orgId/integrations/notion/sync        turn the two-way sync on/off (owner/admin)
+//   POST   /orgs/:orgId/integrations/notion/sync        sync now
 
 import { Router, type Response } from "express";
 import { requireAuth } from "../../middleware/auth";
@@ -22,6 +25,9 @@ import {
     saveNotionMapping,
     previewNotionImport,
     applyNotionImport,
+    getNotionSyncStatus,
+    setNotionSyncEnabled,
+    syncNotionNow,
     type Caller,
 } from "./notionSync.service";
 
@@ -111,6 +117,31 @@ notionIntegrationRouter.post(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await applyNotionImport(createServerSupabase(), caller(res), req.params.orgId, { writeBack: body(req).write_back === true }));
+    }),
+);
+
+// Sync: its state, on/off (on = Mike writes to the board) and "Sincronizar agora".
+notionIntegrationRouter.get(
+    "/sync",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await getNotionSyncStatus(createServerSupabase(), caller(res), req.params.orgId));
+    }),
+);
+
+notionIntegrationRouter.put(
+    "/sync",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setNotionSyncEnabled(createServerSupabase(), caller(res), req.params.orgId, body(req).enabled));
+    }),
+);
+
+notionIntegrationRouter.post(
+    "/sync",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await syncNotionNow(createServerSupabase(), caller(res), req.params.orgId));
     }),
 );
 

@@ -90,6 +90,9 @@ export type Row = {
     database_title: string | null;
     field_map: FieldMap | null;
     stage_map: StageMap | null;
+    field_types?: Record<string, string> | null;
+    pull_cursor?: string | null;
+    connected_by?: string | null;
     sync_enabled: boolean;
     poll_minutes: number;
     last_sync_at: string | null;
@@ -370,6 +373,9 @@ export async function saveNotionMapping(
                 database_title: board.title,
                 field_map: fields.value,
                 stage_map: stages.value,
+                field_types: Object.fromEntries(
+                    Object.keys(fields.value).map((name) => [name, board.properties.find((p) => p.name === name)!.type]),
+                ),
                 poll_minutes: poll,
                 updated_at: new Date().toISOString(),
             })
