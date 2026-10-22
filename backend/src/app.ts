@@ -45,7 +45,7 @@ import {
 } from "./modules/contracts/contracts.routes";
 import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
-import { mcpRouter, mcpTokensRouter } from "./modules/mcp/mcp.routes";
+import { buildOAuthRouter, mcpConsentRouter, mcpRouter, mcpTokensRouter } from "./modules/mcp/mcp.routes";
 import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
@@ -115,8 +115,11 @@ const generalLimiter = makeLimiter({
   // Upload status polling has its own authenticated per-user limiter. Keep it
   // and the dedicated Word tool-result lane out of the shared IP budget.
   skip: (req) =>
-    // Agents on /mcp are limited per access token inside the MCP module.
+    // Agents on /mcp are limited per access token inside the MCP module; the
+    // OAuth endpoints carry the SDK's own per-endpoint limits.
     req.path === MCP_PATH ||
+    req.path.startsWith("/oauth/") ||
+    req.path.startsWith("/.well-known/oauth-") ||
     req.path === TOOL_RESULT_PATH ||
     req.path === "/upload-sessions" ||
     req.path.startsWith("/upload-sessions/") ||
@@ -355,6 +358,12 @@ app.put("/download/signed/:token", blobUploadLimiter, blobUploadHandler);
 // token-holder from posting 50 MB bodies. Parsed before the global parser.
 app.use(MCP_PATH, express.json({ limit: "1mb" }), mcpRouter);
 
+// OAuth 2.1 for MCP clients (doc 09 §3.4): only when MCP_PUBLIC_URL is set.
+// The SDK's handlers parse their own bodies, so they sit before the global
+// parser.
+const mcpOAuthRouter = buildOAuthRouter();
+if (mcpOAuthRouter) app.use(mcpOAuthRouter);
+
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Body-aware account throttling complements the per-IP login limiter. The key
@@ -395,6 +404,7 @@ app.use("/contracts", contractPortfolioRouter);
 app.use("/regulatory", regulatoryRouter);
 app.use("/dashboard", dashboardRouter);
 app.use("/mcp-tokens", mcpTokensRouter);
+app.use("/mcp-oauth", mcpConsentRouter);
 app.use("/requests", requestsRouter);
 app.use("/home", homeRouter);
 app.use("/watched-folders", watchedFoldersRouter);

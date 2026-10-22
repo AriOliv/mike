@@ -50,8 +50,8 @@ export type McpContext = {
     /** The MCP client's name ("claude-code", "codex", "hermes-docbot"). */
     clientName: string;
     tokenId: string;
-    /** "pessoal", or "servico" when a bot acts through a confirmed chat identity link. */
-    tokenKind: "pessoal" | "servico";
+    /** "pessoal"; "oauth" for a client the person connected by consent; "servico" for a bot through a chat identity link. */
+    tokenKind: "pessoal" | "servico" | "oauth";
     /** The chat identity link a service token acted through; null for a personal token. */
     linkId: string | null;
     /** The actor every write and card event carries (doc 09 §7). */

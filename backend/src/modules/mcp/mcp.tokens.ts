@@ -10,6 +10,9 @@ import { PERSONAL_WORKSPACE, resolveWorkspaceFilter, type WorkspaceFilter } from
 import { DEFAULT_SCOPES, MCP_SCOPES, type McpScope } from "./mcp.types";
 
 const PREFIX = { pessoal: "mike_pat_", servico: "mike_svc_" } as const;
+/** OAuth access tokens (mcp.oauth.ts issues them; kept here so lookup needs no cycle). */
+const OAUTH_ACCESS_PREFIX = "mike_oat_";
+const KIND_PREFIX: Record<string, string> = { ...PREFIX, oauth: OAUTH_ACCESS_PREFIX, oauth_refresh: "mike_ort_" };
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 90;
 const MAX_ACTIVE_PER_USER = 20;
@@ -17,7 +20,7 @@ const MAX_ACTIVE_PER_USER = 20;
 const TOUCH_EVERY_MS = 60_000;
 const DAY = 86_400_000;
 
-export type TokenKind = keyof typeof PREFIX;
+export type TokenKind = keyof typeof PREFIX | "oauth" | "oauth_refresh";
 
 export type AccessTokenView = {
     id: string;
@@ -63,7 +66,7 @@ function view(row: TokenRow): AccessTokenView {
         name: row.name,
         kind: row.kind,
         workspace: row.org_id ?? PERSONAL_WORKSPACE,
-        prefix: `${PREFIX[row.kind]}${row.token_prefix}…`,
+        prefix: `${KIND_PREFIX[row.kind]}${row.token_prefix}…`,
         scopes: row.scopes.filter(isScope),
         expires_at: row.expires_at,
         revoked_at: row.revoked_at,
@@ -371,7 +374,7 @@ export type ServiceToken = {
 };
 
 type TokenCheck =
-    | { ok: true; kind: "pessoal"; row: TokenRow; scopes: McpScope[] }
+    | { ok: true; kind: "pessoal"; row: TokenRow; scopes: McpScope[]; oauth?: boolean }
     | { ok: true; kind: "servico"; token: ServiceToken }
     | { ok: false; reason: TokenRejection };
 
@@ -379,7 +382,15 @@ type TokenCheck =
 export async function checkToken(db: Db, bearer: string | undefined, now: Date = new Date()): Promise<TokenCheck> {
     const raw = bearer?.startsWith("Bearer ") ? bearer.slice(7).trim() : "";
     if (!raw) return { ok: false, reason: "missing" };
-    const kind = raw.startsWith(PREFIX.pessoal) ? "pessoal" : raw.startsWith(PREFIX.servico) ? "servico" : null;
+    // An OAuth access token acts like a personal one: as the person who
+    // consented, with the scopes and workspace they approved (doc 09 §3.4).
+    const kind = raw.startsWith(PREFIX.pessoal)
+        ? "pessoal"
+        : raw.startsWith(PREFIX.servico)
+          ? "servico"
+          : raw.startsWith(OAUTH_ACCESS_PREFIX)
+            ? "oauth"
+            : null;
     if (!kind) return { ok: false, reason: "invalid" };
 
     const { data, error } = await db
@@ -391,8 +402,10 @@ export async function checkToken(db: Db, bearer: string | undefined, now: Date =
     if (!data) return { ok: false, reason: "invalid" };
     const row = data as TokenRow;
     if (row.kind !== kind) return { ok: false, reason: "invalid" };
+    // Revoked and expired before anything else, for every kind of token.
     if (row.revoked_at) return { ok: false, reason: "revoked" };
     if (Date.parse(row.expires_at) <= now.getTime()) return { ok: false, reason: "expired" };
+    if (kind === "oauth") return { ok: true, kind: "pessoal", row, scopes: row.scopes.filter(isScope), oauth: true };
     if (kind === "pessoal") return { ok: true, kind, row, scopes: row.scopes.filter(isScope) };
     // A service token that was not granted act_as has nothing to do here: it
     // acts for no one, and the server holds no data of its own to show.
