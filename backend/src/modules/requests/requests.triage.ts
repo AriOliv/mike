@@ -19,6 +19,7 @@ import {
     startAgentRun,
 } from "../contracts/contracts.service";
 import { REQUEST_COLUMNS, type RequestRow } from "./requests.access";
+import { syncStage } from "./requests.stages";
 import {
     KIND_LABELS,
     normalizeArea,
@@ -384,6 +385,8 @@ export async function handleRequestTriage(
             .update({ assignee_email: members.find((m) => m.user_id === assignee!.user_id)?.email ?? null })
             .eq("id", row.project_id);
     }
+
+    await syncStage(db, { ...row, ...patch } as RequestRow, "triagem feita pelo agente");
 
     await finishAgentRun(db, runId, {
         status: "succeeded",
