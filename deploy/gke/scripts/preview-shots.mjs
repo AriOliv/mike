@@ -12,6 +12,9 @@
 //                  "widths": [1440, 390], "themes": ["light", "dark"],
 //                  "steps": [ { "click": "text=LEG-0001" }, { "wait": 800 } ] } ] }
 //
+// Steps: click, press, fill {selector, value}, goto, waitFor, scrollTo, wait
+// (ms), and mock {method, path, status, json} to answer one call in the browser.
+//
 // Accounts: "legal" (legal.demo@avenia.io) and "solicitante"
 // (solicitante.demo@avenia.io); override with DEMO_LEGAL_EMAIL /
 // DEMO_REQUESTER_EMAIL. One headless Chromium for the whole run, one page at
@@ -74,6 +77,25 @@ async function run(page, step) {
     else if (step.fill) await page.locator(step.fill.selector).first().fill(step.fill.value);
     else if (step.goto) await page.goto(`${BASE}${step.goto}`, { waitUntil: "networkidle" });
     else if (step.waitFor) await page.locator(step.waitFor).first().waitFor({ timeout: 15000 });
+    // scroll every scrolling ancestor until that element is in view (e.g. the
+    // end of a menu on a phone)
+    else if (step.scrollTo) await page.locator(step.scrollTo).first().evaluate((el) => el.scrollIntoView({ block: "end" }));
+    // {"mock": {"method": "POST", "path": "/api/x", "status": 201, "json": {...}}}:
+    // answer that one call in this browser only, e.g. to show a screen whose
+    // real response would carry a secret (a token shown once). Never reaches
+    // the backend; the next request to that path is the real one.
+    else if (step.mock) {
+        const m = step.mock;
+        const target = `${BASE}${m.path}`;
+        await page.route(
+            (u) => u.href.split("?")[0] === target,
+            (route) =>
+                route.request().method() === (m.method ?? "GET")
+                    ? route.fulfill({ status: m.status ?? 200, contentType: "application/json", body: JSON.stringify(m.json ?? {}) })
+                    : route.fallback(),
+            { times: 1 },
+        );
+    }
     if (step.wait) await page.waitForTimeout(step.wait);
 }
 
