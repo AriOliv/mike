@@ -11,13 +11,18 @@ vi.mock("@/app/lib/errorReporting", () => ({
 }));
 
 import {
+    decideAnalysisRedline,
     decideFichaField,
     decideReviewClause,
+    exportAnalysis,
     extractContractFicha,
     getContractFicha,
     getContractReview,
+    getLatestAnalysis,
+    listAnalysisDecisions,
     listContractFichas,
     listContractReviews,
+    startAnalystAnalysis,
     startContractReview,
 } from "./mikeApi";
 
@@ -77,6 +82,44 @@ describe("Ficha", () => {
             action: "corrigir",
             value: { jurisdicao: "BR" },
         });
+    });
+});
+
+describe("analyst's analysis", () => {
+    it("reads, starts and lists the decisions of an analysis", async () => {
+        await getLatestAnalysis("p 1");
+        expect(lastCall().url).toMatch(/\/projects\/p%201\/contract-review\/analysis$/);
+
+        await startAnalystAnalysis("p1");
+        expect(lastCall().init.method).toBe("POST");
+        expect(JSON.parse(lastCall().init.body as string)).toEqual({});
+        const intake = [{ key: "objeto", label: "Objeto", value: "Suporte", source: "pedido" }];
+        await startAnalystAnalysis("p1", { request_id: "r1", intake });
+        expect(JSON.parse(lastCall().init.body as string)).toEqual({ request_id: "r1", intake });
+
+        await listAnalysisDecisions("p1", "a/1");
+        expect(lastCall().url).toMatch(/\/analysis\/a%2F1\/decisions$/);
+    });
+
+    it("sends one decision per redline", async () => {
+        await decideAnalysisRedline("p1", "a1", "r 1", { decision: "editado", edited_text: "multa de 10%" });
+        expect(lastCall().url).toMatch(/\/analysis\/a1\/redlines\/r%201\/decision$/);
+        expect(lastCall().init.method).toBe("POST");
+        expect(JSON.parse(lastCall().init.body as string)).toEqual({ decision: "editado", edited_text: "multa de 10%" });
+    });
+
+    it("downloads the export with its filename", async () => {
+        fetchMock.mockImplementationOnce(
+            async () =>
+                new Response("# Análise", {
+                    status: 200,
+                    headers: { "Content-Type": "text/markdown", "Content-Disposition": 'attachment; filename="Analise.md"' },
+                }),
+        );
+        const file = await exportAnalysis("p1", "a1", "md");
+        expect(lastCall().url).toMatch(/\/analysis\/a1\/export\?format=md$/);
+        expect(file.filename).toBe("Analise.md");
+        expect(await file.blob.text()).toBe("# Análise");
     });
 });
 
