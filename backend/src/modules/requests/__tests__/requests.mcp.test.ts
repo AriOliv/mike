@@ -97,6 +97,8 @@ function ctxOf(w: ReturnType<typeof world>, who: { userId: string; userEmail: st
         scopes: ["pedidos:read", "pedidos:write"],
         clientName: "claude-code",
         tokenId: "token-1",
+        tokenKind: "pessoal",
+        linkId: null,
         actor: {
             actorType: "agent",
             actorId: "mcp:claude-code",
