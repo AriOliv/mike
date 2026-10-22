@@ -340,7 +340,7 @@ describe("AppSidebar workspace switcher", () => {
     // Said in a notice that goes sooner than an ordinary one.
     expect(state.showToast).toHaveBeenCalledExactlyOnceWith({
       tone: "info",
-      title: "Switched to Beta Chambers",
+      title: "Agora em Beta Chambers",
       message: undefined,
       durationMs: 2500,
       dedupeKey: "workspace-switch",
@@ -356,7 +356,7 @@ describe("AppSidebar workspace switcher", () => {
     await openAccountMenu(user);
     await user.click(screen.getByRole("menuitemradio", { name: "Personal" }));
     expect(state.showToast).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ title: "Switched to Personal" }),
+      expect.objectContaining({ title: "Agora em Personal" }),
     );
   });
 
@@ -381,7 +381,7 @@ describe("AppSidebar workspace switcher", () => {
     expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith(BETA.id);
     // The notice comes with the switch, not before it.
     expect(state.showToast).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ title: "Switched to Beta Chambers" }),
+      expect.objectContaining({ title: "Agora em Beta Chambers" }),
     );
 
     // Once only: moving on from home does not switch again.
