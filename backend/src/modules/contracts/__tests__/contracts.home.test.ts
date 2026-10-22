@@ -193,8 +193,8 @@ describe("getHomeSummary", () => {
             data: { reviews: [{ id: "r2", ficha: null }], greeting: { reviewed: 1, reviewed_90d: 1 } },
         });
         expect(fake.calls[2].filters).toContainEqual(["in", "project_id", ["p2"]]);
-        // The count matches the legal dashboard, which reads every card on the board.
-        expect(fake.calls[9].filters).toContainEqual(["in", "project_id", ["p1", "p2"]]);
+        // Same cut as the counters, the queue and the legal dashboard: only o1's card.
+        expect(fake.calls[9].filters).toContainEqual(["in", "project_id", ["p2"]]);
         fake.done();
     });
 

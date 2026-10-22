@@ -36,7 +36,7 @@ const PRIORITIES = ["baixa", "media", "alta"] as const;
 
 const CARD_COLUMNS =
     "id, name, counterparty, lane, status, assignee_email, priority, deadline, completed_at, " +
-    "risk_level, contract_type, requester_name, lane_updated_at, updated_at, created_at, user_id, notion_url";
+    "risk_level, contract_type, requester_name, lane_updated_at, updated_at, created_at, user_id, notion_url, org_id";
 
 // PostgREST caps an `in` list by URL length; the board is read in slices.
 const ID_CHUNK = 200;
