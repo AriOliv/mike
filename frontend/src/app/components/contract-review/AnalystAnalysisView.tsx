@@ -91,6 +91,16 @@ function Section({ title, items, empty, onLocate }: { title: string; items: Anal
  * Without `analysis` it loads the contract's latest and follows it while it
  * runs. Used on the contract page and inside a legal request.
  */
+const PARTIAL_LABELS: Record<string, string> = {
+    executive_summary: "resumo executivo",
+    critical: "riscos críticos",
+    attention: "pontos de atenção",
+    favorable: "pontos favoráveis",
+    redlines: "redlines",
+    compliance: "compliance",
+    open_points: "pontos abertos",
+};
+
 export function AnalystAnalysisView({
     projectId,
     analysis: given,
@@ -251,6 +261,13 @@ export function AnalystAnalysisView({
                 <Info aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 {result.notice}
             </p>
+
+            {result.partial && (
+                <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">
+                    Análise parcial: {result.partial.missing.length} {result.partial.missing.length === 1 ? "seção não veio" : "seções não vieram"} (
+                    {result.partial.missing.map((key) => PARTIAL_LABELS[key] ?? key).join(", ")}). Peça a análise de novo ou complete essas partes à mão.
+                </p>
+            )}
 
             <section aria-label="Resumo executivo" className="space-y-1.5">
                 <h3 className="text-sm font-semibold text-gray-900">Resumo executivo</h3>
