@@ -21,11 +21,13 @@ import { teamOwner, triageModel } from "./requests.triage";
 
 export const PREFILL_JOB_KIND = "request.intake_prefill";
 export const PREFILL_AGENT = "intake";
-export const PREFILL_AGENT_VERSION = "1";
+export const PREFILL_AGENT_VERSION = "2";
 export const PREFILL_AGENT_NAME = "Agente de intake";
 
 /** Contract text sent to the model: the head of a long contract carries the parties, object and price. */
 const MAX_TEXT = 60_000;
+/** Room for nine answers with their quotes; at 1500 a small model's JSON came back cut off. */
+const MAX_OUTPUT_TOKENS = 4000;
 
 type Inferred = Record<string, { value: string; quote?: string | null; choice?: "sim" | "nao" | null }>;
 
@@ -44,42 +46,93 @@ ${list}
 Regras:
 - Responda SOMENTE o que o contrato diz de forma explícita. Se o contrato não responde a pergunta, deixe-a de fora.
 - Nunca responda o que só quem pediu sabe: se aprovou, se concorda com a proposta, a intenção comercial.
-- Para cada resposta, copie em "quote" o trecho LITERAL do contrato de onde ela saiu (até 300 caracteres), sem alterar uma palavra.
+- Para cada resposta, copie em "quote" o trecho LITERAL do contrato de onde ela saiu: a menor frase que prova a resposta (até 200 caracteres), sem alterar uma palavra.
 - Perguntas de sim/não: "choice" é "sim" ou "nao", e "value" é a resposta curta com o detalhe ("Sim. As duas partes trocam informações sobre clientes.").
 - Português do Brasil, objetivo. Valores e datas como estão no contrato.
 - Responda apenas com JSON válido, sem cercas de código: {"answers": {"<chave>": {"value": "...", "quote": "...", "choice": "sim"|"nao"|null}}}.`;
 }
 
-/** Normalizes spacing and quotes so a quote matches the text it came from. */
+/**
+ * Normalizes what a Word file and a model write differently, so a quote
+ * matches the text it came from: quotes, dashes, soft hyphens and
+ * zero-width characters, and spacing.
+ */
 function squash(s: string): string {
     return s
         .normalize("NFKC")
-        .replace(/[“”«»]/g, '"')
-        .replace(/[‘’]/g, "'")
+        .replace(/[\u00ad\u200b-\u200d\u2060\ufeff]/g, "")
+        .replace(/[“”«»„]/g, '"')
+        .replace(/[‘’‚]/g, "'")
+        .replace(/[‐‑‒–—―]/g, "-")
         .replace(/\s+/g, " ")
         .trim()
         .toLowerCase();
+}
+
+/** The `{...}` that starts at `from` (a "{"), or null when the text ends first. */
+function objectAt(text: string, from: number): string | null {
+    let depth = 0;
+    let inString = false;
+    for (let i = from; i < text.length; i += 1) {
+        const c = text[i];
+        if (inString) {
+            if (c === "\\") i += 1;
+            else if (c === '"') inString = false;
+        } else if (c === '"') inString = true;
+        else if (c === "{") depth += 1;
+        else if (c === "}" && (depth -= 1) === 0) return text.slice(from, i + 1);
+    }
+    return null;
+}
+
+/**
+ * The model's answers as an object. When its JSON was cut off (it ran out
+ * of room), the answers that did arrive whole are kept; null when there is
+ * nothing to read.
+ */
+function readAnswerObjects(raw: string): Record<string, unknown> | null {
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    try {
+        const parsed = JSON.parse(start !== -1 && end > start ? cleaned.slice(start, end + 1) : cleaned) as { answers?: unknown };
+        return parsed && typeof parsed.answers === "object" && parsed.answers ? (parsed.answers as Record<string, unknown>) : {};
+    } catch {
+        const body = cleaned.indexOf("{", cleaned.search(/"answers"\s*:/) + 1);
+        if (cleaned.search(/"answers"\s*:/) === -1 || body === -1) return null;
+        const salvaged: Record<string, unknown> = {};
+        const entry = /"([A-Za-z0-9_]+)"\s*:\s*\{/g;
+        entry.lastIndex = body + 1;
+        for (let m = entry.exec(cleaned); m; m = entry.exec(cleaned)) {
+            const object = objectAt(cleaned, m.index + m[0].length - 1);
+            if (!object) break;
+            try {
+                salvaged[m[1]] = JSON.parse(object);
+            } catch {
+                break;
+            }
+            entry.lastIndex = m.index + m[0].length - 1 + object.length;
+        }
+        return Object.keys(salvaged).length ? salvaged : null;
+    }
 }
 
 /**
  * The model's answers, kept only for questions of the checklist and only
  * with a quote that is really in the contract.
  */
-export function parsePrefill(raw: string, items: IntakeItem[], contractText: string): { inferred: Inferred; dropped: number } {
-    const cleaned = raw.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    let parsed: { answers?: Record<string, unknown> };
-    try {
-        parsed = JSON.parse(start !== -1 && end > start ? cleaned.slice(start, end + 1) : cleaned);
-    } catch {
-        return { inferred: {}, dropped: 0 };
-    }
+export function parsePrefill(
+    raw: string,
+    items: IntakeItem[],
+    contractText: string,
+): { inferred: Inferred; dropped: number; unparsed: boolean } {
+    const answers = readAnswerObjects(raw);
+    if (!answers) return { inferred: {}, dropped: 0, unparsed: true };
     const haystack = squash(contractText);
     const keys = new Set(items.map((i) => i.key));
     const inferred: Inferred = {};
     let dropped = 0;
-    for (const [key, raw] of Object.entries(parsed.answers ?? {})) {
+    for (const [key, raw] of Object.entries(answers)) {
         if (!keys.has(key) || !raw || typeof raw !== "object") continue;
         const a = raw as Record<string, unknown>;
         const value = typeof a.value === "string" ? a.value.trim() : "";
@@ -95,7 +148,7 @@ export function parsePrefill(raw: string, items: IntakeItem[], contractText: str
             choice: a.choice === "sim" || a.choice === "nao" ? a.choice : null,
         };
     }
-    return { inferred, dropped };
+    return { inferred, dropped, unparsed: false };
 }
 
 /** The newest document on the card and its current version. */
@@ -165,16 +218,20 @@ export async function handleIntakePrefill(
         jobId: job.id ?? null,
     });
     const started = Date.now();
-    let result: { inferred: Inferred; dropped: number } = { inferred: {}, dropped: 0 };
+    let result: ReturnType<typeof parsePrefill> = { inferred: {}, dropped: 0, unparsed: false };
     try {
         const raw = await completeText({
             model: selected.model,
             systemPrompt: systemPrompt(open),
             user: `Contrato:\n${text.text.slice(0, MAX_TEXT)}`,
-            maxTokens: 1500,
+            maxTokens: MAX_OUTPUT_TOKENS,
             apiKeys: selected.apiKeys,
         });
         result = parsePrefill(raw, open, text.text);
+        if (result.unparsed) {
+            // Logged, not retried: the same contract would get the same answer.
+            console.error("[requests] intake prefill unreadable answer", { requestId, length: raw.length });
+        }
     } catch (err) {
         console.error("[requests] intake prefill model failed", { requestId, error: safeError(err) });
         await finishAgentRun(db, runId, { status: "failed", error: "model_failed", modelResolved: selected.model, latencyMs: Date.now() - started });
@@ -199,7 +256,7 @@ export async function handleIntakePrefill(
         status: "succeeded",
         modelResolved: selected.model,
         latencyMs: Date.now() - started,
-        output: { filled: merged.filled, dropped: result.dropped },
+        output: { filled: merged.filled, dropped: result.dropped, unparsed: result.unparsed },
     });
     await recordCardEvent(db, {
         projectId: row.project_id,
@@ -212,5 +269,5 @@ export async function handleIntakePrefill(
         runId,
         source: "agent",
     });
-    return { filled: merged.filled.length, dropped: result.dropped };
+    return { filled: merged.filled.length, dropped: result.dropped, ...(result.unparsed ? { unparsed: true } : {}) };
 }
