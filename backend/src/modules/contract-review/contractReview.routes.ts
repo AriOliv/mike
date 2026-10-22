@@ -17,8 +17,12 @@ import {
     listContractPortfolio,
     listContractReviews,
     startContractReview,
+    analysisDocx,
+    decideAnalysisRedline,
+    exportAnalysis,
     getAnalysisById,
     getLatestAnalysis,
+    listRedlineDecisions,
     startAnalystAnalysis,
     type Caller,
 } from "./contractReview.service";
@@ -132,6 +136,49 @@ contractReviewRouter.get(
         if (result.ok && result.data.project_id !== req.params.projectId)
             return void res.status(404).json({ detail: "Análise não encontrada." });
         send(res, result);
+    }),
+);
+
+contractReviewRouter.get(
+    "/analysis/:analysisId/decisions",
+    asyncRoute(async (req, res) => {
+        send(res, await listRedlineDecisions(createServerSupabase(), caller(res), req.params.projectId, req.params.analysisId));
+    }),
+);
+
+contractReviewRouter.post(
+    "/analysis/:analysisId/redlines/:redlineId/decision",
+    asyncRoute(async (req, res) => {
+        send(
+            res,
+            await decideAnalysisRedline(
+                createServerSupabase(),
+                caller(res),
+                req.params.projectId,
+                req.params.analysisId,
+                req.params.redlineId,
+                body(req),
+            ),
+        );
+    }),
+);
+
+// ?format=md (default) answers the text; ?format=docx a Word file.
+contractReviewRouter.get(
+    "/analysis/:analysisId/export",
+    asyncRoute(async (req, res) => {
+        const result = await exportAnalysis(createServerSupabase(), caller(res), req.params.projectId, req.params.analysisId);
+        if (!result.ok) return void send(res, result);
+        const { filename, markdown } = result.data;
+        if (req.query.format === "docx") {
+            const file = await analysisDocx(markdown);
+            res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+            res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`${filename}.docx`)}`);
+            return void res.send(file);
+        }
+        res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`${filename}.md`)}`);
+        res.send(markdown);
     }),
 );
 

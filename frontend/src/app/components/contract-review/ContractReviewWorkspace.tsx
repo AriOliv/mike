@@ -52,6 +52,7 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { SkeletonLine } from "@/app/components/shared/TablePrimitive";
 import { DocxView } from "@/app/components/shared/views/DocxView";
 import { EDITOR_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import { AnalystAnalysisView } from "./AnalystAnalysisView";
 import { ContractFichaPanel } from "./ContractFichaPanel";
 import { ReviewClauseCard } from "./ReviewClauseCard";
 
@@ -113,7 +114,7 @@ export function ContractReviewWorkspace({
     const [starting, setStarting] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
-    const [tab, setTab] = useState<"revisao" | "ficha" | "atividade">("revisao");
+    const [tab, setTab] = useState<"revisao" | "analise" | "ficha" | "atividade">("revisao");
     const [activity, setActivity] = useState<CardEvent[] | null>(null);
     // Verificar waits out its undo window too, and can't be pressed twice.
     const [confirming, setConfirming] = useState<ReadonlySet<string>>(new Set());
@@ -779,6 +780,9 @@ export function ContractReviewWorkspace({
                         <TabPillButtonUI role="tab" aria-selected={tab === "revisao"} active={tab === "revisao"} onClick={() => setTab("revisao")}>
                             Primeira revisão
                         </TabPillButtonUI>
+                        <TabPillButtonUI role="tab" aria-selected={tab === "analise"} active={tab === "analise"} onClick={() => setTab("analise")}>
+                            Análise do analista
+                        </TabPillButtonUI>
                         <TabPillButtonUI role="tab" aria-selected={tab === "ficha"} active={tab === "ficha"} onClick={() => setTab("ficha")}>
                             Ficha
                             {ficha?.ficha && (
@@ -794,6 +798,13 @@ export function ContractReviewWorkspace({
                     <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-4">
                         {tab === "revisao" ? (
                             reviewBody
+                        ) : tab === "analise" ? (
+                            <AnalystAnalysisView
+                                projectId={projectId}
+                                canDecide={canEdit}
+                                onChanged={() => setDocRevision((n) => n + 1)}
+                                onLocate={(quote) => setHighlight((current) => ({ quote, key: (current?.key ?? 0) + 1 }))}
+                            />
                         ) : tab === "atividade" ? (
                             <ActivityFeed
                                 items={toActivityItems(activity ?? [])}
