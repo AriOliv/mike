@@ -5821,6 +5821,38 @@ export interface NotionBoardSchema {
 
 const notionPath = (orgId: string, rest = "") => `/orgs/${encodeURIComponent(orgId)}/integrations/notion${rest}`;
 const notionJson = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+});
+
+export async function getNotionConnection(orgId: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId));
+}
+
+export async function connectNotion(orgId: string, token: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/token"), notionJson("PUT", { token }));
+}
+
+export async function disconnectNotion(orgId: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/token"), { method: "DELETE" });
+}
+
+export async function listNotionDatabases(orgId: string): Promise<{ id: string; data_source_id: string; title: string }[]> {
+    return apiRequest(notionPath(orgId, "/databases"));
+}
+
+export async function describeNotionBoard(orgId: string, databaseId: string): Promise<NotionBoardSchema> {
+    return apiRequest(notionPath(orgId, `/board?database_id=${encodeURIComponent(databaseId)}`));
+}
+
+export async function saveNotionMapping(
+    orgId: string,
+    mapping: { database_id: string; field_map: Record<string, string>; stage_map: Record<string, NotionStageTarget>; poll_minutes: number },
+): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/mapping"), notionJson("PUT", mapping));
+}
+
 
 // ── Agente do Legal (org settings) ──────────────────────────────────────────
 
@@ -5877,33 +5909,6 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
 });
-
-export async function getNotionConnection(orgId: string): Promise<NotionConnection> {
-    return apiRequest(notionPath(orgId));
-}
-
-export async function connectNotion(orgId: string, token: string): Promise<NotionConnection> {
-    return apiRequest(notionPath(orgId, "/token"), notionJson("PUT", { token }));
-}
-
-export async function disconnectNotion(orgId: string): Promise<NotionConnection> {
-    return apiRequest(notionPath(orgId, "/token"), { method: "DELETE" });
-}
-
-export async function listNotionDatabases(orgId: string): Promise<{ id: string; data_source_id: string; title: string }[]> {
-    return apiRequest(notionPath(orgId, "/databases"));
-}
-
-export async function describeNotionBoard(orgId: string, databaseId: string): Promise<NotionBoardSchema> {
-    return apiRequest(notionPath(orgId, `/board?database_id=${encodeURIComponent(databaseId)}`));
-}
-
-export async function saveNotionMapping(
-    orgId: string,
-    mapping: { database_id: string; field_map: Record<string, string>; stage_map: Record<string, NotionStageTarget>; poll_minutes: number },
-): Promise<NotionConnection> {
-    return apiRequest(notionPath(orgId, "/mapping"), notionJson("PUT", mapping));
-}
 
 export async function getLegalAgent(orgId: string): Promise<LegalAgentView> {
     return apiRequest(legalAgentPath(orgId));
