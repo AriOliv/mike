@@ -24,6 +24,26 @@ function documentRequest(fileCount: number, sizeBytes = 1024) {
 }
 
 describe("parseUploadSessionRequest", () => {
+  it("accepts the seed's fixed ids (variant c/e), as Postgres does", () => {
+    // Uploading on its own in the demo org's workspace used to answer 400 "Invalid UUID".
+    const seedOrg = "00000000-0000-4000-c000-000000000001";
+    const standalone = parseUploadSessionRequest(
+      { ...documentRequest(1), destination: { scope: "standalone", org_id: seedOrg } },
+      USER_ID,
+      SESSION_ID,
+    );
+    expect(standalone.destination).toMatchObject({ scope: "standalone", org_id: seedOrg });
+    const intoProject = parseUploadSessionRequest(
+      { ...documentRequest(1), destination: { scope: "project", project_id: "00000000-0000-4000-a000-000000000001" } },
+      USER_ID,
+      SESSION_ID,
+    );
+    expect(intoProject.destination).toMatchObject({ project_id: "00000000-0000-4000-a000-000000000001" });
+    expect(() =>
+      parseUploadSessionRequest({ ...documentRequest(1), destination: { scope: "standalone", org_id: "not-an-id" } }, USER_ID, SESSION_ID),
+    ).toThrow(UploadSessionValidationError);
+  });
+
   it("accepts an explicit PDF-generation opt-out for replacements and rejects non-booleans", () => {
     const request = {
       purpose: "document_version_replace",

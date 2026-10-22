@@ -10,7 +10,7 @@
  *  - markdown-editor.tsx: editorProps class = "markdown-editor-content" on the ProseMirror div
  *  - WorkflowDetailPage save status: text "Saving…" → "Saved" rendered in a plain <span>
  *  - settings/page.tsx: h2 "Profile"; display name autosaves on blur
- *  - settings/layout.tsx: h1 "Settings" in layout header
+ *  - settings/layout.tsx: h1 "Configurações" in layout header
  *  - settings/byok/page.tsx: provider cards open dialogs with individually labelled key fields.
  */
 import { test, expect, type Page } from "./fixtures";
@@ -212,10 +212,10 @@ test.describe("Settings", () => {
     }) => {
         await page.goto("/settings");
 
-        // The settings layout renders a "Settings" h1
+        // The settings layout renders a "Configurações" h1
         // REGRESSION: fails if the settings page or its layout is broken
         await expect(
-            page.getByRole("heading", { name: "Settings" }),
+            page.getByRole("heading", { name: "Configurações" }),
         ).toBeVisible({ timeout: 10_000 });
 
         // The Profile section has its own h2
@@ -243,7 +243,7 @@ test.describe("Settings", () => {
         test.setTimeout(120_000);
         await page.goto("/settings");
         await expect(
-            page.getByRole("heading", { name: "Settings" }),
+            page.getByRole("heading", { name: "Configurações" }),
         ).toBeVisible({ timeout: 10_000 });
 
         // The Display Name Input has placeholder "Enter your name"
@@ -311,9 +311,9 @@ test.describe("Settings", () => {
         // model preferences.
         await page.goto("/settings/byok");
 
-        // The shared settings layout still renders "Settings"
+        // The shared settings layout still renders "Configurações"
         await expect(
-            page.getByRole("heading", { name: "Settings" }),
+            page.getByRole("heading", { name: "Configurações" }),
         ).toBeVisible({ timeout: 10_000 });
 
         // The h2 "Saved Providers" and "Available Providers" sections are present

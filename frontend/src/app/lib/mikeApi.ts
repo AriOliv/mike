@@ -5343,6 +5343,104 @@ export async function decideFichaField(
     });
 }
 
+// ── The analyst's analysis (/projects/:id/contract-review/analysis) ────────
+export type AnalysisLight = "red" | "yellow" | "green";
+export interface AnalysisItem {
+    id: string;
+    title: string;
+    quote: string;
+    clause: string | null;
+    rationale: string;
+    suggestion: string | null;
+    light: AnalysisLight;
+    rule_id: string | null;
+    span: { start: number; end: number } | null;
+}
+export interface AnalysisRedline {
+    id: string;
+    clause: string | null;
+    from: string;
+    to: string;
+    why: string;
+    item_id: string | null;
+    span: { start: number; end: number } | null;
+}
+export interface AnalysisResult {
+    notice: string;
+    executive_summary: { text: string; object: string | null; parties: string[]; value: string | null };
+    critical: AnalysisItem[];
+    attention: AnalysisItem[];
+    favorable: AnalysisItem[];
+    redlines: AnalysisRedline[];
+    compliance: {
+        data_protection: string;
+        confidentiality: string;
+        governing_law_forum: string;
+        term_termination_penalties: string;
+    };
+    open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro" }[];
+}
+export interface AnalystAnalysis {
+    id: string;
+    project_id: string;
+    request_id: string | null;
+    document_id: string | null;
+    version_id: string | null;
+    playbook_id: string | null;
+    playbook_run_id: string | null;
+    intake: { key: string; label: string; value: string; source?: string | null }[];
+    model: string | null;
+    status: "queued" | "running" | "done" | "failed";
+    result: AnalysisResult | null;
+    dropped_citations: { section: string; title: string; quote: string; reason: string }[];
+    usage: { model: string; calls: number; input_tokens: number; output_tokens: number; estimated_cost_usd: number | null } | null;
+    error: string | null;
+    created_at: string;
+    finished_at: string | null;
+}
+export interface AnalysisRedlineDecision extends ReviewDecision {
+    redline_id: string;
+}
+
+export async function getLatestAnalysis(projectId: string): Promise<AnalystAnalysis | null> {
+    return apiRequest(contractReviewPath(projectId, "/analysis"));
+}
+
+export async function startAnalystAnalysis(
+    projectId: string,
+    input: { request_id?: string | null; intake?: { key: string; label: string; value: string; source?: string }[] } = {},
+): Promise<{ analysis_id: string; queued: boolean }> {
+    return apiRequest(contractReviewPath(projectId, "/analysis"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export async function listAnalysisDecisions(projectId: string, analysisId: string): Promise<AnalysisRedlineDecision[]> {
+    return apiRequest(contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/decisions`));
+}
+
+export async function decideAnalysisRedline(
+    projectId: string,
+    analysisId: string,
+    redlineId: string,
+    input: { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string },
+): Promise<AnalysisRedlineDecision> {
+    return apiRequest(
+        contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/redlines/${encodeURIComponent(redlineId)}/decision`),
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+    );
+}
+
+export async function exportAnalysis(
+    projectId: string,
+    analysisId: string,
+    format: "md" | "docx",
+): Promise<{ blob: Blob; filename: string | null }> {
+    return apiBlobRequest(contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/export?format=${format}`));
+}
+
 // ── Contract portfolio (/contracts/fichas) ─────────────────────────────────
 export interface ContractPortfolioRow {
     project_id: string;
@@ -5664,4 +5762,60 @@ export async function getLegalDashboard(params?: {
     if (a?.minutes_per_regulatory_triage) qs.set("min_regulatory", String(a.minutes_per_regulatory_triage));
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return apiRequest(`/dashboard${suffix}`);
+}
+
+// ── Tokens de acesso para agentes (MCP, doc 09 §3.1) ────────────────────────
+
+/** What a token may do; the backend's MCP_SCOPES. */
+export type McpScope =
+    | "contratos:read"
+    | "prazos:read"
+    | "base:ask"
+    | "revisao:read"
+    | "revisao:run"
+    | "controle:read"
+    | "controle:run"
+    | "radar:read"
+    | "painel:read"
+    | "pedidos:read"
+    | "pedidos:write"
+    | "agente:config";
+
+export interface McpAccessToken {
+    id: string;
+    name: string;
+    kind: "pessoal" | "servico";
+    /** "personal" or an organization id. */
+    workspace: string;
+    /** The first characters, to recognise a token without showing it. */
+    prefix: string;
+    scopes: McpScope[];
+    expires_at: string;
+    revoked_at: string | null;
+    last_used_at: string | null;
+    last_client: string | null;
+    created_at: string;
+}
+
+export async function listMcpTokens(): Promise<McpAccessToken[]> {
+    const data = await apiRequest<{ tokens: McpAccessToken[] }>("/mcp-tokens");
+    return data.tokens;
+}
+
+/** The plain token comes back here, once, and is never readable again. */
+export async function createMcpToken(body: {
+    name: string;
+    workspace: string;
+    scopes: McpScope[];
+    expires_in_days: number;
+}): Promise<{ token: string; access_token: McpAccessToken }> {
+    return apiRequest("/mcp-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export async function revokeMcpToken(id: string): Promise<McpAccessToken> {
+    return apiRequest(`/mcp-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

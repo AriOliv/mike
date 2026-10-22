@@ -12,3 +12,4 @@ export {
     type Dashboard,
 } from "./dashboard.metrics";
 export { countAgentReviews, REVIEW_AGENTS } from "../contracts/contracts.service";
+export { DASHBOARD_TOOLS } from "./dashboard.mcp";

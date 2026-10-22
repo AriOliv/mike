@@ -374,6 +374,24 @@ describe("askAcervo", () => {
         });
     });
 
+    it("narrows to one workspace when asked: the home screen's cut", async () => {
+        access.listAccessibleProjectIds.mockResolvedValue([P1, P2, P3]);
+        const rows = [
+            project(P1, "MSA", { org_id: "org-1" }),
+            project(P2, "NDA", { org_id: null }),
+            project(P3, "NDA 2", { org_id: "org-2" }),
+        ];
+        docs.findDocumentText.mockResolvedValue(miss());
+        const ids = async (workspace: string | null) => {
+            const fake = scriptedDb([{ table: "projects", data: rows }, { table: "dossiers", data: [] }]);
+            const r = await askAcervo(fake.db, caller, { question: "foro" }, workspace);
+            return r.ok ? r.data.matches.map((m) => m.project_id).sort() : r;
+        };
+        expect(await ids(null)).toEqual([P1, P2, P3].sort());
+        expect(await ids("org-1")).toEqual([P1]);
+        expect(await ids("personal")).toEqual([P2]);
+    });
+
     it("reads the files when the text index is not available, and reports pending indexing", async () => {
         access.listAccessibleProjectIds.mockResolvedValue([P1, P2]);
         const fake = scriptedDb([

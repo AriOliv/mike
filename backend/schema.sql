@@ -1212,6 +1212,54 @@ grant select, insert, update, delete
   on public.regulatory_scans, public.regulatory_changes
   to service_role;
 
+-- Access tokens for agents calling the Mike MCP server (/mcp), doc 09 §3.
+--
+-- A token always acts for a person. kind 'pessoal' acts as its owner
+-- (user_id). kind 'servico' (a bot such as Hermes, doc 09 §3.2) belongs to
+-- one org, is created by an owner/admin (user_id), and acts as the org member
+-- whose CONFIRMED chat identity link the call names, and only when can_act_as
+-- was granted explicitly. A personal token can never act as anyone else.
+-- org_id is the workspace the token reads: the same filter the home screen
+-- applies, null for the personal workspace.
+--
+-- Only the SHA-256 of the token is stored; the plain token is shown once at
+-- creation. Revoking stamps revoked_at and never deletes, so the audit trail
+-- keeps pointing at a row. Backend-owned like the other contract tables:
+-- browser roles get nothing, RLS is on with no policies. Idempotent.
+
+create table if not exists public.mcp_access_tokens (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null default 'pessoal',
+  name text not null,
+  token_hash text not null unique,
+  token_prefix text not null,
+  scopes text[] not null default '{}',
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  last_used_at timestamptz,
+  last_client text,
+  can_act_as boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint mcp_access_tokens_kind_check check (kind in ('pessoal', 'servico')),
+  constraint mcp_access_tokens_act_as_check
+    check (not can_act_as or (kind = 'servico' and org_id is not null)),
+  constraint mcp_access_tokens_servico_org_check
+    check (kind <> 'servico' or org_id is not null),
+  constraint mcp_access_tokens_name_check check (char_length(name) between 1 and 80)
+);
+
+create index if not exists idx_mcp_access_tokens_user
+  on public.mcp_access_tokens(user_id, created_at desc);
+
+alter table public.mcp_access_tokens enable row level security;
+revoke all on public.mcp_access_tokens from anon, authenticated;
+-- delete too: schema.sql's blanket service_role grant (which runs after this
+-- table) gives it, and fresh and upgraded installs must match. The backend
+-- never deletes a token; revoking stamps revoked_at.
+grant select, insert, update, delete on public.mcp_access_tokens to service_role;
+
 create index if not exists idx_projects_user
   on public.projects(user_id);
 
@@ -11149,12 +11197,19 @@ create index if not exists idx_card_events_at
 
 -- Append-only. The backend connects as service_role, which RLS does not
 -- restrict, so the trigger is the real guard. A retention purge will be a
--- dedicated security-definer function, never an ad hoc delete.
+-- dedicated security-definer function, never an ad hoc delete. The one
+-- DELETE let through is the cascade from deleting the card: by then the
+-- project row is gone (20261022_97).
 create or replace function public.card_events_append_only() returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
+  if tg_op = 'DELETE' and not exists (
+    select 1 from public.projects p where p.id = old.project_id
+  ) then
+    return old;
+  end if;
   raise exception 'card_events is append-only';
 end
 $$;
@@ -11609,6 +11664,74 @@ grant select, insert, update, delete
   on public.watched_folders, public.contract_reviews, public.home_visits
   to service_role;
 
+-- ── Fork: analyst's analysis of a contract (20261022_92) ──
+-- The analyst's analysis of a contract: the reading a legal analyst writes
+-- before the team decides (executive summary, critical risks, points of
+-- attention, favourable points, redline suggestions, compliance, open
+-- points). One row per analysis of a document version, so a new version gets
+-- a new analysis and the old one stays as it was. The result is a draft for
+-- the legal team, never shown to the requester. Fork-only table (slot _92).
+
+create table if not exists public.contract_analyses (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  -- The request whose intake answers framed the analysis, if any.
+  request_id uuid references public.legal_requests(id) on delete set null,
+  document_id uuid references public.documents(id) on delete set null,
+  version_id uuid references public.document_versions(id) on delete set null,
+  -- The playbook used as the yardstick (the organization's for the contract's
+  -- type), and its run, whose findings set the traffic light.
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  playbook_run_id uuid references public.playbook_runs(id) on delete set null,
+  -- The intake answers the analysis considered: [{key, label, value, source}].
+  intake jsonb not null default '[]'::jsonb,
+  model text,
+  status text not null default 'queued',
+  result jsonb,
+  -- Quotes the verifier could not find in the document, with the reason.
+  dropped_citations jsonb not null default '[]'::jsonb,
+  -- {model, calls, input_tokens, output_tokens, estimated_cost_usd}.
+  usage jsonb,
+  error text,
+  requested_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+alter table public.contract_analyses drop constraint if exists contract_analyses_status_check;
+alter table public.contract_analyses add constraint contract_analyses_status_check
+  check (status in ('queued', 'running', 'done', 'failed'));
+create index if not exists idx_contract_analyses_project
+  on public.contract_analyses(project_id, created_at desc);
+-- One live analysis per document version: asking again returns it.
+create unique index if not exists uq_contract_analyses_version
+  on public.contract_analyses(version_id) where version_id is not null;
+
+-- One decision per redline suggestion: accepted (applied as a tracked change),
+-- edited (applied with the person's wording) or rejected.
+create table if not exists public.contract_analysis_decisions (
+  analysis_id uuid not null references public.contract_analyses(id) on delete cascade,
+  redline_id text not null,
+  decision text not null,
+  edited_text text,
+  edit jsonb,
+  reason text,
+  decided_by text not null,
+  decided_at timestamptz not null default now(),
+  primary key (analysis_id, redline_id)
+);
+alter table public.contract_analysis_decisions drop constraint if exists contract_analysis_decisions_decision_check;
+alter table public.contract_analysis_decisions add constraint contract_analysis_decisions_decision_check
+  check (decision in ('aceito', 'editado', 'rejeitado'));
+
+alter table public.contract_analyses enable row level security;
+alter table public.contract_analysis_decisions enable row level security;
+revoke all on public.contract_analyses, public.contract_analysis_decisions from anon, authenticated;
+grant select, insert, update, delete on public.contract_analyses, public.contract_analysis_decisions
+  to service_role;
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -11783,5 +11906,8 @@ insert into public.schema_migrations (filename) values
   ('20261020_99_requester_area.sql'),
   ('20261021_01_chat_subagent_runs.sql'),
   ('20261021_02_user_subagent_defaults.sql'),
-  ('20261022_91_request_intake.sql')
+  ('20261021_91_mcp_access_tokens.sql'),
+  ('20261022_91_request_intake.sql'),
+  ('20261022_92_contract_analyses.sql'),
+  ('20261022_97_card_events_cascade.sql')
 on conflict (filename) do nothing;
