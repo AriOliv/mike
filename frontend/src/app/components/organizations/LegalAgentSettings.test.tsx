@@ -9,6 +9,8 @@ const api = vi.hoisted(() => ({
     getLegalAgentChannelSetup: vi.fn(),
     setLegalAgentChannelStatus: vi.fn(),
     deleteLegalAgentChannel: vi.fn(),
+    listMyChatLinks: vi.fn(),
+    revokeMyChatLink: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (actual) => ({ ...(await actual<typeof import("@/app/lib/mikeApi")>()), ...api }));
 vi.mock("./OrganizationSettingsShell", () => ({ useOrganizationSettings: () => ({ orgId: "org-1" }) }));
@@ -27,6 +29,7 @@ const channel = (over: Partial<LegalAgentChannel> = {}): LegalAgentChannel => ({
     kind: "slack",
     status: "rascunho",
     name: "Slack da Avenia",
+    platform_team_id: "T01",
     config: { workspace: "Avenia", channels: ["juridico"], bot_name: "advogado-mike" },
     created_at: "2026-10-21T00:00:00Z",
     updated_at: "2026-10-21T00:00:00Z",
@@ -68,6 +71,7 @@ const setup = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    api.listMyChatLinks.mockResolvedValue([]);
 });
 
 describe("LegalAgentSettings", () => {
@@ -210,5 +214,35 @@ describe("LegalAgentSettings", () => {
         expect(await screen.findByText("Criar o app")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
         expect(screen.getByText("Slack da Avenia")).toBeInTheDocument();
+    });
+
+    it("lists my chat links, lets me unlink one, and survives a failed read", async () => {
+        const link = {
+            id: "l1",
+            platform: "slack" as const,
+            platform_team_id: "T01",
+            platform_user_id: "U09",
+            confirmed_at: "2026-10-22T03:00:00Z",
+            expires_at: "2027-04-20T03:00:00Z",
+            revoked_at: null,
+        };
+        api.getLegalAgent.mockResolvedValue(view());
+        api.listMyChatLinks.mockResolvedValue([link, { ...link, id: "l2", platform: "telegram" as const }]);
+        api.revokeMyChatLink.mockResolvedValueOnce({ revoked: true }).mockRejectedValueOnce(new Error("x"));
+        render(<LegalAgentSettings />);
+        const section = await screen.findByRole("region", { name: "Minhas contas de chat" });
+        expect(await within(section).findByText("Slack")).toBeInTheDocument();
+        fireEvent.click(within(section).getAllByRole("button", { name: "Desligar" })[0]);
+        await waitFor(() => expect(within(section).queryByText("Slack")).not.toBeInTheDocument());
+        expect(api.revokeMyChatLink).toHaveBeenCalledWith("org-1", "l1");
+        fireEvent.click(within(section).getByRole("button", { name: "Desligar" }));
+        await waitFor(() => expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ action: "desligar a conta de chat" })));
+    });
+
+    it("keeps the page when my links cannot be read", async () => {
+        api.getLegalAgent.mockResolvedValue(view());
+        api.listMyChatLinks.mockRejectedValue(new Error("x"));
+        render(<LegalAgentSettings />);
+        expect(await screen.findByText(/Nenhuma ainda/)).toBeInTheDocument();
     });
 });

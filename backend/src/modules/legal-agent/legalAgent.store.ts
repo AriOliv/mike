@@ -33,6 +33,8 @@ export type AgentChannel = {
     kind: ChannelKind;
     status: "rascunho" | "configurado" | "pausado";
     name: string;
+    /** The workspace id (Slack team id, WhatsApp number id, Telegram bot id): links count only here. */
+    platform_team_id: string | null;
     config: Record<string, unknown>;
     created_at: string;
     updated_at: string;
@@ -52,7 +54,7 @@ export type LegalAgentView = {
     };
 };
 
-const CHANNEL_COLUMNS = "id, kind, status, name, config, created_at, updated_at";
+const CHANNEL_COLUMNS = "id, kind, status, name, platform_team_id, config, created_at, updated_at";
 const NOT_FOUND = failure("not_found", "Organização não encontrada.");
 const ONLY_ADMINS = failure("forbidden", "Só quem administra a organização pode mudar o agente do Legal.");
 
@@ -151,7 +153,7 @@ export async function saveLegalAgentChannel(
     db: Db,
     caller: Caller,
     orgId: string,
-    input: { id?: unknown; kind?: unknown; name?: unknown; config?: unknown },
+    input: { id?: unknown; kind?: unknown; name?: unknown; config?: unknown; platform_team_id?: unknown },
 ): Promise<ServiceResult<{ channel: AgentChannel; setup: ChannelSetup }>> {
     try {
         const role = await roleIn(db, caller, orgId);
@@ -163,15 +165,22 @@ export async function saveLegalAgentChannel(
         if (!name || name.length > 80) return failure("validation", "Dê um nome ao canal, com até 80 caracteres.");
         const config = parseChannelConfig(kind, input.config);
         if (!config.ok) return failure("validation", config.detail);
+        const teamRaw = typeof input.platform_team_id === "string" ? input.platform_team_id.trim() : "";
+        if (teamRaw && !/^[A-Za-z0-9_.-]{1,64}$/.test(teamRaw))
+            return failure("validation", "O ID do workspace usa só letras, números, ponto, hífen e sublinhado.");
 
         const now = new Date().toISOString();
-        const row = { org_id: orgId, kind, name, config: config.value, updated_at: now };
+        const row = { org_id: orgId, kind, name, platform_team_id: teamRaw || null, config: config.value, updated_at: now };
         const query =
             typeof input.id === "string"
                 ? db.from("legal_agent_channels").update(row).eq("id", input.id).eq("org_id", orgId)
                 : db.from("legal_agent_channels").insert({ ...row, created_by: caller.userId, status: "rascunho" });
         const { data, error } = await query.select(CHANNEL_COLUMNS).maybeSingle();
-        if (error) throw error;
+        if (error) {
+            if ((error as { code?: string }).code === "23505")
+                return failure("conflict", "Este workspace já está ligado a outro canal desta organização.");
+            throw error;
+        }
         if (!data) return failure("not_found", "Canal não encontrado.");
         const settings = await readSettings(db, orgId);
         await recordAudit(db, {

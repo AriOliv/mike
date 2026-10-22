@@ -11,6 +11,10 @@ vi.mock("@/app/lib/errorReporting", () => ({
 }));
 
 import {
+    confirmChatLink,
+    listMyChatLinks,
+    previewChatLink,
+    revokeMyChatLink,
     deleteLegalAgentChannel,
     getLegalAgent,
     getLegalAgentChannelSetup,
@@ -76,5 +80,24 @@ describe("legal agent", () => {
         await deleteLegalAgentChannel("org-1", "c1");
         expect(lastFetchCall().url).toMatch(/\/orgs\/org-1\/legal-agent\/channels\/c1$/);
         expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+});
+
+describe("chat account links", () => {
+    it("lists and revokes my links in an organization", async () => {
+        await listMyChatLinks("org-1");
+        expect(lastFetchCall().url).toMatch(/\/orgs\/org-1\/legal-agent\/links$/);
+        await revokeMyChatLink("org-1", "l/1");
+        expect(lastFetchCall().url).toMatch(/\/orgs\/org-1\/legal-agent\/links\/l%2F1$/);
+        expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+
+    it("previews and confirms a one-time link, the token never in a path segment", async () => {
+        await previewChatLink("a b&c");
+        expect(lastFetchCall().url).toMatch(/\/chat-links\/preview\?t=a%20b%26c$/);
+        await confirmChatLink("tok");
+        expect(lastFetchCall().url).toMatch(/\/chat-links\/confirm$/);
+        expect(lastFetchCall().init.method).toBe("POST");
+        expect(jsonBody()).toEqual({ t: "tok" });
     });
 });

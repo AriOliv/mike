@@ -9,7 +9,7 @@ import { chatRouter } from "./modules/chat/chat.routes";
 import { wordChatRouter } from "./modules/word-chat/wordChat.routes";
 import { projectsRouter } from "./modules/projects/projects.routes";
 import { orgsRouter } from "./modules/orgs/orgs.routes";
-import { legalAgentRouter } from "./modules/legal-agent/legalAgent.routes";
+import { chatLinksRouter, legalAgentRouter } from "./modules/legal-agent/legalAgent.routes";
 import { projectChatRouter } from "./modules/project-chat/projectChat.routes";
 import { documentsRouter } from "./modules/documents/documents.routes";
 import { libraryRouter } from "./modules/library/library.routes";
@@ -371,6 +371,7 @@ app.use("/projects/:projectId", projectContractRouter);
 app.use("/projects", projectsRouter);
 // Before /orgs so its own router answers these paths, not the org catch-alls.
 app.use("/orgs/:orgId/legal-agent", legalAgentRouter);
+app.use("/chat-links", chatLinksRouter);
 app.use("/orgs", orgsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);

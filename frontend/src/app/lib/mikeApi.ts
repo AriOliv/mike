@@ -5811,6 +5811,8 @@ export interface LegalAgentChannel {
     kind: LegalAgentChannelKind;
     status: "rascunho" | "configurado" | "pausado";
     name: string;
+    /** The workspace id people's chat links count on (Slack team id, …). */
+    platform_team_id: string | null;
     config: Record<string, unknown>;
     created_at: string;
     updated_at: string;
@@ -5856,7 +5858,13 @@ export async function saveLegalAgentSettings(
 
 export async function saveLegalAgentChannel(
     orgId: string,
-    channel: { id?: string; kind: LegalAgentChannelKind; name: string; config: Record<string, unknown> },
+    channel: {
+        id?: string;
+        kind: LegalAgentChannelKind;
+        name: string;
+        config: Record<string, unknown>;
+        platform_team_id?: string;
+    },
 ): Promise<{ channel: LegalAgentChannel; setup: LegalAgentChannelSetup }> {
     const { id, ...body } = channel;
     return id
@@ -5878,6 +5886,32 @@ export async function setLegalAgentChannelStatus(
 
 export async function deleteLegalAgentChannel(orgId: string, channelId: string): Promise<{ deleted: true }> {
     return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}`), { method: "DELETE" });
+}
+
+export interface ChatLink {
+    id: string;
+    platform: LegalAgentChannelKind;
+    platform_team_id: string;
+    platform_user_id: string;
+    confirmed_at: string;
+    expires_at: string;
+    revoked_at: string | null;
+}
+
+export async function listMyChatLinks(orgId: string): Promise<ChatLink[]> {
+    return apiRequest(legalAgentPath(orgId, "/links"));
+}
+
+export async function revokeMyChatLink(orgId: string, linkId: string): Promise<{ revoked: true }> {
+    return apiRequest(legalAgentPath(orgId, `/links/${encodeURIComponent(linkId)}`), { method: "DELETE" });
+}
+
+export async function previewChatLink(token: string): Promise<{ platform: LegalAgentChannelKind; org_name: string; email: string | null }> {
+    return apiRequest(`/chat-links/preview?t=${encodeURIComponent(token)}`);
+}
+
+export async function confirmChatLink(token: string): Promise<{ link: ChatLink }> {
+    return apiRequest("/chat-links/confirm", jsonInit("POST", { t: token }));
 }
 
 // ── Tokens de acesso para agentes (MCP, doc 09 §3.1) ────────────────────────

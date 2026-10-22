@@ -6,6 +6,8 @@
 //   GET    /orgs/:orgId/legal-agent/channels/:id/setup      setup files again
 //   PATCH  /orgs/:orgId/legal-agent/channels/:id            status: rascunho | configurado | pausado
 //   DELETE /orgs/:orgId/legal-agent/channels/:id
+//   GET    /orgs/:orgId/legal-agent/links                   my chat links here
+//   DELETE /orgs/:orgId/legal-agent/links/:id               revoke one of mine
 
 import { Router, type Response } from "express";
 import { requireAuth } from "../../middleware/auth";
@@ -19,6 +21,10 @@ import {
     saveLegalAgentChannel,
     saveLegalAgentSettings,
     setLegalAgentChannelStatus,
+    listMyChatLinks,
+    revokeMyChatLink,
+    previewChatLink,
+    confirmChatLink,
     type Caller,
 } from "./legalAgent.service";
 
@@ -57,8 +63,12 @@ legalAgentRouter.post(
     "/channels",
     requireAuth,
     asyncRoute(async (req, res) => {
-        const { kind, name, config } = body(req);
-        send(res, await saveLegalAgentChannel(createServerSupabase(), caller(res), req.params.orgId, { kind, name, config }), 201);
+        const { kind, name, config, platform_team_id } = body(req);
+        send(
+            res,
+            await saveLegalAgentChannel(createServerSupabase(), caller(res), req.params.orgId, { kind, name, config, platform_team_id }),
+            201,
+        );
     }),
 );
 
@@ -66,7 +76,7 @@ legalAgentRouter.put(
     "/channels/:channelId",
     requireAuth,
     asyncRoute(async (req, res) => {
-        const { kind, name, config } = body(req);
+        const { kind, name, config, platform_team_id } = body(req);
         send(
             res,
             await saveLegalAgentChannel(createServerSupabase(), caller(res), req.params.orgId, {
@@ -74,6 +84,7 @@ legalAgentRouter.put(
                 kind,
                 name,
                 config,
+                platform_team_id,
             }),
         );
     }),
@@ -112,4 +123,44 @@ legalAgentRouter.delete(
     }),
 );
 
+// The caller's own chat links in the organization (any member).
+legalAgentRouter.get(
+    "/links",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await listMyChatLinks(createServerSupabase(), caller(res), req.params.orgId));
+    }),
+);
+
+legalAgentRouter.delete(
+    "/links/:linkId",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await revokeMyChatLink(createServerSupabase(), caller(res), req.params.orgId, req.params.linkId));
+    }),
+);
+
 legalAgentRouter.use(routerErrorHandler("[legal-agent]"));
+
+// ── /chat-links: the one-time link a person opens from the chat ─────────────
+//   GET  /chat-links/preview?t=…   what will be linked (the caller must be logged in)
+//   POST /chat-links/confirm {t}   "sou eu": links the chat account to the caller
+export const chatLinksRouter = Router();
+
+chatLinksRouter.get(
+    "/preview",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await previewChatLink(createServerSupabase(), caller(res), req.query.t));
+    }),
+);
+
+chatLinksRouter.post(
+    "/confirm",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await confirmChatLink(createServerSupabase(), caller(res), body(req).t));
+    }),
+);
+
+chatLinksRouter.use(routerErrorHandler("[chat-links]"));

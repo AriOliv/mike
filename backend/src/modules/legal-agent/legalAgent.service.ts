@@ -28,3 +28,15 @@ export {
 } from "./legalAgent.settings";
 export { channelSetup, looksLikeSecret, type ChannelKind, type ChannelSetup } from "./legalAgent.setup";
 export { AGENT_TOOLS, agentConfigTool, type AgentToolContext } from "./legalAgent.mcp";
+export {
+    resolveChatIdentity,
+    createLinkChallenge,
+    previewChatLink,
+    confirmChatLink,
+    listMyChatLinks,
+    revokeMyChatLink,
+    validIdentity,
+    LINK_DAYS,
+    CHALLENGE_MINUTES,
+    type ChatLink,
+} from "./legalAgent.links";

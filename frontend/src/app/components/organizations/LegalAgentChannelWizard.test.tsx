@@ -12,6 +12,7 @@ const saved: LegalAgentChannel = {
     kind: "telegram",
     status: "rascunho",
     name: "Bot do Legal",
+    platform_team_id: null,
     config: { bot_username: "acme_juridico_bot", mode: "webhook" },
     created_at: "2026-10-21T00:00:00Z",
     updated_at: "2026-10-21T00:00:00Z",
@@ -47,6 +48,8 @@ describe("LegalAgentChannelWizard", () => {
         expect(screen.getByText(/Só para demonstração e piloto/)).toBeInTheDocument();
         fireEvent.change(screen.getByPlaceholderText("Telegram do Legal"), { target: { value: " Bot do Legal " } });
         fireEvent.change(screen.getByPlaceholderText("acme_juridico_bot"), { target: { value: "acme_juridico_bot" } });
+        expect(screen.getByText("ID do bot no Telegram")).toBeInTheDocument();
+        fireEvent.change(screen.getByPlaceholderText("7654321"), { target: { value: " 7654321 " } });
         const mode = screen.getByRole("group", { name: "Como recebe mensagens" });
         fireEvent.click(within(mode).getByRole("button", { name: "Webhook" }));
         fireEvent.click(within(mode).getByRole("button", { name: /Busca mensagens/ }));
@@ -58,6 +61,7 @@ describe("LegalAgentChannelWizard", () => {
             kind: "telegram",
             name: "Bot do Legal",
             config: { bot_username: "acme_juridico_bot", mode: "webhook" },
+            platform_team_id: "7654321",
         });
         expect(onSaved).toHaveBeenCalledWith(saved);
         expect(await screen.findByText("Criar o bot")).toBeInTheDocument();
