@@ -15,6 +15,8 @@ export function testContext(over: Partial<McpContext> = {}): McpContext {
         scopes: ["contratos:read", "prazos:read", "base:ask", "revisao:read", "controle:read", "radar:read", "painel:read", "pedidos:read"],
         clientName: "claude-code",
         tokenId: "token-1",
+        tokenKind: "pessoal",
+        linkId: null,
         actor: {
             actorType: "agent",
             actorId: "mcp:claude-code",

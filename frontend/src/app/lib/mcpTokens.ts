@@ -148,4 +148,5 @@ export const TOOL_LABELS: Record<string, string> = {
     mike_controle_listar: "listou as tabelas de análise",
     mike_controle_ler: "leu uma tabela de análise",
     mike_painel_metricas: "leu o Painel do Legal",
+    mike_agente_config: "leu a configuração do assistente do Legal",
 };

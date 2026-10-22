@@ -110,6 +110,8 @@ export async function runTool(tool: AnyMcpTool, ctx: McpContext, input: Record<s
         detail: {
             client: ctx.clientName,
             token_id: ctx.tokenId,
+            token_kind: ctx.tokenKind,
+            ...(ctx.linkId ? { link_id: ctx.linkId } : {}),
             tool: tool.name,
             ok: !code,
             ...(code ? { code } : {}),
