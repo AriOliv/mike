@@ -231,7 +231,32 @@ describe("the checklist rules", () => {
         expect(Object.keys(inferred).sort()).toEqual(["confidencial", "valor_recorrencia"]);
         expect(inferred.confidencial.choice).toBe("sim");
         expect(dropped).toBe(2);
-        expect(parsePrefill("not json", t, CONTRACT)).toEqual({ inferred: {}, dropped: 0 });
+        expect(parsePrefill("not json", t, CONTRACT)).toEqual({ inferred: {}, dropped: 0, unparsed: true });
+    });
+
+    it("keeps the whole answers of a reply cut off mid-way, and says when nothing was readable", () => {
+        const t = [...DEFAULT_INTAKE_TEMPLATE];
+        const whole = JSON.stringify({
+            answers: {
+                contraparte: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A.", choice: null },
+                valor_recorrencia: { value: "R$ 12.000,00 por mês", quote: "O valor mensal é de R$ 12.000,00 (doze mil reais)", choice: null },
+                inicio: { value: "1º/11/2026", quote: "Vigência a partir de 1º de novembro de 2026.", choice: null },
+            },
+        });
+        // Out of room inside the third answer: the first two are whole, with a "}" in a value too.
+        const cut = whole.slice(0, whole.indexOf('"inicio"') + 30);
+        const parsed = parsePrefill(cut.replace("Nuvem Fictícia S.A.\"", "Nuvem Fictícia S.A. {sic}\""), t, CONTRACT);
+        expect(Object.keys(parsed.inferred).sort()).toEqual(["contraparte", "valor_recorrencia"]);
+        expect(parsed.unparsed).toBe(false);
+        expect(parsePrefill('{"answers": {"contraparte": {"value": "Nu', t, CONTRACT)).toEqual({ inferred: {}, dropped: 0, unparsed: true });
+        expect(parsePrefill('{"resposta": "nada"}', t, CONTRACT)).toEqual({ inferred: {}, dropped: 0, unparsed: false });
+    });
+
+    it("matches a quote across what a Word file writes differently: soft hyphens, dashes, invisible spaces", () => {
+        const t = [...DEFAULT_INTAKE_TEMPLATE];
+        const docx = "CONTRATANTE: EXEMPLO PAGA\u00adMENTOS LTDA.\u200b — inscrita no CNPJ 00.000.000/0001-00";
+        const raw = JSON.stringify({ answers: { contraparte: { value: "Exemplo Pagamentos Ltda.", quote: "EXEMPLO PAGAMENTOS LTDA. - inscrita" } } });
+        expect(parsePrefill(raw, t, docx)).toMatchObject({ inferred: { contraparte: { value: "Exemplo Pagamentos Ltda." } }, dropped: 0 });
     });
 });
 
@@ -411,6 +436,17 @@ describe("the intake agent", () => {
         await expect(handleIntakePrefill(w.db, { payload: { request_id: id } })).rejects.toBeInstanceOf(NonRetryableJobError);
         llm.completeText.mockRejectedValue(new Error("socket hang up"));
         await expect(handleIntakePrefill(w.db, { payload: { request_id: id } })).rejects.not.toBeInstanceOf(NonRetryableJobError);
+    });
+
+    it("gives the model room for every answer and records an unreadable reply instead of a silent zero", async () => {
+        const w = world();
+        const id = await newRequest(w);
+        withDocument(w, id);
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+        llm.completeText.mockResolvedValue("Desculpe, não consigo.");
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 0, dropped: 0, unparsed: true });
+        expect((llm.completeText.mock.calls[0][0] as { maxTokens: number }).maxTokens).toBeGreaterThanOrEqual(4000);
+        expect(w.table("agent_runs").at(-1)).toMatchObject({ status: "succeeded", output: { filled: [], dropped: 0, unparsed: true } });
     });
 
     it("tells the checklist whether it is reading, done or unable to", async () => {
