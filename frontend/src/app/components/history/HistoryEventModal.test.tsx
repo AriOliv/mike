@@ -91,17 +91,17 @@ describe("HistoryEventModal", () => {
     const user = userEvent.setup();
     render(
       <HistoryEventModal
-        title="Audit log"
+        title="Registro de auditoria"
         event={event}
         personal={false}
         onClose={vi.fn()}
       />,
     );
     expect(
-      screen.getByRole("heading", { name: "Member role changed" }),
+      screen.getByRole("heading", { name: "Papel de membro alterado" }),
     ).toBeVisible();
-    expect(screen.getByText("Member → Admin")).toBeVisible();
-    expect(screen.getByText("Performed by")).toBeVisible();
+    expect(screen.getByText("Membro → Admin")).toBeVisible();
+    expect(screen.getByText("Feito por")).toBeVisible();
     expect(screen.getByText("Alex Chen (alex@example.com)")).toBeVisible();
     const modal = within(screen.getByRole("dialog"));
     expect(
@@ -115,17 +115,17 @@ describe("HistoryEventModal", () => {
         .getAllByText("jamie@example.com")
         .some((el) => el.closest("td") && !el.closest("details")),
     ).toBe(true);
-    expect(screen.queryByText("Model", { exact: true })).toBeNull();
+    expect(screen.queryByText("Modelo", { exact: true })).toBeNull();
     const metadata = screen.getByText(/"target_user_id": "target-id"/);
     expect(metadata).not.toBeVisible();
-    await user.click(screen.getByText("Technical details"));
+    await user.click(screen.getByText("Detalhes técnicos"));
     expect(metadata).toBeVisible();
     expect(metadata).toHaveTextContent('"enabled": false');
   });
   it("uses You in personal details without repeating account identity", () => {
     render(
       <HistoryEventModal
-        title="My Activity"
+        title="Minha atividade"
         event={event}
         personal
         onClose={vi.fn()}
@@ -133,10 +133,10 @@ describe("HistoryEventModal", () => {
     );
     expect(
       screen.getByText(
-        "You changed the organization role for jamie@example.com.",
+        "Você mudou o papel de jamie@example.com na organização.",
       ),
     ).toBeVisible();
-    expect(screen.queryByText("Performed by")).toBeNull();
+    expect(screen.queryByText("Feito por")).toBeNull();
     expect(
       screen.queryByRole("img", { name: "Alex Chen" }),
     ).not.toBeInTheDocument();
@@ -145,7 +145,7 @@ describe("HistoryEventModal", () => {
   it("does not offer links for an event whose content was redacted", () => {
     render(
       <HistoryEventModal
-        title="Audit log"
+        title="Registro de auditoria"
         event={{
           ...documentEvent,
           title: null,
@@ -157,7 +157,7 @@ describe("HistoryEventModal", () => {
       />,
     );
     expect(screen.getByText("-", { exact: true })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Open document" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Abrir documento" })).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();
   });
   it("loads documents only on demand, uses the shared read-only viewer, and returns to details", async () => {
@@ -168,15 +168,15 @@ describe("HistoryEventModal", () => {
     });
     render(
       <HistoryEventModal
-        title="My Activity"
+        title="Minha atividade"
         event={{ ...documentEvent, project_id: "project-id" }}
         personal
         onClose={vi.fn()}
       />,
     );
     expect(getDocument).not.toHaveBeenCalled();
-    const openDocument = screen.getByRole("button", { name: "Open document" });
-    const openProject = screen.getByRole("link", { name: "Open project" });
+    const openDocument = screen.getByRole("button", { name: "Abrir documento" });
+    const openProject = screen.getByRole("link", { name: "Abrir projeto" });
     expect(openDocument.closest("footer")).not.toBeNull();
     expect(openProject.closest("footer")).not.toBeNull();
     expect(openDocument).toHaveClass("rounded-full");
@@ -188,12 +188,12 @@ describe("HistoryEventModal", () => {
       "false",
     );
     expect(getDocument).toHaveBeenCalledWith("document-id");
-    const back = screen.getByRole("button", { name: "Back" });
+    const back = screen.getByRole("button", { name: "Voltar" });
     expect(back.closest("footer")).not.toBeNull();
     expect(back).toHaveClass("rounded-full");
     await user.click(back);
     expect(
-      screen.getByRole("heading", { name: "Document edited" }),
+      screen.getByRole("heading", { name: "Documento editado" }),
     ).toBeVisible();
   });
   it.each([403, 404, 500])(
@@ -210,7 +210,7 @@ describe("HistoryEventModal", () => {
         });
       render(
         <HistoryEventModal
-          title="My Activity"
+          title="Minha atividade"
           event={documentEvent}
           personal
           initialPreview
@@ -220,14 +220,14 @@ describe("HistoryEventModal", () => {
       await waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(
           status === 500
-            ? "This document could not be opened"
+            ? "Não consegui abrir este documento"
             : status === 403
-              ? "You do not have access to this document."
-              : "This document is no longer available.",
+              ? "Você não tem acesso a este documento."
+              : "Este documento não está mais disponível.",
         ),
       );
       expect(screen.queryByText(/database secret/)).toBeNull();
-      const retry = screen.getByRole("button", { name: "Try again" });
+      const retry = screen.getByRole("button", { name: "Tentar de novo" });
       expect(retry.closest("footer")).not.toBeNull();
       expect(retry).toHaveClass("rounded-full");
       await user.click(retry);
@@ -265,7 +265,7 @@ describe("private content from audit events", () => {
     });
     render(
       <HistoryEventModal
-        title="Audit log"
+        title="Registro de auditoria"
         event={privateEvent}
         personal={false}
         onClose={vi.fn()}
@@ -274,29 +274,29 @@ describe("private content from audit events", () => {
     );
     expect(openOrgPrivateContent).not.toHaveBeenCalled();
     expect(getDocument).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Open document" }));
+    await user.click(screen.getByRole("button", { name: "Abrir documento" }));
     expect(openOrgPrivateContent).toHaveBeenCalledWith(
       "org-id",
       "document",
       "document-id",
     );
     expect(getDocument).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Opening…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Abrindo…" })).toBeDisabled();
     grant();
     expect(await screen.findByTestId("document-preview")).toHaveAttribute(
       "data-editable",
       "false",
     );
     expect(changed).toHaveBeenCalledWith(true);
-    await user.click(screen.getByRole("button", { name: "Back" }));
-    await user.click(screen.getByRole("button", { name: "End access" }));
+    await user.click(screen.getByRole("button", { name: "Voltar" }));
+    await user.click(screen.getByRole("button", { name: "Encerrar acesso" }));
     expect(closeOrgPrivateContent).toHaveBeenCalledWith(
       "org-id",
       "document",
       "document-id",
     );
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "End access" })).toBeNull(),
+      expect(screen.queryByRole("button", { name: "Encerrar acesso" })).toBeNull(),
     );
     expect(changed).toHaveBeenCalledWith(false);
   });
@@ -308,24 +308,24 @@ describe("private content from audit events", () => {
     );
     render(
       <HistoryEventModal
-        title="Audit log"
+        title="Registro de auditoria"
         event={privateEvent}
         personal={false}
         onClose={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Open document" }));
-    expect(await screen.findByText("Access unavailable")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Abrir documento" }));
+    expect(await screen.findByText("Acesso indisponível")).toBeVisible();
     expect(screen.queryByText(/private database detail/)).toBeNull();
     expect(getDocument).not.toHaveBeenCalled();
     expect(navigation.push).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["project", "Open project", "/projects/private-id"],
-    ["chat", "Open chat", "/assistant/chat/private-id"],
-    ["tabular_review", "Open review", "/tabular-reviews/private-id"],
-    ["workflow", "Open workflow", "/workflows/assistant/private-id"],
+    ["project", "Abrir projeto", "/projects/private-id"],
+    ["chat", "Abrir conversa", "/assistant/chat/private-id"],
+    ["tabular_review", "Abrir revisão", "/tabular-reviews/private-id"],
+    ["workflow", "Abrir workflow", "/workflows/assistant/private-id"],
   ])(
     "opens a private %s from an access event using a logged footer button",
     async (kind, label, href) => {
@@ -336,7 +336,7 @@ describe("private content from audit events", () => {
       } as never);
       render(
         <HistoryEventModal
-          title="Audit log"
+          title="Registro de auditoria"
           personal={false}
           onClose={vi.fn()}
           event={{
@@ -384,7 +384,7 @@ describe("private content from audit events", () => {
     );
     const { unmount } = render(
       <HistoryEventModal
-        title="Audit log"
+        title="Registro de auditoria"
         personal={false}
         onClose={vi.fn()}
         event={{
@@ -401,7 +401,7 @@ describe("private content from audit events", () => {
         }}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Open project" }));
+    await user.click(screen.getByRole("button", { name: "Abrir projeto" }));
     unmount();
     grant();
     await Promise.resolve();
@@ -412,13 +412,13 @@ describe("private content from audit events", () => {
     const user = userEvent.setup();
     render(
       <HistoryEventModal
-        title="My Activity"
+        title="Minha atividade"
         event={privateEvent}
         personal
         onClose={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Open document" }));
+    await user.click(screen.getByRole("button", { name: "Abrir documento" }));
     await screen.findByTestId("document-preview");
     expect(openOrgPrivateContent).not.toHaveBeenCalled();
   });

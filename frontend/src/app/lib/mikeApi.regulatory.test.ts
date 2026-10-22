@@ -133,5 +133,7 @@ describe("legal dashboard", () => {
         expect(lastFetchCall().url).toMatch(/\/dashboard\?period=30&min_review=60&min_terms=10&min_regulatory=5$/);
         await getLegalDashboard({ assumptions: {} });
         expect(lastFetchCall().url).toMatch(/\/dashboard$/);
+        await getLegalDashboard({ period: 90, workspace: "o1" });
+        expect(lastFetchCall().url).toMatch(/\/dashboard\?period=90&workspace=o1$/);
     });
 });

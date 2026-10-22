@@ -94,11 +94,11 @@ describe("MyActivitySettingsPage", () => {
   it("uses organization-specific loading and empty-state messages", async () => {
     mockedGetAuditHistory.mockRejectedValueOnce(new Error("unavailable"));
     const { unmount } = render(<AuditHistory orgId="org-a" />);
-    expect(await screen.findByText("The audit log could not be loaded.")).toBeInTheDocument();
+    expect(await screen.findByText("Não consegui carregar o registro de auditoria.")).toBeInTheDocument();
     unmount();
     mockedGetAuditHistory.mockResolvedValue({ events: [], total: 0, page: 1, pageSize: 50 });
     render(<AuditHistory orgId="org-a" />);
-    expect(await screen.findByText("Actions taken in this organization appear here.")).toBeInTheDocument();
+    expect(await screen.findByText("As ações feitas nesta organização aparecem aqui.")).toBeInTheDocument();
   });
 
   it("uses organization-specific export failure text", async () => {
@@ -106,10 +106,10 @@ describe("MyActivitySettingsPage", () => {
     mockedGetUserExportStatus.mockResolvedValue({ status: "failed" });
     render(<AuditHistory orgId="org-a" />);
     await screen.findByText(EVENT.title!);
-    await user.click(screen.getByRole("button", { name: "Audit log actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
-    await user.click(screen.getByRole("button", { name: "Export CSV" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The audit log could not be exported. Please try again.");
+    await user.click(screen.getByRole("button", { name: "Ações: Registro de auditoria" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
+    await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não consegui exportar o registro de auditoria. Tente de novo.");
   });
 
   it("shows the affected member's name and initials, keeping email in the tooltip", async () => {
@@ -118,8 +118,8 @@ describe("MyActivitySettingsPage", () => {
       total: 1, page: 1, pageSize: 50,
     });
     render(<AuditHistory orgId="org-a" />);
-    expect(await screen.findByRole("button", { name: "View details for Jamie Morgan" })).toBeInTheDocument();
-    const cell = screen.getByTitle("Member: Jamie Morgan (jamie@example.com)");
+    expect(await screen.findByRole("button", { name: "Ver detalhes de Jamie Morgan" })).toBeInTheDocument();
+    const cell = screen.getByTitle("Membro: Jamie Morgan (jamie@example.com)");
     expect(cell).toHaveTextContent("Jamie Morgan");
     expect(cell).not.toHaveTextContent("jamie@example.com");
     expect(within(cell).getByRole("img", { name: "Jamie Morgan" })).toHaveTextContent("JM");
@@ -133,9 +133,9 @@ describe("MyActivitySettingsPage", () => {
       ),
     );
     expect(
-      screen.getByRole("button", { name: "Audit log actions" }),
+      screen.getByRole("button", { name: "Ações: Registro de auditoria" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Organization").length).toBeGreaterThan(
+    expect(screen.getAllByText("Organização").length).toBeGreaterThan(
       0,
     );
   });
@@ -208,22 +208,22 @@ describe("MyActivitySettingsPage", () => {
   it("renders the shared page header, toolbar, and table controls", async () => {
     render(<MyActivitySettingsPage />);
 
-    expect(screen.getAllByText("My Activity").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Minha atividade").length).toBeGreaterThan(0);
     expect(
-      screen.getAllByText("Settings", { exact: true }).length,
+      screen.getAllByText("Configurações", { exact: true }).length,
     ).toBeGreaterThan(0);
     fireEvent.click(
-      screen.getByRole("button", { name: "Settings" }),
+      screen.getByRole("button", { name: "Configurações" }),
     );
     expect(push).toHaveBeenCalledWith("/settings");
     expect(
-      screen.getByRole("button", { name: "Search my activity…" }),
+      screen.getByRole("button", { name: "Buscar na minha atividade…" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^Select date range:/ }),
+      screen.getByRole("button", { name: /^Escolher período:/ }),
     ).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: "7 days" })).toBeNull();
     expect(screen.queryByRole("button", { name: "30 days" })).toBeNull();
@@ -231,7 +231,7 @@ describe("MyActivitySettingsPage", () => {
     expect(await screen.findByText(EVENT.title!)).toBeInTheDocument();
     expect(screen.getByText("Share purchase agreement")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Filter by status" }),
+      screen.getByRole("button", { name: "Filtrar por status" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Username")).not.toBeInTheDocument();
     expect(screen.queryByText("Email")).not.toBeInTheDocument();
@@ -239,8 +239,8 @@ describe("MyActivitySettingsPage", () => {
       screen.queryByText(EVENT.user_display_name!),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(EVENT.user_email!)).not.toBeInTheDocument();
-    expect(screen.getByText("Completed").parentElement).toHaveClass("text-gray-700");
-    expect(screen.getByText("Completed")).not.toHaveClass("rounded-full");
+    expect(screen.getByText("Concluído").parentElement).toHaveClass("text-gray-700");
+    expect(screen.getByText("Concluído")).not.toHaveClass("rounded-full");
     expect(screen.getByTestId("status-dot-event-1")).toHaveClass(
       "rounded-full",
       "border-white/80",
@@ -251,20 +251,20 @@ describe("MyActivitySettingsPage", () => {
       screen.queryByRole("button", { name: "Sort by email" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Filter by action" }),
+      screen.getByRole("button", { name: "Filtrar por ação" }),
     ).toBeInTheDocument();
-    const applicationHeader = screen.getByText("Application", {
+    const applicationHeader = screen.getByText("Origem", {
       exact: true,
     }).parentElement!;
     expect(
       within(applicationHeader).getByRole("button", {
-        name: "Filter by application",
+        name: "Filtrar por origem",
       }),
     ).toBeInTheDocument();
     const row = screen.getByRole("button", {
-      name: `View details for ${EVENT.title}`,
+      name: `Ver detalhes de ${EVENT.title}`,
     });
-    expect(within(row).getByText("Project", { exact: true })).toBeVisible();
+    expect(within(row).getByText("Projeto", { exact: true })).toBeVisible();
   });
 
   it("defaults to the previous 30 days and sends header controls to the audit query", async () => {
@@ -281,7 +281,7 @@ describe("MyActivitySettingsPage", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Filter by application" }),
+      screen.getByRole("button", { name: "Filtrar por origem" }),
     );
     await user.click(
       screen.getByRole("menuitem", { name: "Word" }),
@@ -293,9 +293,9 @@ describe("MyActivitySettingsPage", () => {
       ),
     );
     await user.click(
-      screen.getByRole("button", { name: "Filter by application" }),
+      screen.getByRole("button", { name: "Filtrar por origem" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "All applications" }));
+    await user.click(screen.getByRole("menuitem", { name: "Todas as origens" }));
     await waitFor(() =>
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ surface: undefined, page: 1 }),
@@ -303,8 +303,8 @@ describe("MyActivitySettingsPage", () => {
       ),
     );
 
-    await user.click(screen.getByRole("button", { name: "Filter by status" }));
-    await user.click(screen.getByRole("menuitem", { name: "Completed" }));
+    await user.click(screen.getByRole("button", { name: "Filtrar por status" }));
+    await user.click(screen.getByRole("menuitem", { name: "Concluído" }));
     await waitFor(() =>
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ status: "completed", page: 1 }),
@@ -313,7 +313,7 @@ describe("MyActivitySettingsPage", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Sort by affected" }),
+      screen.getByRole("button", { name: "Ordenar por afetado" }),
     );
     await user.click(screen.getByText("Ascending"));
     await waitFor(() =>
@@ -343,7 +343,7 @@ describe("MyActivitySettingsPage", () => {
     vi.mocked(getAuditActors).mockResolvedValue({ users: [{ user_id: "actor-1", display_name: "Alex Lawyer", email: "lawyer@example.com", profile_photo: null }], nextOffset: null });
     render(<AuditHistory orgId="org-a" />);
     await screen.findByText(EVENT.title!);
-    expect(screen.getByText("Performed by")).toBeInTheDocument();
+    expect(screen.getByText("Feito por")).toBeInTheDocument();
     expect(screen.queryByText("Email")).not.toBeInTheDocument();
     expect(screen.getByText(EVENT.user_display_name!)).toBeVisible();
     expect(screen.queryByText(EVENT.user_email!)).not.toBeInTheDocument();
@@ -351,7 +351,7 @@ describe("MyActivitySettingsPage", () => {
       screen.queryByRole("button", { name: "Sort by email" }),
     ).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("checkbox", { name: `Select ${EVENT.title}` }),
+      screen.getByRole("checkbox", { name: `Selecionar ${EVENT.title}` }),
     );
     await user.click(screen.getByRole("button", { name: "Filter by person" }));
     await user.type(
@@ -368,17 +368,17 @@ describe("MyActivitySettingsPage", () => {
       ),
     );
     expect(
-      screen.getByRole("checkbox", { name: `Select ${EVENT.title}` }),
+      screen.getByRole("checkbox", { name: `Selecionar ${EVENT.title}` }),
     ).not.toBeChecked();
     expect(
       screen.getByRole("button", { name: "Filter by person" }),
     ).toHaveAttribute("aria-pressed", "true");
-    await user.click(screen.getByRole("button", { name: "Audit log actions" }));
+    await user.click(screen.getByRole("button", { name: "Ações: Registro de auditoria" }));
     await user.click(
-      screen.getByRole("menuitem", { name: "Export" }),
+      screen.getByRole("menuitem", { name: "Exportar" }),
     );
     await user.click(
-      screen.getByRole("button", { name: "Export CSV" }),
+      screen.getByRole("button", { name: "Exportar CSV" }),
     );
     await waitFor(() =>
       expect(mockedStartUserExport).toHaveBeenCalledWith(
@@ -413,20 +413,20 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
     const first = screen.getByRole("checkbox", {
-      name: `Select ${EVENT.title}`,
+      name: `Selecionar ${EVENT.title}`,
     });
     first.focus();
     await user.keyboard(" ");
     expect(first).toBeChecked();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const all = screen.getByRole("checkbox", {
-      name: "Select all loaded entries",
+      name: "Selecionar todos os registros carregados",
     });
     expect(all).toBePartiallyChecked();
     await user.click(all);
     expect(all).toBeChecked();
     expect(
-      screen.getByRole("checkbox", { name: "Select Second entry" }),
+      screen.getByRole("checkbox", { name: "Selecionar Second entry" }),
     ).toBeChecked();
     expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
     await user.click(
@@ -435,23 +435,23 @@ describe("MyActivitySettingsPage", () => {
     const labels = screen
       .getAllByRole("menuitem")
       .map((item) => item.textContent);
-    expect(labels).toEqual(["Deselect rows", "Export selected"]);
+    expect(labels).toEqual(["Desmarcar linhas", "Exportar selecionados"]);
     await user.keyboard("{Escape}");
     fireEvent.contextMenu(
-      screen.getByRole("button", { name: `View details for ${EVENT.title}` }),
+      screen.getByRole("button", { name: `Ver detalhes de ${EVENT.title}` }),
     );
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent),
     ).toEqual(labels);
     await user.keyboard("{Escape}");
     await user.click(
-      screen.getByRole("button", { name: `Actions for ${EVENT.title}` }),
+      screen.getByRole("button", { name: `Ações de ${EVENT.title}` }),
     );
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent),
     ).toEqual(labels);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: "Export selected" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar selecionados" }));
     await waitFor(() =>
       expect(mockedStartUserExport).toHaveBeenCalledWith("audit-csv", {
         event_ids: ["event-1", "event-2"],
@@ -464,7 +464,7 @@ describe("MyActivitySettingsPage", () => {
     await user.click(
       screen.getByRole("button", { name: "Actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Deselect rows" }));
+    await user.click(screen.getByRole("menuitem", { name: "Desmarcar linhas" }));
     expect(all).not.toBeChecked();
     expect(
       screen.queryByRole("button", { name: "Actions" }),
@@ -475,22 +475,22 @@ describe("MyActivitySettingsPage", () => {
     const user = userEvent.setup();
     render(<AuditHistory orgId="org-a" />);
     const trigger = await screen.findByRole("button", {
-      name: `Actions for ${EVENT.title}`,
+      name: `Ações de ${EVENT.title}`,
     });
     trigger.focus();
     await user.keyboard("{Enter}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: "Open project" }),
+      screen.getByRole("menuitem", { name: "Abrir projeto" }),
     ).toHaveAttribute("href", "/projects/project-1");
-    await user.click(screen.getByRole("menuitem", { name: "View details" }));
+    await user.click(screen.getByRole("menuitem", { name: "Ver detalhes" }));
     expect(
-      screen.getByRole("dialog", { name: "Event details" }),
+      screen.getByRole("dialog", { name: "Detalhes do evento" }),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     await user.click(trigger);
     await user.click(
-      screen.getByRole("menuitem", { name: "Export this entry" }),
+      screen.getByRole("menuitem", { name: "Exportar este registro" }),
     );
     await waitFor(() =>
       expect(mockedStartUserExport).toHaveBeenCalledWith("audit-csv", {
@@ -510,20 +510,20 @@ describe("MyActivitySettingsPage", () => {
     );
     render(<MyActivitySettingsPage />);
     await user.click(
-      await screen.findByRole("checkbox", { name: `Select ${EVENT.title}` }),
+      await screen.findByRole("checkbox", { name: `Selecionar ${EVENT.title}` }),
     );
     await user.click(
       screen.getByRole("button", { name: "Actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export selected" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar selecionados" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Your export could not be created. Please try again.",
+      "Não consegui criar a exportação. Tente de novo.",
     );
     expect(
       screen.queryByText("private database details"),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: `Select ${EVENT.title}` }),
+      screen.getByRole("checkbox", { name: `Selecionar ${EVENT.title}` }),
     ).toBeChecked();
   });
 
@@ -533,27 +533,27 @@ describe("MyActivitySettingsPage", () => {
     await screen.findByText(EVENT.title!);
 
     await user.click(
-      screen.getByRole("button", { name: /^Select date range:/ }),
+      screen.getByRole("button", { name: /^Escolher período:/ }),
     );
     const popover = screen.getByRole("dialog", {
-      name: "Filter by date range",
+      name: "Filtrar por período",
     });
     expect(popover).toHaveClass("liquid-glass-float");
     expect(popover).toHaveAttribute("data-align", "start");
     expect(screen.queryByRole("grid")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("De")).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Date range: Last 30 days" }),
+      screen.getByRole("button", { name: "Período: Últimos 30 dias" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
-    const applyButton = screen.getByRole("button", { name: "Apply" });
+    await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
+    const applyButton = screen.getByRole("button", { name: "Aplicar" });
     expect(applyButton).toBeDisabled();
 
     const callsBeforeSelection = mockedGetAuditHistory.mock.calls.length;
-    fireEvent.change(screen.getByLabelText("From"), {
+    fireEvent.change(screen.getByLabelText("De"), {
       target: { value: "2026-05-20" },
     });
-    fireEvent.change(screen.getByLabelText("To"), {
+    fireEvent.change(screen.getByLabelText("Até"), {
       target: { value: "2026-06-14" },
     });
     expect(applyButton).toBeEnabled();
@@ -573,16 +573,16 @@ describe("MyActivitySettingsPage", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
-    expect(screen.getByLabelText("From")).toHaveValue("2026-05-20");
-    expect(screen.getByLabelText("To")).toHaveValue("2026-06-14");
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
+    expect(screen.getByLabelText("De")).toHaveValue("2026-05-20");
+    expect(screen.getByLabelText("Até")).toHaveValue("2026-06-14");
     expect(
-      screen.queryByRole("button", { name: "Apply" }),
+      screen.queryByRole("button", { name: "Aplicar" }),
     ).not.toBeInTheDocument();
     expect(mockedStartUserExport).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
     await waitFor(() =>
       expect(mockedStartUserExport).toHaveBeenCalledWith(
         "audit-csv",
@@ -597,11 +597,11 @@ describe("MyActivitySettingsPage", () => {
   });
 
   it.each([
-    ["Today", "2026-06-15", "2026-06-15"],
-    ["Last 7 days", "2026-06-09", "2026-06-15"],
-    ["Last 30 days", "2026-05-17", "2026-06-15"],
-    ["This month", "2026-06-01", "2026-06-15"],
-    ["Last month", "2026-05-01", "2026-05-31"],
+    ["Hoje", "2026-06-15", "2026-06-15"],
+    ["Últimos 7 dias", "2026-06-09", "2026-06-15"],
+    ["Últimos 30 dias", "2026-05-17", "2026-06-15"],
+    ["Este mês", "2026-06-01", "2026-06-15"],
+    ["Mês passado", "2026-05-01", "2026-05-31"],
   ])(
     "applies the %s preset immediately and exports the same inclusive dates",
     async (label, from, to) => {
@@ -609,9 +609,9 @@ describe("MyActivitySettingsPage", () => {
       render(<MyActivitySettingsPage />);
       await screen.findByText(EVENT.title!);
       await user.click(
-        screen.getByRole("button", { name: /^Select date range:/ }),
+        screen.getByRole("button", { name: /^Escolher período:/ }),
       );
-      await user.click(screen.getByRole("button", { name: /^Date range:/ }));
+      await user.click(screen.getByRole("button", { name: /^Período:/ }));
       await user.click(screen.getByRole("menuitem", { name: label }));
       await waitFor(() =>
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -621,14 +621,14 @@ describe("MyActivitySettingsPage", () => {
         expect.any(AbortSignal),
       );
       await user.click(
-        screen.getByRole("button", { name: "My Activity actions" }),
+        screen.getByRole("button", { name: "Ações: Minha atividade" }),
       );
-      await user.click(screen.getByRole("menuitem", { name: "Export" }));
+      await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
       expect(
-        screen.getByRole("button", { name: `Date range: ${label}` }),
+        screen.getByRole("button", { name: `Período: ${label}` }),
       ).toBeInTheDocument();
-      expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Export CSV" }));
+      expect(screen.queryByLabelText("De")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
       await waitFor(() =>
         expect(mockedStartUserExport).toHaveBeenCalledWith(
           "audit-csv",
@@ -642,19 +642,19 @@ describe("MyActivitySettingsPage", () => {
     [new Date(2026, 0, 1, 12), "2025-12-01", "2025-12-31"],
     [new Date(2024, 2, 31, 12), "2024-02-01", "2024-02-29"],
   ])(
-    "exports Last month across year and leap-year boundaries (%s)",
+    "exports Mês passado across year and leap-year boundaries (%s)",
     async (today, from, to) => {
       vi.setSystemTime(today);
       const user = userEvent.setup();
       render(<MyActivitySettingsPage />);
       await screen.findByText(EVENT.title!);
       await user.click(
-        screen.getByRole("button", { name: "My Activity actions" }),
+        screen.getByRole("button", { name: "Ações: Minha atividade" }),
       );
-      await user.click(screen.getByRole("menuitem", { name: "Export" }));
-      await user.click(screen.getByRole("button", { name: /^Date range:/ }));
-      await user.click(screen.getByRole("menuitem", { name: "Last month" }));
-      await user.click(screen.getByRole("button", { name: "Export CSV" }));
+      await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
+      await user.click(screen.getByRole("button", { name: /^Período:/ }));
+      await user.click(screen.getByRole("menuitem", { name: "Mês passado" }));
+      await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
       await waitFor(() =>
         expect(mockedStartUserExport).toHaveBeenCalledWith(
           "audit-csv",
@@ -676,11 +676,11 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
     await user.click(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
     expect(mockedStartUserExport).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
 
     await waitFor(() =>
       expect(mockedGetUserExportStatus).toHaveBeenCalledTimes(2),
@@ -695,23 +695,23 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
     await user.click(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
     expect(mockedStartUserExport).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Your activity could not be exported.",
+      "Não consegui exportar sua atividade.",
     );
     expect(
       screen.getByText(
-        "Your activity could not be exported. Please try again.",
+        "Não consegui exportar sua atividade. Tente de novo.",
       ),
     ).toBeInTheDocument();
     expect(mockedDownloadUserExport).not.toHaveBeenCalled();
     // The button returns to its idle state instead of spinning forever.
-    expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Exportar CSV" })).toBeEnabled();
   });
 
   it("shows the history clock in the empty table placeholder", async () => {
@@ -724,8 +724,8 @@ describe("MyActivitySettingsPage", () => {
 
     render(<MyActivitySettingsPage />);
 
-    expect(await screen.findByText("No activity yet")).toBeInTheDocument();
-    expect(screen.getByText("No activity yet").parentElement).toHaveClass(
+    expect(await screen.findByText("Nenhuma atividade ainda")).toBeInTheDocument();
+    expect(screen.getByText("Nenhuma atividade ainda").parentElement).toHaveClass(
       "max-w-[260px]",
       "items-start",
       "text-left",
@@ -772,7 +772,7 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
     await user.click(
-      screen.getByRole("checkbox", { name: "Select all loaded entries" }),
+      screen.getByRole("checkbox", { name: "Selecionar todos os registros carregados" }),
     );
 
     act(() => {
@@ -798,13 +798,13 @@ describe("MyActivitySettingsPage", () => {
     expect(screen.getByText(EVENT.title!)).toBeInTheDocument();
     expect(screen.getByText("Second event")).toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: `Select ${EVENT.title}` }),
+      screen.getByRole("checkbox", { name: `Selecionar ${EVENT.title}` }),
     ).toBeChecked();
     expect(
-      screen.getByRole("checkbox", { name: "Select Second event" }),
+      screen.getByRole("checkbox", { name: "Selecionar Second event" }),
     ).not.toBeChecked();
     expect(
-      screen.getByRole("checkbox", { name: "Select all loaded entries" }),
+      screen.getByRole("checkbox", { name: "Selecionar todos os registros carregados" }),
     ).toBePartiallyChecked();
     expect(
       screen.queryByRole("button", { name: "Load more" }),
@@ -886,8 +886,8 @@ describe("MyActivitySettingsPage", () => {
     await screen.findByText(EVENT.title!);
     act(intersect);
     const oldSignal = mockedGetAuditHistory.mock.calls[1][1]!;
-    await user.click(screen.getByRole("button", { name: "Filter by status" }));
-    await user.click(screen.getByRole("menuitem", { name: "Failed" }));
+    await user.click(screen.getByRole("button", { name: "Filtrar por status" }));
+    await user.click(screen.getByRole("menuitem", { name: "Falhou" }));
     expect(await screen.findByText("Filtered event")).toBeInTheDocument();
     expect(oldSignal.aborted).toBe(true);
     await act(async () =>
@@ -930,24 +930,24 @@ describe("MyActivitySettingsPage", () => {
     });
     render(<MyActivitySettingsPage />);
     const row = await screen.findByRole("button", {
-      name: `View details for ${EVENT.title}`,
+      name: `Ver detalhes de ${EVENT.title}`,
     });
     expect(
       screen.queryByRole("link", { name: EVENT.title! }),
     ).not.toBeInTheDocument();
     await user.click(row);
-    const modal = within(screen.getByRole("dialog", { name: "Event details" }));
+    const modal = within(screen.getByRole("dialog", { name: "Detalhes do evento" }));
     expect(modal.queryByText(email)).not.toBeInTheDocument();
     expect(
-      modal.getByRole("heading", { name: "Document edited" }),
+      modal.getByRole("heading", { name: "Documento editado" }),
     ).toBeVisible();
     const metadata = modal.getByText(/"workflow_id": "workflow-123"/);
     expect(metadata).not.toBeVisible();
-    await user.click(modal.getByText("Technical details"));
+    await user.click(modal.getByText("Detalhes técnicos"));
     expect(metadata).toBeVisible();
     expect(modal.getByText("gpt-5")).toBeInTheDocument();
     expect(modal.getByText(/"mode": "review"/)).toBeInTheDocument();
-    expect(modal.getByRole("link", { name: "Open project" })).toHaveAttribute(
+    expect(modal.getByRole("link", { name: "Abrir projeto" })).toHaveAttribute(
       "href",
       "/projects/project-1",
     );
@@ -956,12 +956,12 @@ describe("MyActivitySettingsPage", () => {
     expect(row).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(
-      screen.getByRole("dialog", { name: "Event details" }),
+      screen.getByRole("dialog", { name: "Detalhes do evento" }),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     await user.keyboard(" ");
     expect(
-      screen.getByRole("dialog", { name: "Event details" }),
+      screen.getByRole("dialog", { name: "Detalhes do evento" }),
     ).toBeInTheDocument();
   });
 
@@ -975,12 +975,12 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "View details for Document edited",
+        name: "Ver detalhes de Documento editado",
       }),
     );
-    const modal = within(screen.getByRole("dialog", { name: "Event details" }));
+    const modal = within(screen.getByRole("dialog", { name: "Detalhes do evento" }));
     expect(
-      modal.getByRole("heading", { name: "Document edited" }),
+      modal.getByRole("heading", { name: "Documento editado" }),
     ).toBeInTheDocument();
     expect(modal.queryByRole("link")).not.toBeInTheDocument();
     expect(modal.queryByText("Additional details")).not.toBeInTheDocument();
@@ -990,17 +990,17 @@ describe("MyActivitySettingsPage", () => {
     const user = userEvent.setup();
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
-    await user.click(screen.getByRole("button", { name: "Filter by status" }));
-    await user.click(screen.getByRole("menuitem", { name: "Completed" }));
+    await user.click(screen.getByRole("button", { name: "Filtrar por status" }));
+    await user.click(screen.getByRole("menuitem", { name: "Concluído" }));
     await user.click(
-      screen.getByRole("button", { name: "Sort by affected" }),
+      screen.getByRole("button", { name: "Ordenar por afetado" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Ascending" }));
     await user.click(
-      screen.getByRole("button", { name: "Search my activity…" }),
+      screen.getByRole("button", { name: "Buscar na minha atividade…" }),
     );
     await user.type(
-      screen.getByPlaceholderText("Search my activity…"),
+      screen.getByPlaceholderText("Buscar na minha atividade…"),
       "agreement",
     );
     await waitFor(() =>
@@ -1011,24 +1011,24 @@ describe("MyActivitySettingsPage", () => {
     );
     const tableCalls = mockedGetAuditHistory.mock.calls.length;
     await user.click(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
     const modal = within(
-      screen.getByRole("dialog", { name: "Export My Activity" }),
+      screen.getByRole("dialog", { name: "Exportar minha atividade" }),
     );
-    await user.click(modal.getByRole("button", { name: /^Date range:/ }));
-    await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
-    fireEvent.change(modal.getByLabelText("From"), {
+    await user.click(modal.getByRole("button", { name: /^Período:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
+    fireEvent.change(modal.getByLabelText("De"), {
       target: { value: "2026-05-17" },
     });
-    fireEvent.change(modal.getByLabelText("To"), {
+    fireEvent.change(modal.getByLabelText("Até"), {
       target: { value: "2026-06-14" },
     });
     expect(mockedStartUserExport).not.toHaveBeenCalled();
     expect(mockedGetAuditHistory).toHaveBeenCalledTimes(tableCalls);
     expect(modal.queryByText(/\(inclusive\)/)).not.toBeInTheDocument();
-    await user.click(modal.getByRole("button", { name: "Export CSV" }));
+    await user.click(modal.getByRole("button", { name: "Exportar CSV" }));
     await waitFor(() =>
       expect(mockedStartUserExport).toHaveBeenCalledWith(
         "audit-csv",
@@ -1053,11 +1053,11 @@ describe("MyActivitySettingsPage", () => {
   });
 
   it.each([
-    ["From", "", "Choose a start and end date."],
-    ["To", "2026-05-01", "End date must be on or after start date."],
-    ["To", "2026-06-16", "Dates cannot be in the future."],
-    ["From", "10000-01-01", "Enter a valid date in YYYY-MM-DD format."],
-    ["From", "2026-02-30", "Enter a valid date in YYYY-MM-DD format."],
+    ["De", "", "Escolha a data de início e a de fim."],
+    ["Até", "2026-05-01", "A data de fim deve ser igual ou posterior à de início."],
+    ["Até", "2026-06-16", "As datas não podem estar no futuro."],
+    ["De", "10000-01-01", "Digite uma data válida no formato AAAA-MM-DD."],
+    ["De", "2026-02-30", "Digite uma data válida no formato AAAA-MM-DD."],
   ])(
     "blocks invalid custom dates (%s: %s) until corrected",
     async (field, value, message) => {
@@ -1065,25 +1065,25 @@ describe("MyActivitySettingsPage", () => {
       render(<MyActivitySettingsPage />);
       await screen.findByText(EVENT.title!);
       await user.click(
-        screen.getByRole("button", { name: "My Activity actions" }),
+        screen.getByRole("button", { name: "Ações: Minha atividade" }),
       );
-      await user.click(screen.getByRole("menuitem", { name: "Export" }));
-      await user.click(screen.getByRole("button", { name: /^Date range:/ }));
-      await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
+      await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
+      await user.click(screen.getByRole("button", { name: /^Período:/ }));
+      await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
       fireEvent.change(screen.getByLabelText(field), { target: { value } });
       expect(screen.getByRole("alert")).toHaveTextContent(message);
       expect(screen.getByLabelText(field)).toHaveAttribute(
         "aria-invalid",
         "true",
       );
-      const exportButton = screen.getByRole("button", { name: "Export CSV" });
+      const exportButton = screen.getByRole("button", { name: "Exportar CSV" });
       expect(exportButton).toBeDisabled();
       await user.click(exportButton);
       expect(mockedStartUserExport).not.toHaveBeenCalled();
-      fireEvent.change(screen.getByLabelText("From"), {
+      fireEvent.change(screen.getByLabelText("De"), {
         target: { value: "2026-06-15" },
       });
-      fireEvent.change(screen.getByLabelText("To"), {
+      fireEvent.change(screen.getByLabelText("Até"), {
         target: { value: "2026-06-15" },
       });
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -1103,13 +1103,13 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
     await user.click(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
-    await user.click(screen.getByRole("button", { name: /^Date range:/ }));
-    await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
-    await user.click(screen.getByRole("button", { name: "From calendar" }));
-    const fromCalendar = screen.getByRole("dialog", { name: "From calendar" });
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
+    await user.click(screen.getByRole("button", { name: /^Período:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
+    await user.click(screen.getByRole("button", { name: "De: calendário" }));
+    const fromCalendar = screen.getByRole("dialog", { name: "De: calendário" });
     expect(fromCalendar).toHaveClass(
       "theme-dropdown-surface",
       "liquid-glass-float",
@@ -1119,18 +1119,18 @@ describe("MyActivitySettingsPage", () => {
     ).toHaveFocus();
     await user.keyboard("{ArrowRight}{Enter}");
     expect(
-      screen.queryByRole("dialog", { name: "From calendar" }),
+      screen.queryByRole("dialog", { name: "De: calendário" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("From")).toHaveValue("2026-05-18");
-    expect(screen.getByRole("button", { name: "From calendar" })).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "To calendar" }));
-    const toCalendar = screen.getByRole("dialog", { name: "To calendar" });
+    expect(screen.getByLabelText("De")).toHaveValue("2026-05-18");
+    expect(screen.getByRole("button", { name: "De: calendário" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Até: calendário" }));
+    const toCalendar = screen.getByRole("dialog", { name: "Até: calendário" });
     expect(
       toCalendar.querySelector('[data-day="2026-06-16"] button'),
     ).toBeDisabled();
     await user.click(
       within(toCalendar).getByRole("button", {
-        name: "Go to the Previous Month",
+        name: "Ir para o mês anterior",
       }),
     );
     expect(
@@ -1138,10 +1138,10 @@ describe("MyActivitySettingsPage", () => {
     ).toBeDisabled();
     await user.keyboard("{Escape}");
     expect(
-      screen.getByRole("dialog", { name: "Export My Activity" }),
+      screen.getByRole("dialog", { name: "Exportar minha atividade" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("dialog", { name: "To calendar" }),
+      screen.queryByRole("dialog", { name: "Até: calendário" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/\(inclusive\)/)).not.toBeInTheDocument();
   });
@@ -1151,38 +1151,38 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
     await user.click(
-      screen.getByRole("button", { name: /^Select date range:/ }),
+      screen.getByRole("button", { name: /^Escolher período:/ }),
     );
     expect(
-      screen.getByRole("dialog", { name: "Filter by date range" }),
+      screen.getByRole("dialog", { name: "Filtrar por período" }),
     ).toHaveClass("w-80");
-    const preset = screen.getByRole("button", { name: /^Date range:/ });
+    const preset = screen.getByRole("button", { name: /^Período:/ });
     expect(preset).toHaveClass("h-8", "bg-app-surface-active");
     expect(preset).not.toHaveClass("liquid-glass-subtle", "liquid-glass-hover");
     await user.click(preset);
-    await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
-    expect(screen.getByLabelText("From")).toHaveClass("h-8", "text-xs");
-    expect(screen.getByLabelText("To")).toHaveClass("h-8", "text-xs");
-    await user.click(screen.getByRole("button", { name: "From calendar" }));
-    await user.click(screen.getByRole("button", { name: "Month: May" }));
+    await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
+    expect(screen.getByLabelText("De")).toHaveClass("h-8", "text-xs");
+    expect(screen.getByLabelText("Até")).toHaveClass("h-8", "text-xs");
+    await user.click(screen.getByRole("button", { name: "De: calendário" }));
+    await user.click(screen.getByRole("button", { name: "Mês: maio" }));
     await user.click(
-      screen.getByRole("menuitem", { name: "February" }),
+      screen.getByRole("menuitem", { name: "fevereiro" }),
     );
     expect(
-      screen.getByRole("button", { name: "Month: February" }),
+      screen.getByRole("button", { name: "Mês: fevereiro" }),
     ).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Year: 2026" }));
+    await user.click(screen.getByRole("button", { name: "Ano: 2026" }));
     await user.click(
       screen.getByRole("menuitem", { name: "2024" }),
     );
-    const calendar = screen.getByRole("dialog", { name: "From calendar" });
+    const calendar = screen.getByRole("dialog", { name: "De: calendário" });
     await user.click(calendar.querySelector('[data-day="2024-02-29"] button')!);
-    expect(screen.getByLabelText("From")).toHaveValue("2024-02-29");
+    expect(screen.getByLabelText("De")).toHaveValue("2024-02-29");
     expect(
-      screen.getByRole("dialog", { name: "Filter by date range" }),
+      screen.getByRole("dialog", { name: "Filtrar por período" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("dialog", { name: "From calendar" }),
+      screen.queryByRole("dialog", { name: "De: calendário" }),
     ).not.toBeInTheDocument();
   });
 
@@ -1192,31 +1192,31 @@ describe("MyActivitySettingsPage", () => {
     await screen.findByText(EVENT.title!);
     const tableCalls = mockedGetAuditHistory.mock.calls.length;
     await user.click(
-      screen.getByRole("button", { name: /^Select date range:/ }),
+      screen.getByRole("button", { name: /^Escolher período:/ }),
     );
-    await user.click(screen.getByRole("button", { name: /^Date range:/ }));
-    await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
-    await user.click(screen.getByRole("button", { name: "From calendar" }));
+    await user.click(screen.getByRole("button", { name: /^Período:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
+    await user.click(screen.getByRole("button", { name: "De: calendário" }));
     expect(
-      screen.getByRole("dialog", { name: "From calendar" }),
+      screen.getByRole("dialog", { name: "De: calendário" }),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(
-      screen.queryByRole("dialog", { name: "From calendar" }),
+      screen.queryByRole("dialog", { name: "De: calendário" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("dialog", { name: "Filter by date range" }),
+      screen.getByRole("dialog", { name: "Filtrar por período" }),
     ).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("To"), { target: { value: "" } });
-    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Até"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Aplicar" })).toBeDisabled();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockedGetAuditHistory).toHaveBeenCalledTimes(tableCalls);
     await user.click(
-      screen.getByRole("button", { name: /^Select date range:/ }),
+      screen.getByRole("button", { name: /^Escolher período:/ }),
     );
     expect(
-      screen.getByRole("button", { name: "Date range: Last 30 days" }),
+      screen.getByRole("button", { name: "Período: Últimos 30 dias" }),
     ).toBeInTheDocument();
   });
 
@@ -1230,14 +1230,14 @@ describe("MyActivitySettingsPage", () => {
     );
     render(<AuditHistory orgId="org-a" />);
     await screen.findByText(EVENT.title!);
-    await user.click(screen.getByRole("button", { name: "Audit log actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
+    await user.click(screen.getByRole("button", { name: "Ações: Registro de auditoria" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
     expect(
-      screen.getByRole("dialog", { name: "Export audit log" }),
+      screen.getByRole("dialog", { name: "Exportar registro de auditoria" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /^Date range:/ }));
-    await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
-    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    await user.click(screen.getByRole("button", { name: /^Período:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Últimos 7 dias" }));
+    await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
     expect(mockedStartUserExport).toHaveBeenCalledWith(
       "audit-csv",
       expect.objectContaining({
@@ -1246,8 +1246,8 @@ describe("MyActivitySettingsPage", () => {
         to: "2026-06-15",
       }),
     );
-    expect(screen.getByRole("button", { name: /^Date range:/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Exporting…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Período:/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Exportando…" })).toBeDisabled();
     await act(async () => finishExport({ export_id: "export-1" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -1259,27 +1259,27 @@ describe("MyActivitySettingsPage", () => {
     render(<MyActivitySettingsPage />);
     await screen.findByText(EVENT.title!);
     await user.click(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
-    await user.click(screen.getByRole("button", { name: /^Date range:/ }));
-    await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
-    fireEvent.change(screen.getByLabelText("From"), {
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
+    await user.click(screen.getByRole("button", { name: /^Período:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
+    fireEvent.change(screen.getByLabelText("De"), {
       target: { value: "2026-05-20" },
     });
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockedStartUserExport).not.toHaveBeenCalled();
     await user.click(
-      screen.getByRole("button", { name: "My Activity actions" }),
+      screen.getByRole("button", { name: "Ações: Minha atividade" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Export" }));
+    await user.click(screen.getByRole("menuitem", { name: "Exportar" }));
     expect(
-      screen.getByRole("button", { name: "Date range: Last 30 days" }),
+      screen.getByRole("button", { name: "Período: Últimos 30 dias" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /^Date range:/ }));
-    await user.click(screen.getByRole("menuitem", { name: "Custom range" }));
-    expect(screen.getByLabelText("From")).toHaveValue("2026-05-17");
-    expect(screen.getByLabelText("To")).toHaveValue("2026-06-15");
+    await user.click(screen.getByRole("button", { name: /^Período:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Personalizado" }));
+    expect(screen.getByLabelText("De")).toHaveValue("2026-05-17");
+    expect(screen.getByLabelText("Até")).toHaveValue("2026-06-15");
   });
 });

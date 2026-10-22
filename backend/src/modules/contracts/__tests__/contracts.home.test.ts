@@ -107,6 +107,7 @@ describe("getHomeSummary", () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         const home = result.data;
+        expect(home.audience).toBe("team");
         expect(home.since).toBe("2026-10-19T09:00:00Z");
         expect(fake.calls[1].payload).toMatchObject({ previous_seen_at: "2026-10-19T09:00:00Z" });
         // One row per card, the newest review wins.
@@ -149,6 +150,27 @@ describe("getHomeSummary", () => {
         fake.done();
     });
 
+    it("gives a requester nothing from the portfolio, even with cards shared with them", async () => {
+        access.listAccessibleProjectIds.mockResolvedValue(["p1", "p2"]);
+        const fake = scriptedDb([]);
+        const result = await getHomeSummary(fake.db, caller, NOW, null, "requester");
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                audience: "requester",
+                since: null,
+                greeting: { reviewed: 0, reviewed_90d: 0, failed: 0, notices_closing: 0, ready: 0 },
+                counters: { ready: 0, mine: 0, notices_30d: 0, folders: 0 },
+                reviews: [],
+                deadlines: [],
+                activity: [],
+            },
+        });
+        // Not a single read: no projects, no reviews, not even the visit.
+        expect(fake.calls).toEqual([]);
+        expect(access.listAccessibleProjectIds).not.toHaveBeenCalled();
+    });
+
     it("narrows to the active workspace", async () => {
         access.listAccessibleProjectIds.mockResolvedValue(["p1", "p2"]);
         const fake = scriptedDb([
@@ -171,8 +193,8 @@ describe("getHomeSummary", () => {
             data: { reviews: [{ id: "r2", ficha: null }], greeting: { reviewed: 1, reviewed_90d: 1 } },
         });
         expect(fake.calls[2].filters).toContainEqual(["in", "project_id", ["p2"]]);
-        // The count matches the legal dashboard, which reads every card on the board.
-        expect(fake.calls[9].filters).toContainEqual(["in", "project_id", ["p1", "p2"]]);
+        // Same cut as the counters, the queue and the legal dashboard: only o1's card.
+        expect(fake.calls[9].filters).toContainEqual(["in", "project_id", ["p2"]]);
         fake.done();
     });
 

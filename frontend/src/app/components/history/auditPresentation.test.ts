@@ -48,20 +48,21 @@ describe("audit event presentation", () => {
     expect(auditActor(event)).toBe("Alex Chen");
     expect(auditSubject(event)).toEqual({
       type: "Member",
+      label: "Membro",
       name: "jamie@example.com",
-      context: "Organization",
+      context: "Organização",
     });
     expect(auditDetailFields(event)).toEqual([
-      { label: "Role", value: "Member → Admin" },
+      { label: "Papel", value: "Membro → Admin" },
     ]);
     expect(auditSummary(event, false)).toBe(
-      "Alex Chen changed the organization role for jamie@example.com.",
+      "Alex Chen mudou o papel de jamie@example.com na organização.",
     );
-    expect(auditSummary(event, true)).toMatch(/^You changed/);
+    expect(auditSummary(event, true)).toMatch(/^Você mudou/);
   });
   it("does not invent previous values or expose identifiers as names", () => {
     expect(auditDetailFields({ ...event, detail: { role: "admin" } })).toEqual([
-      { label: "Role", value: "Admin" },
+      { label: "Papel", value: "Admin" },
     ]);
     expect(
       auditSubject({
@@ -83,10 +84,11 @@ describe("audit event presentation", () => {
       action: "org.invite.created",
       detail: { role: "member" },
     };
-    expect(auditAction(invite)).toBe("Invitation sent");
+    expect(auditAction(invite)).toBe("Convite enviado");
     expect(auditSubject(invite).type).toBe("Recipient");
+    expect(auditSubject(invite).label).toBe("Destinatário");
     expect(auditDetailFields(invite)).toEqual([
-      { label: "Invited role", value: "Member" },
+      { label: "Papel do convite", value: "Membro" },
     ]);
   });
   it("uses recorded context without loading private project names", () => {
@@ -99,16 +101,17 @@ describe("audit event presentation", () => {
       }),
     ).toEqual({
       type: "Document",
+      label: "Documento",
       name: "NDA.docx",
       context: "Acme · Acquisition",
     });
   });
   it("keeps failed actions from reading as successful changes", () => {
     const failed = { ...event, action: "document.uploaded", status: "failed" };
-    expect(auditAction(failed)).toBe("Document upload");
-    expect(auditSummary(failed, false)).toBe("Document upload failed.");
+    expect(auditAction(failed)).toBe("Envio de documento");
+    expect(auditSummary(failed, false)).toBe("Envio de documento: falhou.");
     expect(auditSummary({ ...failed, status: "cancelled" }, false)).toBe(
-      "Document upload was cancelled.",
+      "Envio de documento: cancelada.",
     );
   });
   it("keeps zero counts and false values but leaves unknown metadata out of primary details", () => {
@@ -118,14 +121,14 @@ describe("audit event presentation", () => {
         action: "org.router_models.updated",
         detail: { model_count: 0, secret_id: "id" },
       }),
-    ).toEqual([{ label: "Models available", value: "0" }]);
+    ).toEqual([{ label: "Modelos disponíveis", value: "0" }]);
     expect(
       auditDetailFields({
         ...event,
         action: "org.api_key.disabled",
         detail: { enabled: false },
       }),
-    ).toEqual([{ label: "Enabled", value: "No" }]);
+    ).toEqual([{ label: "Ativada", value: "Não" }]);
   });
   it("does not send Word chat ids to web chat routes", () => {
     expect(
@@ -146,9 +149,9 @@ describe("audit event presentation", () => {
     );
     expect(
       auditActor({ ...event, user_display_name: null, user_email: null }),
-    ).toBe("Unknown user");
+    ).toBe("Pessoa desconhecida");
     expect(auditTimestamp(event.created_at, true)).toBe(
-      new Date(event.created_at).toLocaleString(undefined, {
+      new Date(event.created_at).toLocaleString("pt-BR", {
         day: "numeric",
         month: "short",
         year: "numeric",

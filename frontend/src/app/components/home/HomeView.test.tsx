@@ -2,13 +2,15 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HomeReview, HomeSummary } from "@/app/lib/mikeApi";
 
-const nav = vi.hoisted(() => ({
-    params: new URLSearchParams(),
-    replace: vi.fn(),
-    push: vi.fn(),
-}));
+const nav = vi.hoisted(() => {
+    const replace = vi.fn();
+    const push = vi.fn();
+    // One router for every render, as Next's is: a new object each time would
+    // re-create HomeView's load() and re-run its first fetch mid-test.
+    return { params: new URLSearchParams(), replace, push, router: { replace, push } };
+});
 vi.mock("next/navigation", () => ({
-    useRouter: () => ({ replace: nav.replace, push: nav.push }),
+    useRouter: () => nav.router,
     useSearchParams: () => nav.params,
     usePathname: () => "/inicio",
 }));
@@ -127,6 +129,22 @@ beforeEach(() => {
 });
 
 describe("HomeView", () => {
+    it("sends a requester to their requests and never shows the team's queue", async () => {
+        api.getHomeSummary.mockResolvedValue(summary([], { audience: "requester", deadlines: [], activity: [] }));
+        render(<HomeView />);
+        await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/pedidos"));
+        expect(screen.queryByText(/Revisei|Não revisei|Ainda não revisei/)).not.toBeInTheDocument();
+        expect(screen.queryByRole("table")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Enviar contratos/ })).not.toBeInTheDocument();
+    });
+
+    it("keeps the head on the Início with the queue", async () => {
+        api.getHomeSummary.mockResolvedValue(summary([review({})], { audience: "team" }));
+        render(<HomeView />);
+        expect(await screen.findByText(/Revisei/)).toBeInTheDocument();
+        expect(nav.replace).not.toHaveBeenCalledWith("/pedidos");
+    });
+
     it("greets with what the agents did, the counters and the queue, opening on my reviews", async () => {
         api.getHomeSummary.mockResolvedValue(
             summary([

@@ -4829,6 +4829,11 @@ export interface HomeDeadline {
 }
 
 export interface HomeSummary {
+    /**
+     * Who the screen is for. A requester (outside the legal team) gets an empty
+     * portfolio and is sent to their requests instead.
+     */
+    audience?: "team" | "requester";
     /** When the caller last opened the home screen; null on a first visit. */
     since: string | null;
     greeting: { reviewed: number; reviewed_90d: number; failed: number; notices_closing: number; ready: number };
@@ -5595,9 +5600,12 @@ export interface LegalDashboard {
 export async function getLegalDashboard(params?: {
     period?: 30 | 90 | 365;
     assumptions?: Partial<DashboardAssumptions>;
+    /** Narrow to one workspace ("personal" or an organization id), as the Início does. */
+    workspace?: string | null;
 }): Promise<LegalDashboard> {
     const qs = new URLSearchParams();
     if (params?.period) qs.set("period", String(params.period));
+    if (params?.workspace) qs.set("workspace", params.workspace);
     const a = params?.assumptions;
     if (a?.minutes_per_review) qs.set("min_review", String(a.minutes_per_review));
     if (a?.minutes_per_terms) qs.set("min_terms", String(a.minutes_per_terms));
