@@ -4653,6 +4653,10 @@ export interface LegalRequest {
     participants?: RequestParticipant[];
     source?: { channel?: string; permalink?: string };
     can_decide?: boolean;
+    /** Team view: the intake checklist closed. */
+    intake_completed_at?: string | null;
+    /** Team view: the analysis found a critical risk and the Head was alerted. */
+    critical_alert_at?: string | null;
 }
 
 export interface RequestListItem {
@@ -4772,6 +4776,79 @@ export async function inviteRequestParticipant(
     body: { email: string; role?: "external" | "viewer"; label?: string; days?: number },
 ): Promise<LegalRequest> {
     return apiRequest(`/requests/${id}/participants`, jsonPost(body));
+}
+
+export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money";
+
+export interface IntakeItem {
+    key: string;
+    label: string;
+    kind: IntakeKind;
+    required: boolean;
+    hint?: string;
+    detail_label?: string;
+}
+
+export interface IntakeAnswer {
+    value: string;
+    choice?: "sim" | "nao";
+    detail?: string;
+    source: "requester" | "inferred";
+    confirmed: boolean;
+    /** For an inferred answer: the contract's words it came from. */
+    quote?: string;
+    updated_at: string;
+}
+
+/** A request's intake checklist and where it stands. */
+export interface RequestIntake {
+    request_id: string;
+    items: (IntakeItem & { answer: IntakeAnswer | null; state: "confirmado" | "inferido" | "pendente" })[];
+    pending: string[];
+    to_confirm: string[];
+    complete: boolean;
+    answered: number;
+    total: number;
+    completed_at: string | null;
+    /** The intake agent reading the contract: null when it never ran or had nothing to do. */
+    prefill: "lendo" | "concluido" | "falhou" | null;
+    can_answer: boolean;
+    template_source: "org" | "padrao";
+}
+
+export type IntakeAnswerInput = string | boolean | { value: string | boolean; detail?: string };
+
+export async function getRequestIntake(id: string): Promise<RequestIntake> {
+    return apiRequest(`/requests/${id}/intake`);
+}
+
+/** Answer items and/or confirm inferred ones as they stand. */
+export async function answerRequestIntake(
+    id: string,
+    body: { answers?: Record<string, IntakeAnswerInput>; confirm?: string[] },
+): Promise<RequestIntake> {
+    return apiRequest(`/requests/${id}/intake`, jsonPost(body));
+}
+
+/** A request whose contract analysis found a critical risk, for the Head. */
+export interface CriticalAlert {
+    request_id: string;
+    code: string;
+    title: string;
+    project_id: string | null;
+    alerted_at: string;
+    critical: number;
+    assignee_name: string | null;
+}
+
+/** Open critical alerts (the Head's; anyone else gets an empty list). */
+export async function listCriticalAlerts(): Promise<{ alerts: CriticalAlert[] }> {
+    return apiRequest("/requests/alerts");
+}
+
+/** The team asks for the analysis of the request's contract; 409 lists what the checklist still lacks. */
+export async function requestContractAnalysis(id: string): Promise<{ analysis_id: string; queued: boolean }> {
+    return apiRequest(`/requests/${id}/analysis`, { method: "POST" });
 }
 
 export async function revokeRequestParticipant(id: string, participantId: string): Promise<LegalRequest> {
