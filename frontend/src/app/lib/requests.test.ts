@@ -3,7 +3,10 @@ import type { LegalRequest, RequestListItem } from "./mikeApi";
 import {
     filterQueue,
     formatDate,
+    positionText,
     requestPlan,
+    sinceText,
+    stageHolderText,
     slaText,
     slaTone,
     sortQueue,
@@ -193,5 +196,42 @@ describe("orchestration plan", () => {
             task: "responder a pergunta do Legal",
         });
         expect(plan.find((s) => s.id === "atribuicao")?.task).toBe("sugerir quem pega");
+    });
+});
+
+describe("stage strip words", () => {
+    const at = (iso: string) => Date.parse(iso);
+    const base = at("2026-10-20T12:00:00Z");
+
+    it("says how long ago in the units a person thinks in, then a date past a week", () => {
+        expect(sinceText("2026-10-20T11:59:40Z", base)).toBe("agora");
+        expect(sinceText("2026-10-20T11:15:00Z", base)).toBe("há 45 min");
+        expect(sinceText("2026-10-20T09:00:00Z", base)).toBe("há 3 h");
+        expect(sinceText("2026-10-19T09:00:00Z", base)).toBe("ontem");
+        expect(sinceText("2026-10-16T12:00:00Z", base)).toBe("há 4 dias");
+        expect(sinceText("2026-10-05T12:00:00Z", base)).toBe("05/10");
+        expect(sinceText("lixo", base)).toBe("");
+    });
+
+    it("names who has the ball and since when", () => {
+        expect(stageHolderText({ kind: "person", name: "Téo" }, "2026-10-19T09:00:00Z", base)).toBe("com Téo, desde ontem");
+        expect(stageHolderText({ kind: "person", name: "Téo" }, "2026-10-20T09:00:00Z", base)).toBe("com Téo, há 3 h");
+        expect(stageHolderText({ kind: "agent", name: "Agente de triagem" }, "2026-10-20T11:00:00Z", base)).toBe(
+            "com o agente de triagem, há 1 h",
+        );
+        expect(stageHolderText({ kind: "requester", name: "Ana" }, "2026-10-19T09:00:00Z", base)).toBe("aguardando Ana, desde ontem");
+        expect(stageHolderText({ kind: "requester", name: null }, null, base)).toBe("aguardando quem pediu");
+        expect(stageHolderText({ kind: "none", name: null }, "2026-10-19T09:00:00Z", base)).toBe("sem responsável, desde ontem");
+    });
+
+    it("leaves the time out for a request older than the history", () => {
+        expect(stageHolderText({ kind: "person", name: "Téo" }, null, base)).toBe("com Téo");
+        expect(stageHolderText({ kind: "person", name: null }, null, base)).toBe("sem responsável");
+        expect(stageHolderText({ kind: "agent", name: null }, null, base)).toBe("com o agente");
+    });
+
+    it("counts the stage position, and says nothing on the two ends", () => {
+        expect(positionText({ index: 3, of: 5 })).toBe("Etapa 3 de 5");
+        expect(positionText(null)).toBeNull();
     });
 });
