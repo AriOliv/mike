@@ -135,6 +135,10 @@ export async function handleIntakePrefill(
 
     const doc = await latestDocument(db, row.project_id);
     if (!doc) return { skipped: "no_document" };
+    // Before waiting on the contract's text: with no model there is nothing
+    // to wait for, and the checklist should say so at once.
+    const selected = await triageModel(db, row.org_id);
+    if (!selected) return { skipped: "no_model" };
     // The card lives in the team's organization; its owner reads it the way
     // the team does (the requester may no longer reach a file moved there).
     const owner = await teamOwner(db, row.org_id);
@@ -152,9 +156,6 @@ export async function handleIntakePrefill(
     if (text.status === "failed" || !text.text?.trim()) {
         throw new NonRetryableJobError("contract text unavailable");
     }
-
-    const selected = await triageModel(db, row.org_id);
-    if (!selected) return { skipped: "no_model" };
 
     const runId = await startAgentRun(db, {
         projectId: row.project_id,
