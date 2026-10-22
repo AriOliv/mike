@@ -1,6 +1,6 @@
 // The contract's terms asked on the form (U-05 part 2, U-07, U-08): the other
 // party's e-mail, the start date and the term in months. The end is computed
-// (start + months), never stored. Pure functions; messages are for the
+// (start + months − 1 day), never stored. Pure functions; messages are for the
 // requester, in Portuguese, and name the field so the form can paint it.
 
 import { isEmail } from "./requests.shared";
@@ -70,9 +70,19 @@ export function parseTerms(input: TermsInput): ({ ok: true } & Terms) | TermsFai
 }
 
 /**
- * The day the term ends: the start plus the months, on the same day of the
- * month, or the last day of a shorter month ("31/01 + 1 mês = 28/02"). Null
- * until both values are known.
+ * The day the term ends: start + N months, minus one day. A term that starts
+ * on 12/11/2026 and lasts 12 months ends on 11/11/2027; one that starts on
+ * 01/01 and lasts a year ends on 31/12.
+ *
+ * The day is taken one before the start's day, in the month the term lands
+ * on. When that day does not exist there, the term ends on the month's last
+ * day and never spills into the next: 31/01 + 1 month ends on 28/02 (29/02 in
+ * a leap year). A start on the 1st ends on the last day of the month before.
+ * Null until both values are known.
+ *
+ * Código Civil, art. 132, §3º: prazos de meses e anos expiram no dia de igual
+ * número ao do início, ou no imediato se faltar correspondência exata. A
+ * vigência termina na véspera, daí o "- 1 dia" (decisão do Legal, 22/10).
  */
 export function termEnd(termStart: string | null, termMonths: number | null): string | null {
     if (!termStart || termMonths === null) return null;
@@ -82,6 +92,7 @@ export function termEnd(termStart: string | null, termMonths: number | null): st
     const year = Math.floor(index / 12);
     const month = index % 12;
     const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-    const day = Math.min(parts.d, lastDay);
-    return `${String(year).padStart(4, "0")}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const day = parts.d - 1;
+    const end = day < 1 ? new Date(Date.UTC(year, month, 0)) : new Date(Date.UTC(year, month, Math.min(day, lastDay)));
+    return end.toISOString().slice(0, 10);
 }
