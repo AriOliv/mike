@@ -4,7 +4,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryDb, uuid } from "./memoryDb";
 
-const enqueue = vi.hoisted(() => ({ enqueueDbJob: vi.fn(async () => ({ id: "job", deduped: false })) }));
+const enqueue = vi.hoisted(() => ({
+    enqueueDbJob: vi.fn(async (_db: unknown, _job: { kind: string }) => ({ id: "job", deduped: false })),
+}));
 vi.mock("../../../lib/dbq/enqueue", () => enqueue);
 
 import {
@@ -234,7 +236,7 @@ describe("applying the rules to a request", () => {
 
         expect(w.table("legal_request_notifications").some((n) => n.template === "request.assigned")).toBe(true);
         // the triage still runs: the rule only names the owner
-        expect(enqueue.enqueueDbJob.mock.calls.some(([, args]) => (args as { kind: string }).kind.includes("triage"))).toBe(true);
+        expect(enqueue.enqueueDbJob.mock.calls.some(([, job]) => job.kind.includes("triage"))).toBe(true);
     });
 
     it("leaves the request for the triage when no rule fits, or there are no rules", async () => {
