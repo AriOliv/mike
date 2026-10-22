@@ -16,8 +16,8 @@ export default function OrganizationAuditPage() {
   if (!isOrgAdmin(org.role))
     return (
       <EmptyState
-        title="Audit log"
-        description="Only organization owners and admins can view the audit log."
+        title="Registro de auditoria"
+        description="Só titulares e admins da organização veem o registro de auditoria."
       />
     );
   return (

@@ -216,7 +216,7 @@ export function OrganizationSettingsFrame({
         ? [
             {
               id: "audit",
-              label: "Audit log",
+              label: "Registro de auditoria",
               href: organizationSettingsHref(orgId, "audit"),
             },
             {
