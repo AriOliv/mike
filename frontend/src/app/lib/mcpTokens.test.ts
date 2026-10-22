@@ -7,6 +7,7 @@ import {
     mcpServerUrl,
     SCOPE_OPTIONS,
     scopesFor,
+    scopesSummary,
     STATE_LABEL,
     TOOL_LABELS,
     tokenState,
@@ -81,5 +82,14 @@ describe("access token words", () => {
         expect(clientLabel("hermes-docbot")).toBe("Hermes");
         expect(clientLabel("outro")).toBe("outro");
         expect(TOOL_LABELS.mike_contratos_ficha).toBe("leu a Ficha de um contrato");
+    });
+
+    it("says 'all permissions' in one phrase instead of repeating eight", () => {
+        const team = scopesFor({ configured: true, role: "team" });
+        expect(scopesSummary(team.map((o) => o.scope), team)).toBe("Só leitura · todas as permissões");
+        // A head's token that skipped the Painel lists what it has.
+        const head = scopesFor({ configured: true, role: "head" });
+        expect(scopesSummary(["prazos:read", "contratos:read"], head)).toBe("Ler contratos · Ver prazos");
+        expect(scopesSummary([], [])).toBe("");
     });
 });
