@@ -9,6 +9,7 @@ import { StatTiles } from "@/app/components/ui/stat-tiles";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { getLegalDashboard, type DashboardAssumptions, type LegalDashboard } from "@/app/lib/mikeApi";
+import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import {
     PERIODS,
     agentLabel,
@@ -33,6 +34,8 @@ const ASSUMPTION_FIELDS: { key: keyof DashboardAssumptions; label: string }[] = 
 
 export function LegalDashboardView() {
     const router = useRouter();
+    // The Início's cut: the active workspace, so "Revisei N" and the reviewed tile agree.
+    const { workspaceId } = useWorkspace();
     const [period, setPeriod] = useState<30 | 90 | 365>(90);
     const [assumptions, setAssumptions] = useState<DashboardAssumptions | null>(null);
     const [data, setData] = useState<LegalDashboard | null>(null);
@@ -42,7 +45,7 @@ export function LegalDashboardView() {
     const load = useCallback(async () => {
         setRefetching(true);
         try {
-            const next = await getLegalDashboard({ period, assumptions: assumptions ?? undefined });
+            const next = await getLegalDashboard({ period, assumptions: assumptions ?? undefined, workspace: workspaceId });
             setData(next);
             setError(null);
         } catch (e) {
@@ -50,7 +53,7 @@ export function LegalDashboardView() {
         } finally {
             setRefetching(false);
         }
-    }, [period, assumptions]);
+    }, [period, assumptions, workspaceId]);
 
     useEffect(() => {
         void load();

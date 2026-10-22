@@ -5,6 +5,8 @@ import type { LegalDashboard } from "@/app/lib/mikeApi";
 const nav = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push }), usePathname: () => "/painel" }));
 vi.mock("@/app/contexts/PageChromeContext", () => ({ usePageChrome: () => ({ mobileActionsContainer: null }) }));
+const workspace = vi.hoisted(() => ({ workspaceId: "o1" }));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({ useWorkspace: () => workspace }));
 const api = vi.hoisted(() => ({ getLegalDashboard: vi.fn() }));
 vi.mock("@/app/lib/mikeApi", async (actual) => ({ ...(await actual<typeof import("@/app/lib/mikeApi")>()), ...api }));
 
@@ -58,6 +60,12 @@ beforeEach(() => {
 });
 
 describe("LegalDashboardView", () => {
+    it("reads the active workspace, the same cut as the Início", async () => {
+        render(<LegalDashboardView />);
+        await screen.findByText("Pedidos recebidos");
+        expect(api.getLegalDashboard).toHaveBeenCalledWith(expect.objectContaining({ period: 90, workspace: "o1" }));
+    });
+
     it("leads with the team's work, then what the agents did", async () => {
         render(<LegalDashboardView />);
         expect(await screen.findByText("Pedidos recebidos")).toBeInTheDocument();
@@ -75,13 +83,14 @@ describe("LegalDashboardView", () => {
         render(<LegalDashboardView />);
         await screen.findByText("Pedidos recebidos");
         fireEvent.click(screen.getByRole("button", { name: "Últimos 30 dias" }));
-        await waitFor(() => expect(api.getLegalDashboard).toHaveBeenLastCalledWith({ period: 30, assumptions: undefined }));
+        await waitFor(() => expect(api.getLegalDashboard).toHaveBeenLastCalledWith({ period: 30, assumptions: undefined, workspace: "o1" }));
         fireEvent.change(screen.getByLabelText(/min por revisão de contrato/), { target: { value: "60" } });
         fireEvent.click(screen.getByRole("button", { name: "Recalcular" }));
         await waitFor(() =>
             expect(api.getLegalDashboard).toHaveBeenLastCalledWith({
                 period: 30,
                 assumptions: { minutes_per_review: 60, minutes_per_terms: 20, minutes_per_regulatory_triage: 15 },
+                workspace: "o1",
             }),
         );
     });

@@ -370,6 +370,31 @@ describe("getDashboard", () => {
         fake.done();
     });
 
+    it("narrows to the active workspace, the Início's cut", async () => {
+        contracts.listPipeline.mockResolvedValue({
+            ok: true,
+            data: { cards: [card({ id: "p1", org_id: "o1" }), card({ id: "p2", org_id: null }), card({ id: "p3", org_id: "o2" })] },
+        });
+        regulatory.visibleScanIds.mockResolvedValue([]);
+        const steps = [
+            { table: "dossiers", data: [] },
+            { table: "contract_terms", data: [] },
+            { table: "documents", data: [] },
+            { table: "card_events", data: [] },
+            { table: "agent_runs", data: [] },
+            { table: "contract_fichas", data: [] },
+            { table: "projects", data: [] },
+            { table: "legal_requests", data: [] },
+        ];
+        const team = scriptedDb(steps);
+        expect(await getDashboard(team.db, caller, {}, NOW, "o1")).toMatchObject({ ok: true, data: { volume: { opened: 1 } } });
+        expect(team.calls[0].filters).toContainEqual(["in", "project_id", ["p1"]]);
+        expect(contracts.countAgentReviews).toHaveBeenLastCalledWith(team.db, ["p1"], expect.any(String), NOW.toISOString());
+        const personal = scriptedDb(steps);
+        await getDashboard(personal.db, caller, {}, NOW, "personal");
+        expect(personal.calls[0].filters).toContainEqual(["in", "project_id", ["p2"]]);
+    });
+
     it("passes on a pipeline failure and reports a real read error", async () => {
         contracts.listPipeline.mockResolvedValue({ ok: false, kind: "error", error: new Error("x") });
         expect(await getDashboard(scriptedDb([]).db, caller, {})).toMatchObject({ ok: false });

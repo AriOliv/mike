@@ -399,9 +399,10 @@ export async function getHomeSummary(
         const sinceMs = since ? Date.parse(since) : 0;
         const newSince = (iso: string | null) => !!iso && Date.parse(iso) > sinceMs;
         // The legal dashboard's number, so the two can be checked against each other:
-        // same count, its default window and its scope (every card on the board, any
-        // workspace). What is new since the last visit is a part of it.
-        const onBoard = accessible.filter((p) => p.lane).map((p) => p.id);
+        // same count, its default window and its scope (the cards on the board in the
+        // active workspace, the same cut as the counters and the queue). What is new
+        // since the last visit is a part of it.
+        const onBoard = projects.filter((p) => p.lane).map((p) => p.id);
         const periodStart = new Date(now.getTime() - DASHBOARD_PERIOD_DAYS * 86_400_000).toISOString();
         const nowIso = now.toISOString();
         const reviewed90 = await countAgentReviews(db, onBoard, periodStart, nowIso);

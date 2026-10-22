@@ -27,7 +27,7 @@ import {
 } from "@/app/lib/mikeApi";
 
 export const PERSONAL_WORKSPACE = "personal";
-export const PERSONAL_WORKSPACE_LABEL = "Personal";
+export const PERSONAL_WORKSPACE_LABEL = "Pessoal";
 
 const STORAGE_PREFIX = "mike.activeWorkspace.";
 

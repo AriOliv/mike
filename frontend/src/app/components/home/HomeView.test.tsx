@@ -2,13 +2,15 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HomeReview, HomeSummary } from "@/app/lib/mikeApi";
 
-const nav = vi.hoisted(() => ({
-    params: new URLSearchParams(),
-    replace: vi.fn(),
-    push: vi.fn(),
-}));
+const nav = vi.hoisted(() => {
+    const replace = vi.fn();
+    const push = vi.fn();
+    // One router for every render, as Next's is: a new object each time would
+    // re-create HomeView's load() and re-run its first fetch mid-test.
+    return { params: new URLSearchParams(), replace, push, router: { replace, push } };
+});
 vi.mock("next/navigation", () => ({
-    useRouter: () => ({ replace: nav.replace, push: nav.push }),
+    useRouter: () => nav.router,
     useSearchParams: () => nav.params,
     usePathname: () => "/inicio",
 }));
