@@ -112,6 +112,19 @@ beforeEach(() => {
 });
 
 describe("AppSidebar workspace switcher", () => {
+  it("lets a short screen scroll down to History instead of squeezing it under the footer", () => {
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Histórico" });
+    // The region takes only the room left, never the whole list's height...
+    expect(region).toHaveClass("basis-0", "overflow-y-auto");
+    // ...and keeps a floor of a few rows inside lists that never shrink below
+    // their content, so the sidebar's own scroll reaches it.
+    const section = region.parentElement!;
+    expect(section).toHaveClass("min-h-40");
+    expect(section.parentElement).not.toHaveClass("min-h-0");
+    expect(section.parentElement!.parentElement).toHaveClass("overflow-y-auto");
+  });
+
   it("updates a review's running/completed icon without remounting any History rows", async () => {
     state.chats = [{ id: "chat", title: "Keep this chat", updated_at: "2026-10-14T00:00:00Z" } as Chat];
     const review = { id: "review", title: "Running review", updated_at: "2026-10-15T00:00:00Z", is_running: true } as TabularReview;
