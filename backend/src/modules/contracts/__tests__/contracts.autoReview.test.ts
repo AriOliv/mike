@@ -8,7 +8,7 @@ const access = vi.hoisted(() => ({
 vi.mock("../../../lib/access", () => access);
 const enqueue = vi.hoisted(() => ({ enqueueDbJob: vi.fn() }));
 vi.mock("../../../lib/dbq/enqueue", () => enqueue);
-const playbooks = vi.hoisted(() => ({ startPlaybookReview: vi.fn() }));
+const playbooks = vi.hoisted(() => ({ startPlaybookReview: vi.fn(), findPlaybookForContractType: vi.fn() }));
 vi.mock("../../playbooks/playbooks.service", () => playbooks);
 const settings = vi.hoisted(() => ({
     getUserModelSettings: vi.fn(
@@ -437,13 +437,47 @@ describe("handleAutoReview", () => {
         fake.done();
     });
 
+    it("without the folder's playbook, runs the organization's playbook for the contract's type", async () => {
+        terms.extractTermsForAgent.mockResolvedValue({ sources: {} });
+        playbooks.findPlaybookForContractType.mockResolvedValue({ id: "pb-nda" });
+        playbooks.startPlaybookReview.mockResolvedValue({
+            run: { id: "pr2" },
+            done: Promise.resolve({ summary: "NDA ok", findings: [{ status: "acceptable", quote: "a" }] }),
+        });
+        const fake = scriptedDb([
+            { table: "contract_reviews", data: { ...reviewRow, playbook_id: null } },
+            { table: "agent_runs", op: "insert", data: { id: "run1" } },
+            { table: "contract_reviews", op: "update" },
+            { table: "contract_reviews", op: "update" }, // ficha
+            { table: "projects", data: { contract_type: "NDA" } },
+            { table: "contract_reviews", op: "update" }, // playbook chosen by type
+            { table: "contract_reviews", op: "update" }, // playbook step
+            { table: "contract_reviews", op: "update" }, // run id
+            { table: "contract_reviews", op: "update" }, // ready
+            { table: "agent_runs", op: "update" },
+            { table: "document_versions", data: { filename: "NDA.docx" } },
+            { table: "card_events", op: "insert", data: { id: 1 } },
+        ]);
+        expect(await handleAutoReview(fake.db, job())).toMatchObject({ aligned: 1 });
+        expect(playbooks.findPlaybookForContractType).toHaveBeenCalledWith(expect.anything(), {
+            userId: "u",
+            orgId: "o1",
+            contractType: "NDA",
+        });
+        expect(fake.calls[5].payload).toEqual({ playbook_id: "pb-nda", updated_at: expect.any(String) });
+        expect(playbooks.startPlaybookReview).toHaveBeenCalledWith(expect.objectContaining({ playbookId: "pb-nda" }));
+        fake.done();
+    });
+
     it("without a playbook, summarises the Ficha", async () => {
         terms.extractTermsForAgent.mockResolvedValue(null);
+        playbooks.findPlaybookForContractType.mockResolvedValue(null);
         const fake = scriptedDb([
             { table: "contract_reviews", data: { ...reviewRow, playbook_id: null } },
             { table: "agent_runs", op: "insert", data: { id: "run1" } },
             { table: "contract_reviews", op: "update" },
             { table: "contract_reviews", op: "update" },
+            { table: "projects", data: { contract_type: null } },
             { table: "contract_reviews", op: "update" },
             { table: "agent_runs", op: "update" },
             { table: "document_versions", data: null },
@@ -451,8 +485,8 @@ describe("handleAutoReview", () => {
         ]);
         await handleAutoReview(fake.db, job());
         expect(playbooks.startPlaybookReview).not.toHaveBeenCalled();
-        expect(fake.calls[4].payload).toMatchObject({ summary: "Não consegui extrair a Ficha deste contrato." });
-        expect(fake.calls[7].payload).toMatchObject({ after: { document: null, sources: 0 } });
+        expect(fake.calls[5].payload).toMatchObject({ summary: "Não consegui extrair a Ficha deste contrato." });
+        expect(fake.calls[8].payload).toMatchObject({ after: { document: null, sources: 0 } });
         fake.done();
     });
 
