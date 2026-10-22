@@ -35,7 +35,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   PERSONAL_WORKSPACE: "personal",
-  PERSONAL_WORKSPACE_LABEL: "Personal",
+  PERSONAL_WORKSPACE_LABEL: "Pessoal",
   useWorkspace: () => ({
     workspaceId: mocks.workspaceId,
     organizations: mocks.organizations,
@@ -104,7 +104,7 @@ describe("the sections each role is offered", () => {
     expect(sections()).toEqual([
       "General",
       "Members",
-      "Audit log",
+      "Registro de auditoria",
       "Bring Your Own Keys",
       "Privacy & Data",
     ]);
@@ -114,7 +114,7 @@ describe("the sections each role is offered", () => {
     mocks.role = "admin";
     renderShell();
     await screen.findByText("section for Elite Law LLP");
-    expect(sections()).toEqual(["General", "Members", "Audit log", "Bring Your Own Keys"]);
+    expect(sections()).toEqual(["General", "Members", "Registro de auditoria", "Bring Your Own Keys"]);
   });
 
   it("offers a member General and Members only", async () => {
