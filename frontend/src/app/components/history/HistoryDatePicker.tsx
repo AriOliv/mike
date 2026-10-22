@@ -10,6 +10,7 @@ import {
   type DropdownProps,
   type Matcher,
 } from "@daypicker/react";
+import { ptBR } from "@daypicker/react/locale";
 import calendarStyles from "@daypicker/react/style.module.css";
 import {
   CalendarDays,
@@ -81,7 +82,7 @@ export function HistoryDatePicker({
             <FormTextInput
               id={id}
               type="text"
-              placeholder="YYYY-MM-DD"
+              placeholder="AAAA-MM-DD"
               maxLength={10}
               className="h-8 min-w-0 rounded-lg pl-2.5 pr-9 text-xs"
               required
@@ -94,7 +95,7 @@ export function HistoryDatePicker({
             <PopoverTrigger asChild>
               <TextButtonUI
                 size="icon-xs"
-                aria-label={`${label} calendar`}
+                aria-label={`${label}: calendário`}
                 disabled={disabled}
                 className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2"
               >
@@ -108,13 +109,14 @@ export function HistoryDatePicker({
           align="start"
           className="rounded-2xl"
           collisionPadding={16}
-          aria-label={`${label} calendar`}
+          aria-label={`${label}: calendário`}
           onOpenAutoFocus={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.stopPropagation()}
         >
           <DropdownSurface>
             <DayPicker
               mode="single"
+              locale={ptBR}
               required
               autoFocus
               selected={selected}
@@ -137,8 +139,8 @@ export function HistoryDatePicker({
                 YearsDropdown: CalendarYearDropdown,
               }}
               labels={{
-                labelMonthDropdown: () => "Month",
-                labelYearDropdown: () => "Year",
+                labelMonthDropdown: () => "Mês",
+                labelYearDropdown: () => "Ano",
               }}
               style={CALENDAR_STYLE}
               classNames={CALENDAR_CLASSES}

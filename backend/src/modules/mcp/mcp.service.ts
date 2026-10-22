@@ -2,6 +2,13 @@
 // the personal access tokens behind it, and the tool contract other modules
 // implement (McpTool, McpContext). Other modules import only from here.
 
+// FIRST, before anything that loads the catalog: the catalog imports the
+// facades of the modules that publish tools, and they import defineTool from
+// here. Exporting it ahead of that cycle keeps it defined whichever side
+// loads first.
+export { DEFAULT_SCOPES, MCP_SCOPES, defineTool } from "./mcp.types";
+export type { AnyMcpTool, McpContext, McpRole, McpScope, McpTool, McpToolAnnotations } from "./mcp.types";
+
 import type { Db } from "../../lib/supabase";
 import { ok, type ServiceResult } from "../../lib/serviceResult";
 import { buildContext, cleanClientName } from "./mcp.context";
@@ -11,8 +18,6 @@ import type { McpContext } from "./mcp.types";
 export { buildServer, SERVER_INFO } from "./mcp.server";
 export { createAccessToken, listAccessTokens, revokeAccessToken } from "./mcp.tokens";
 export type { AccessTokenView } from "./mcp.tokens";
-export { DEFAULT_SCOPES, MCP_SCOPES, defineTool } from "./mcp.types";
-export type { AnyMcpTool, McpContext, McpRole, McpScope, McpTool, McpToolAnnotations } from "./mcp.types";
 
 const REJECTION_MESSAGE: Record<TokenRejection, string> = {
     missing: "Envie o token de acesso do Mike no cabeçalho Authorization: Bearer.",
@@ -33,7 +38,7 @@ function clientNameOf(body: unknown, lastClient: string | null, userAgent: strin
     return cleanClientName(userAgent?.split(/[\s/]/)[0]);
 }
 
-export type McpAuthFailure = { status: 401 | 403; message: string };
+export type McpAuthFailure = { status: 400 | 401 | 403; message: string };
 
 /**
  * Authenticates one /mcp call and builds the context its tools run with.
@@ -42,9 +47,23 @@ export type McpAuthFailure = { status: 401 | 403; message: string };
  */
 export async function openMcpCall(
     db: Db,
-    input: { authorization: string | undefined; body: unknown; userAgent: string | undefined },
+    input: {
+        authorization: string | undefined;
+        body: unknown;
+        userAgent: string | undefined;
+        /** X-Mike-Acting-User. Never honoured on a personal token (doc 09 §3.2). */
+        actingUser?: string | undefined;
+    },
     now: Date = new Date(),
 ): Promise<ServiceResult<McpContext> | { ok: false; kind: "auth"; auth: McpAuthFailure }> {
+    // A personal token acts only as its owner. Ignoring the header would let
+    // a bot believe it is acting for someone else while it acts as the owner.
+    if (input.actingUser !== undefined)
+        return {
+            ok: false,
+            kind: "auth",
+            auth: { status: 400, message: "X-Mike-Acting-User só vale com um token de serviço autorizado a agir em nome de outra pessoa." },
+        };
     const auth = await authenticateToken(db, input.authorization, now);
     if (!auth.ok) {
         return {

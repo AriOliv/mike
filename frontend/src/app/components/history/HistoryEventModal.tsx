@@ -30,11 +30,13 @@ import {
   auditDetailFields,
   auditLabel,
   auditPrivateAccess,
+  auditStatusLabel,
   auditSubject,
   auditSubjectEmail,
   auditSummary,
   auditTimestamp,
   SURFACE_LABELS,
+  SYSTEM_ACTOR,
 } from "./auditPresentation";
 
 const DocumentContent = lazy(() =>
@@ -105,13 +107,13 @@ export function HistoryEventModal({
         if (!current) return;
         setError(
           cause instanceof MikeApiError && cause.status === 403
-            ? "You do not have access to this document."
+            ? "Você não tem acesso a este documento."
             : cause instanceof MikeApiError && cause.status === 404
-              ? "This document is no longer available."
+              ? "Este documento não está mais disponível."
               : knownErrorCodeMessage(
                   cause,
                   {},
-                  "This document could not be opened. Please try again.",
+                  "Não consegui abrir este documento. Tente de novo.",
                 ),
         );
       });
@@ -139,7 +141,7 @@ export function HistoryEventModal({
       if (mounted.current) await action();
     } catch (cause) {
       if (mounted.current)
-        setActionError(privateAccessError(cause, "Could not open this item."));
+        setActionError(privateAccessError(cause, "Não consegui abrir este item."));
     } finally {
       pending.current = false;
       if (mounted.current) setBusy(false);
@@ -168,7 +170,7 @@ export function HistoryEventModal({
       onAccessChange?.(false);
     } catch (cause) {
       if (mounted.current)
-        setActionError(privateAccessError(cause, "Could not end access."));
+        setActionError(privateAccessError(cause, "Não consegui encerrar o acesso."));
     } finally {
       pending.current = false;
       if (mounted.current) setBusy(false);
@@ -182,14 +184,14 @@ export function HistoryEventModal({
   const subjectEmail = auditSubjectEmail(event);
   const destination = auditDestination(event);
   const fields = [
-    { label: "Description", value: auditSummary(event, personal) },
+    { label: "Descrição", value: auditSummary(event, personal) },
     ...(!personal
       ? [
           {
-            label: "Performed by",
+            label: "Feito por",
             value: (
               <span className="flex max-w-full items-center justify-end gap-2">
-                {auditActor(event) !== "System" && (
+                {auditActor(event) !== SYSTEM_ACTOR && (
                   <UserAvatar
                     photo={event.user_profile_photo}
                     name={event.user_display_name}
@@ -205,7 +207,7 @@ export function HistoryEventModal({
         ]
       : []),
     {
-      label: subject.type,
+      label: subject.label,
       value:
         ["Member", "Recipient"].includes(subject.type) &&
         subject.name !== "-" ? (
@@ -220,26 +222,26 @@ export function HistoryEventModal({
         ),
     },
     ...auditDetailFields(event).filter(
-      (field) => !privateAccess || field.label !== "Access",
+      (field) => !privateAccess || field.label !== "Acesso",
     ),
     ...(subject.context &&
     subject.context !== (SURFACE_LABELS[event.surface ?? ""] ?? event.surface)
-      ? [{ label: "Location", value: subject.context }]
+      ? [{ label: "Local", value: subject.context }]
       : []),
-    { label: "When", value: auditTimestamp(event.created_at, true) },
-    { label: "Status", value: auditLabel(event.status) },
+    { label: "Quando", value: auditTimestamp(event.created_at, true) },
+    { label: "Status", value: auditStatusLabel(event.status) },
     ...(privateAccess
-      ? [{ label: "Access", value: "Read-only · access is logged" }]
+      ? [{ label: "Acesso", value: "Só leitura · o acesso fica registrado" }]
       : []),
     ...(event.surface
       ? [
           {
-            label: "Application",
+            label: "Origem",
             value: SURFACE_LABELS[event.surface] ?? auditLabel(event.surface),
           },
         ]
       : []),
-    ...(event.model ? [{ label: "Model", value: event.model }] : []),
+    ...(event.model ? [{ label: "Modelo", value: event.model }] : []),
   ];
 
   return (
@@ -253,15 +255,15 @@ export function HistoryEventModal({
             ? "h-[min(800px,calc(100dvh-2rem))]"
             : "h-auto max-h-[calc(100dvh-2rem)]"
         }`}
-        breadcrumbs={[title, preview ? "Document" : "Event details"]}
+        breadcrumbs={[title, preview ? "Documento" : "Detalhes do evento"]}
         primaryAction={
           preview
             ? error
-              ? { label: "Try again", onClick: retryPreview }
+              ? { label: "Tentar de novo", onClick: retryPreview }
               : undefined
             : documentId
               ? {
-                  label: busy ? "Opening…" : "Open document",
+                  label: busy ? "Abrindo…" : "Abrir documento",
                   onClick: openPreview,
                   disabled: busy,
                 }
@@ -269,10 +271,10 @@ export function HistoryEventModal({
         }
         secondaryAction={
           preview
-            ? { label: "Back", onClick: () => setPreview(false) }
+            ? { label: "Voltar", onClick: () => setPreview(false) }
             : privateAccess && hasAccess
               ? {
-                  label: "End access",
+                  label: "Encerrar acesso",
                   onClick: () => void endAccess(),
                   disabled: busy,
                   variant: "secondary",
@@ -296,7 +298,7 @@ export function HistoryEventModal({
                   })
                 }
               >
-                {busy ? "Opening…" : (destination?.label ?? "Open workflow")}
+                {busy ? "Abrindo…" : (destination?.label ?? "Abrir workflow")}
               </PillButtonUI>
             ) : destination ? (
               <Link
@@ -325,7 +327,7 @@ export function HistoryEventModal({
             <div className="mt-4 rounded-xl bg-gray-100 p-4">
               <table
                 className="w-full table-fixed text-left"
-                aria-label="Event details"
+                aria-label="Detalhes do evento"
               >
                 <tbody className="divide-y divide-border">
                   {fields.map(({ label, value }) => (
@@ -350,25 +352,25 @@ export function HistoryEventModal({
                   aria-hidden="true"
                   className="h-3.5 w-3.5 transition-transform group-open:rotate-180"
                 />
-                Technical details
+                Detalhes técnicos
               </summary>
               <div className="mt-3 rounded-xl bg-gray-100 p-4">
                 <table
                   className="w-full table-fixed text-left"
-                  aria-label="Technical details"
+                  aria-label="Detalhes técnicos"
                 >
                   <tbody className="divide-y divide-border">
                     {Object.entries({
-                      "Event ID": event.id,
-                      "Event code": event.action,
-                      "Recorded title": event.title,
-                      "Organization ID": event.org_id,
-                      "Project ID": event.project_id,
-                      "Document ID": event.document_id,
-                      "Chat ID": event.chat_id,
-                      "Review ID": event.review_id,
+                      "ID do evento": event.id,
+                      "Código do evento": event.action,
+                      "Título registrado": event.title,
+                      "ID da organização": event.org_id,
+                      "ID do projeto": event.project_id,
+                      "ID do documento": event.document_id,
+                      "ID da conversa": event.chat_id,
+                      "ID da revisão": event.review_id,
                       ...(event.detail && Object.keys(event.detail).length
-                        ? { Metadata: event.detail }
+                        ? { Metadados: event.detail }
                         : {}),
                     })
                       .filter(([, value]) => value != null)
@@ -396,7 +398,7 @@ export function HistoryEventModal({
       </Modal>
       <WarningPopup
         open={Boolean(actionError)}
-        title="Access unavailable"
+        title="Acesso indisponível"
         message={actionError}
         onClose={() => setActionError(null)}
       />
@@ -408,7 +410,7 @@ function DocumentLoading() {
   return (
     <div
       role="status"
-      aria-label="Loading document"
+      aria-label="Carregando documento"
       className="flex-1 space-y-4 p-4"
     >
       <SkeletonLine className="w-48" />
@@ -451,8 +453,8 @@ function HistoryDocumentPreview({
 function privateAccessError(cause: unknown, fallback: string): string {
   if (cause instanceof MikeApiError) {
     if (cause.status === 403)
-      return "You no longer have permission to access this item.";
-    if (cause.status === 404) return "This item is no longer available.";
+      return "Você não tem mais permissão para acessar este item.";
+    if (cause.status === 404) return "Este item não está mais disponível.";
   }
   return knownErrorCodeMessage(cause, {}, fallback);
 }

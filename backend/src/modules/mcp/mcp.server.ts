@@ -6,8 +6,9 @@
 import crypto from "crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { recordAudit } from "../../lib/audit";
-import type { ServiceFailure } from "../../lib/serviceResult";
+import { failure, type ServiceFailure } from "../../lib/serviceResult";
 import { readTools } from "./mcp.catalog";
 import type { AnyMcpTool, McpContext } from "./mcp.types";
 
@@ -63,7 +64,12 @@ export async function runTool(tool: AnyMcpTool, ctx: McpContext, input: Record<s
             code = "forbidden";
             result = errorResult(code, "Ações de escrita ainda não estão liberadas pelo MCP.");
         } else {
-            const out = await tool.handler(ctx, input);
+            // The SDK validates on /mcp; this keeps any other caller of
+            // runTool (a future in-process agent) to the same schema.
+            const parsed = z.object(tool.input).strict().safeParse(input);
+            const out = parsed.success
+                ? await tool.handler(ctx, parsed.data)
+                : failure("validation", `Argumentos inválidos: ${parsed.error.issues.map((i) => i.path.join(".") || i.message).join(", ")}.`);
             if (out.ok) {
                 result = {
                     content: [{ type: "text", text: tool.summary(out.data) }],

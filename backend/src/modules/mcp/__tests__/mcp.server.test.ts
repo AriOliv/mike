@@ -105,6 +105,27 @@ describe("/mcp over HTTP", () => {
         await expect(connect(t)).rejects.toThrow();
     });
 
+    it("refuses X-Mike-Acting-User on a personal token: it never acts as someone else", async () => {
+        const t = await token();
+        const r = await fetch(base, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json, text/event-stream",
+                Authorization: `Bearer ${t}`,
+                "X-Mike-Acting-User": "slack:T1:U2",
+            },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        });
+        expect(r.status).toBe(400);
+        expect((await r.json()).error.message).toMatch(/token de serviço/);
+        expect(audit.recordAudit).not.toHaveBeenCalled();
+    });
+
+    it("refuses service tokens until the confirmed identity link exists", async () => {
+        await expect(connect("mike_svc_qualquer-coisa")).rejects.toThrow();
+    });
+
     it("never accepts a session (Supabase) JWT as an MCP token", async () => {
         await expect(connect("eyJhbGciOiJIUzI1NiJ9.e30.assinatura")).rejects.toThrow();
     });
@@ -175,9 +196,12 @@ describe("tool gating and results", () => {
         expect(await runTool(reader, ctx({ role: "requester" }), { project_id: "p1" })).toMatchObject({ structuredContent: { error: { code: "forbidden" } } });
         expect(await runTool(writer, ctx(), { project_id: "p1" })).toMatchObject({ structuredContent: { error: { code: "forbidden" } } });
         spy.mockRestore();
+        // Validated here too, not only by the SDK on /mcp.
+        expect(await runTool(reader, ctx(), { project_id: 42 })).toMatchObject({ structuredContent: { error: { code: "invalid_input", message: "Argumentos inválidos: project_id." } } });
+        expect(await runTool(reader, ctx(), { project_id: "p1", user_id: "outra-pessoa" })).toMatchObject({ structuredContent: { error: { code: "invalid_input" } } });
 
         const rows = audit.recordAudit.mock.calls.map((c) => (c as unknown[])[1] as Record<string, unknown>);
-        expect(rows.map((r) => r.status)).toEqual(["completed", "failed", "failed", "failed", "failed"]);
+        expect(rows.map((r) => r.status)).toEqual(["completed", "failed", "failed", "failed", "failed", "failed", "failed"]);
         expect(rows[0]).toMatchObject({ projectId: "p1", detail: { args_hash: argsHash({ project_id: "p1" }) } });
         expect(JSON.stringify(rows)).not.toContain('"project_id":"p1"');
     });
