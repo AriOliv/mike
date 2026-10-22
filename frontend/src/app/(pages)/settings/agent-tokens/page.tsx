@@ -59,9 +59,9 @@ const CHIP: Record<TokenState, { status: ChipStatus; className?: string; title?:
 
 type Draft = { name: string; workspace: string; scopes: McpScope[]; days: number };
 
-const emptyDraft = (offered: typeof SCOPE_OPTIONS): Draft => ({
+const emptyDraft = (offered: typeof SCOPE_OPTIONS, workspace = "personal"): Draft => ({
     name: "",
-    workspace: "personal",
+    workspace,
     scopes: offered.map((o) => o.scope),
     days: 30,
 });
@@ -96,7 +96,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
 
 export default function AgentTokensPage() {
     const router = useRouter();
-    const { organizations } = useWorkspace();
+    const { organizations, workspaceId } = useWorkspace();
     const [tokens, setTokens] = useState<McpAccessToken[] | null>(null);
     const [who, setWho] = useState<LegalRole>(null);
     const offered = useMemo(() => scopesFor(who), [who]);
@@ -138,7 +138,9 @@ export default function AgentTokensPage() {
     }, [load]);
 
     const openCreate = () => {
-        setDraft(emptyDraft(offered));
+        // The space the person is working in, when it is one they can pick.
+        const active = workspaceId && teams.some((o) => o.id === workspaceId) ? workspaceId : "personal";
+        setDraft(emptyDraft(offered, active));
         setCreating(true);
     };
 
