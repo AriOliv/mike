@@ -11,6 +11,7 @@ vi.mock("../../user/user.service", () => ({
     getUserModelSettings: vi.fn(async () => ({ tabular_model: "test-model", last_selected_chat_model: null, api_keys: {} })),
 }));
 vi.mock("../../../lib/dbq/enqueue", () => ({ enqueueDbJob: vi.fn(async () => ({ id: "job", deduped: false })) }));
+vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn(async () => undefined) }));
 
 import {
     handleRequestTriage,
@@ -18,9 +19,10 @@ import {
     REQUEST_READ_TOOLS,
     REQUEST_TOOLS,
     REQUEST_WRITE_TOOLS,
-    type RequestsMcpContext,
-    type RequestsMcpTool,
 } from "../requests.service";
+import type { AnyMcpTool, McpContext } from "../../mcp/mcp.service";
+import { allowed, runTool } from "../../mcp/mcp.server";
+import { readTools } from "../../mcp/mcp.catalog";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const HEAD = { userId: "aaaaaaaa-0000-4000-8000-000000000001", userEmail: "head@avenia.io" };
@@ -83,15 +85,18 @@ function world() {
 
 
 const ALL = [...REQUEST_READ_TOOLS, ...REQUEST_WRITE_TOOLS];
-const tool = (name: string) => ALL.find((t) => t.name === `mike_pedidos_${name}`) as RequestsMcpTool;
+const tool = (name: string) => ALL.find((t) => t.name === `mike_pedidos_${name}`) as AnyMcpTool;
 
-function ctxOf(w: ReturnType<typeof world>, who: { userId: string; userEmail: string }, name: string, role: "head" | "team" | "requester"): RequestsMcpContext {
+function ctxOf(w: ReturnType<typeof world>, who: { userId: string; userEmail: string }, name: string, role: "head" | "team" | "requester"): McpContext {
     return {
         db: w.db,
         caller: who,
+        displayName: name,
         role,
+        workspace: null,
         scopes: ["pedidos:read", "pedidos:write"],
         clientName: "claude-code",
+        tokenId: "token-1",
         actor: {
             actorType: "agent",
             actorId: "mcp:claude-code",
@@ -103,12 +108,12 @@ function ctxOf(w: ReturnType<typeof world>, who: { userId: string; userEmail: st
 }
 
 /** Parse like the server, then run. */
-async function call(t: RequestsMcpTool, ctx: RequestsMcpContext, args: Record<string, unknown>) {
+async function call(t: AnyMcpTool, ctx: McpContext, args: Record<string, unknown>) {
     const input = z.object(t.input).parse(args);
     const result = await t.handler(ctx, input);
     return { result, text: result.ok ? t.summary(result.data) : null };
 }
-async function preview(t: RequestsMcpTool, ctx: RequestsMcpContext, args: Record<string, unknown>) {
+async function preview(t: AnyMcpTool, ctx: McpContext, args: Record<string, unknown>) {
     return t.confirm!.preview(ctx, z.object(t.input).parse(args));
 }
 
@@ -131,13 +136,14 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("the catalog", () => {
-    it("registers only the reads in Phase 1; every write has a preview", () => {
-        expect(REQUEST_TOOLS.map((t) => t.name)).toEqual([
+    it("hands the catalog reads and writes; only the reads are Phase 1, and every write has a preview", () => {
+        expect(REQUEST_TOOLS.filter((t) => t.access === "read").map((t) => t.name)).toEqual([
             "mike_pedidos_listar_meus",
             "mike_pedidos_ler",
             "mike_pedidos_status_e_plano",
             "mike_pedidos_fila",
         ]);
+        expect(REQUEST_TOOLS).toHaveLength(9);
         for (const t of REQUEST_READ_TOOLS) {
             expect(t).toMatchObject({ scope: "pedidos:read", access: "read", annotations: { readOnlyHint: true, openWorldHint: false } });
             expect(t.confirm).toBeUndefined();
@@ -332,5 +338,35 @@ describe("the team through an assistant", () => {
             expect(detail).toMatch(/[ãçéêíóúõ]|Só|Conte/);
             expect(detail).not.toMatch(/[0-9a-f]{8}-|_id|assignee|lane|request/i);
         }
+    });
+});
+
+describe("through the mcp server", () => {
+    it("publishes the four reads next to mike_quem_sou, each to the roles the screen allows", () => {
+        const names = readTools().map((t) => t.name);
+        expect(names).toEqual(expect.arrayContaining(["mike_quem_sou", ...REQUEST_READ_TOOLS.map((t) => t.name)]));
+        expect(names.filter((n) => n.startsWith("mike_pedidos_"))).toHaveLength(4);
+        const scopes = ["pedidos:read"] as McpContext["scopes"];
+        expect(allowed(tool("fila"), { role: "requester", scopes })).toBe(false);
+        expect(allowed(tool("fila"), { role: "team", scopes })).toBe(true);
+        expect(allowed(tool("listar_meus"), { role: "requester", scopes: [] })).toBe(false);
+    });
+
+    it("runs a read into a Portuguese result and refuses a write until Phase 2", async () => {
+        const w = world();
+        const code = await pedido(w);
+        const ana = ctxOf(w, REQUESTER, "Ana", "requester");
+        const read = await runTool(tool("status_e_plano"), ana, { pedido: code });
+        expect(read.isError).toBeFalsy();
+        expect(read.structuredContent).toMatchObject({ codigo: code, etapa: "Recebido" });
+        expect((read.content as { text: string }[])[0].text).toMatch(/^LEG-0001: Recebido/);
+
+        const write = await runTool(tool("criar"), ana, { tipo: "nda", descricao: "Outro piloto." });
+        expect(write.isError).toBe(true);
+        expect(w.table("legal_requests")).toHaveLength(1);
+
+        const other = await runTool(tool("ler"), ctxOf(w, OTHER, "Beto", "requester"), { pedido: code });
+        expect(other.isError).toBe(true);
+        expect(other.structuredContent).toMatchObject({ error: { code: "not_found", message: "Pedido não encontrado." } });
     });
 });

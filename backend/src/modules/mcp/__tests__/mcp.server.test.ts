@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({ db: null as unknown, role: "team" as "head" | 
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: () => state.db }));
 vi.mock("../../requests/requests.service", () => ({
     whoAmI: vi.fn(async () => ({ ok: true, data: { configured: true, role: state.role, area: null, areas: [] } })),
+    // The requests tools have their own tests (requests.mcp.test.ts).
+    REQUEST_TOOLS: [],
 }));
 const audit = vi.hoisted(() => ({ recordAudit: vi.fn(async () => undefined) }));
 vi.mock("../../../lib/audit", () => audit);

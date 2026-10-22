@@ -12,10 +12,10 @@
 // records its channel as mcp:<client>.
 
 import { z } from "zod";
-import type { Db } from "../../lib/supabase";
 import { failure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { LANES } from "../contracts/contracts.service";
-import type { Caller, McpActor } from "./requests.access";
+import { defineTool, type AnyMcpTool, type McpContext, type McpToolAnnotations } from "../mcp/mcp.service";
+import type { Caller } from "./requests.access";
 import {
     assignRequest,
     createRequest,
@@ -41,48 +41,12 @@ import {
     type PlanStep,
 } from "./requests.shared";
 
-// ---------------------------------------------------------------------------
-// The contract of doc 09 §5. Declared here until the mcp module lands
-// (Atlas, PR 1a); then it is `import type { McpTool, McpContext } from
-// "../mcp/mcp.service"` and this block goes away.
-
-type McpRole = "head" | "team" | "requester";
-export type McpContext = {
-    db: Db;
-    caller: { userId: string; userEmail: string };
-    role: McpRole;
-    scopes: readonly string[];
-    clientName: string;
-    actor: McpActor;
-};
-type ToolAnnotations = {
-    readOnlyHint?: boolean;
-    destructiveHint?: boolean;
-    idempotentHint?: boolean;
-    openWorldHint?: boolean;
-};
-export type McpTool<I extends z.ZodRawShape = z.ZodRawShape, O = unknown> = {
-    name: string;
-    title: string;
-    description: string;
-    input: I;
-    scope: "pedidos:read" | "pedidos:write";
-    roles: readonly McpRole[];
-    access: "read" | "write";
-    annotations?: ToolAnnotations;
-    confirm?: {
-        preview(ctx: McpContext, input: z.infer<z.ZodObject<I>>): Promise<ServiceResult<{ resumo: string; detalhes?: unknown }>>;
-    };
-    handler(ctx: McpContext, input: z.infer<z.ZodObject<I>>): Promise<ServiceResult<O>>;
-    summary(output: O): string;
-};
-// ---------------------------------------------------------------------------
 
 const EVERYONE = ["head", "team", "requester"] as const;
 const TEAM = ["head", "team"] as const;
 
-const READ: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-const WRITE: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+const READ: McpToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const WRITE: McpToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
 const STATUS_LABELS: Record<string, string> = {
     novo: "Novo",
@@ -234,7 +198,7 @@ function planoPt(plan: PlanStep[]) {
 
 // --- Reads ------------------------------------------------------------------
 
-const listarMeus: McpTool<{ abertos: z.ZodOptional<z.ZodBoolean> }, { pedidos: PedidoResumo[]; total: number }> = {
+const listarMeus = defineTool({
     name: "mike_pedidos_listar_meus",
     title: "Meus pedidos ao Legal",
     description:
@@ -261,9 +225,9 @@ const listarMeus: McpTool<{ abertos: z.ZodOptional<z.ZodBoolean> }, { pedidos: P
             (waiting ? `; ${waiting} esperando resposta sua.` : ".")
         );
     },
-};
+});
 
-const ler: McpTool<{ pedido: typeof pedidoRef }, { pedido: PedidoCompleto }> = {
+const ler = defineTool({
     name: "mike_pedidos_ler",
     title: "Ler um pedido",
     description:
@@ -289,7 +253,7 @@ const ler: McpTool<{ pedido: typeof pedidoRef }, { pedido: PedidoCompleto }> = {
             (p.aguardando_voce ? ". O Legal espera uma resposta sua." : ".")
         );
     },
-};
+});
 
 type StatusEPlano = {
     codigo: string;
@@ -304,7 +268,7 @@ type StatusEPlano = {
     link: string;
 };
 
-const statusEPlano: McpTool<{ pedido: typeof pedidoRef }, StatusEPlano> = {
+const statusEPlano = defineTool({
     name: "mike_pedidos_status_e_plano",
     title: "Status e plano de um pedido",
     description:
@@ -315,7 +279,7 @@ const statusEPlano: McpTool<{ pedido: typeof pedidoRef }, StatusEPlano> = {
     roles: EVERYONE,
     access: "read",
     annotations: READ,
-    async handler(ctx, input) {
+    async handler(ctx, input): Promise<ServiceResult<StatusEPlano>> {
         const id = await idOf(ctx, input.pedido);
         if (!id.ok) return id;
         const result = await getRequestPlan(ctx.db, callerOf(ctx), id.data);
@@ -344,7 +308,7 @@ const statusEPlano: McpTool<{ pedido: typeof pedidoRef }, StatusEPlano> = {
             (out.ultima_pergunta ? ` O Legal perguntou: “${out.ultima_pergunta}”` : "")
         );
     },
-};
+});
 
 const FILTROS = ["abertos", "sem_dono", "prazo_estourando", "aguardando_solicitante", "meus", "triagem_pendente", "todos"] as const;
 
@@ -361,14 +325,7 @@ type Fila = {
     contagens: { sem_dono: number; prazo_estourando: number; aguardando_solicitante: number; meus: number };
 };
 
-const fila: McpTool<
-    {
-        filtro: z.ZodOptional<z.ZodEnum<{ [K in (typeof FILTROS)[number]]: K }>>;
-        busca: z.ZodOptional<z.ZodString>;
-        limite: z.ZodOptional<z.ZodNumber>;
-    },
-    Fila
-> = {
+const fila = defineTool({
     name: "mike_pedidos_fila",
     title: "Fila de pedidos do Legal",
     description:
@@ -383,7 +340,7 @@ const fila: McpTool<
     roles: TEAM,
     access: "read",
     annotations: READ,
-    async handler(ctx, input) {
+    async handler(ctx, input): Promise<ServiceResult<Fila>> {
         const list = await listRequests(ctx.db, callerOf(ctx));
         if (!list.ok) return list;
         if (list.data.scope !== "team") return failure("forbidden", "A fila é só do time do Legal.");
@@ -443,7 +400,7 @@ const fila: McpTool<
             `aguardando quem pediu: ${c.aguardando_solicitante} · meus: ${c.meus}.`
         );
     },
-};
+});
 
 // --- Writes (Phase 2) ---------------------------------------------------------
 
@@ -486,7 +443,7 @@ function createInput(ctx: McpContext, input: z.infer<z.ZodObject<typeof criarInp
     };
 }
 
-const criar: McpTool<typeof criarInput, { pedido: PedidoCompleto; ja_existia: boolean }> = {
+const criar = defineTool({
     name: "mike_pedidos_criar",
     title: "Pedir ao Legal",
     description:
@@ -522,11 +479,11 @@ const criar: McpTool<typeof criarInput, { pedido: PedidoCompleto; ja_existia: bo
             ? `Esse pedido já existia: ${p.codigo} · ${p.titulo}.`
             : `Pedido ${p.codigo} criado: ${p.titulo}, prazo ${p.prazo}. Acompanhe em ${p.link}`;
     },
-};
+});
 
 const responderInput = { pedido: pedidoRef, resposta: z.string().min(1).max(4000) };
 
-const responderDuvida: McpTool<typeof responderInput, { pedido: PedidoCompleto }> = {
+const responderDuvida = defineTool({
     name: "mike_pedidos_responder_duvida",
     title: "Responder ao Legal",
     description:
@@ -572,11 +529,11 @@ const responderDuvida: McpTool<typeof responderInput, { pedido: PedidoCompleto }
     summary({ pedido: p }) {
         return `Resposta enviada no ${p.codigo}. ${p.quem_cuida ? `${p.quem_cuida} recebe` : "O Legal recebe"} pela tela do pedido.`;
     },
-};
+});
 
 const assumirInput = { pedido: pedidoRef };
 
-const assumir: McpTool<typeof assumirInput, { pedido: PedidoCompleto }> = {
+const assumir = defineTool({
     name: "mike_pedidos_assumir",
     title: "Assumir um pedido",
     description:
@@ -613,14 +570,14 @@ const assumir: McpTool<typeof assumirInput, { pedido: PedidoCompleto }> = {
     summary({ pedido: p }) {
         return `Agora ${p.quem_cuida ?? "você"} cuida do ${p.codigo}.`;
     },
-};
+});
 
 const mudarEtapaInput = {
     pedido: pedidoRef,
     etapa: z.enum(LANES).describe("entrada, triagem, revisao, negociacao, assinatura ou arquivado."),
 };
 
-const mudarEtapa: McpTool<typeof mudarEtapaInput, { pedido: PedidoCompleto }> = {
+const mudarEtapa = defineTool({
     name: "mike_pedidos_mudar_etapa",
     title: "Mudar a etapa de um pedido",
     description:
@@ -653,7 +610,7 @@ const mudarEtapa: McpTool<typeof mudarEtapaInput, { pedido: PedidoCompleto }> = 
     summary({ pedido: p }) {
         return `${p.codigo} agora está em ${p.etapa_na_esteira ?? "outra etapa"}.`;
     },
-};
+});
 
 const decidirInput = {
     pedido: pedidoRef,
@@ -684,7 +641,7 @@ async function decisionBody(ctx: McpContext, input: DecidirInput): Promise<Servi
     return ok({ decision, kind: input.tipo, counterparty: input.contraparte, assignee_id: assigneeId });
 }
 
-const decidirTriagem: McpTool<typeof decidirInput, { pedido: PedidoCompleto }> = {
+const decidirTriagem = defineTool({
     name: "mike_pedidos_decidir_triagem",
     title: "Decidir a triagem do agente",
     description:
@@ -743,11 +700,14 @@ const decidirTriagem: McpTool<typeof decidirInput, { pedido: PedidoCompleto }> =
     summary({ pedido: p }) {
         return `Triagem do ${p.codigo} decidida. ${p.quem_cuida ? `${p.quem_cuida} cuida.` : "Ainda sem responsável."}`;
     },
-};
+});
 
 /** Phase 1: reads only (doc 09 §10). */
-export const REQUEST_READ_TOOLS = [listarMeus, ler, statusEPlano, fila] as McpTool[];
+export const REQUEST_READ_TOOLS: AnyMcpTool[] = [listarMeus, ler, statusEPlano, fila];
 /** Phase 2: writes, each with a preview the mcp module confirms first. */
-export const REQUEST_WRITE_TOOLS = [criar, responderDuvida, assumir, mudarEtapa, decidirTriagem] as McpTool[];
-/** What the mcp server registers today. */
-export const REQUEST_TOOLS: McpTool[] = REQUEST_READ_TOOLS;
+export const REQUEST_WRITE_TOOLS: AnyMcpTool[] = [criar, responderDuvida, assumir, mudarEtapa, decidirTriagem];
+/**
+ * Everything the mcp catalog takes. The server refuses any `write` until
+ * Phase 2 and leaves it out of the catalog, so the writes travel along.
+ */
+export const REQUEST_TOOLS: AnyMcpTool[] = [...REQUEST_READ_TOOLS, ...REQUEST_WRITE_TOOLS];
