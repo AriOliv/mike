@@ -14,6 +14,7 @@
 import type { Db } from "../../lib/supabase";
 import { internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { countAgentReviews, LANES, listPipeline, type PipelineCard } from "../contracts/contracts.service";
+import { workspaceMatches, type WorkspaceFilter } from "../../lib/workspace";
 import { visibleScanIds } from "../regulatory/regulatory.service";
 
 export type Caller = { userId: string; userEmail?: string | null };
@@ -430,11 +431,13 @@ export async function getDashboard(
     caller: Caller,
     query: Record<string, unknown>,
     now = new Date(),
+    workspace: WorkspaceFilter = null,
 ): Promise<ServiceResult<Dashboard>> {
     const opts = parseDashboardQuery(query);
     const board = await listPipeline(db, caller);
     if (!board.ok) return board;
-    const cards = board.data.cards;
+    // The active workspace, the same cut the home screen counts in.
+    const cards = board.data.cards.filter((c) => workspaceMatches(workspace, c.org_id as string | null | undefined));
     const ids = cards.map((c) => c.id);
 
     try {

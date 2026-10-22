@@ -5595,9 +5595,12 @@ export interface LegalDashboard {
 export async function getLegalDashboard(params?: {
     period?: 30 | 90 | 365;
     assumptions?: Partial<DashboardAssumptions>;
+    /** Narrow to one workspace ("personal" or an organization id), as the Início does. */
+    workspace?: string | null;
 }): Promise<LegalDashboard> {
     const qs = new URLSearchParams();
     if (params?.period) qs.set("period", String(params.period));
+    if (params?.workspace) qs.set("workspace", params.workspace);
     const a = params?.assumptions;
     if (a?.minutes_per_review) qs.set("min_review", String(a.minutes_per_review));
     if (a?.minutes_per_terms) qs.set("min_terms", String(a.minutes_per_terms));
