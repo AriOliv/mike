@@ -7,6 +7,9 @@
 //   contractReview.playbook.ts     Playbook Avenia v1 (seed content)
 //   contractReview.portfolio.ts    the contract portfolio list (GET /contracts/fichas)
 //   contractReview.controle.ts     the Legal's control sheet as a tabular review template
+//   contractReview.analysis.ts     the analyst's analysis: prompt, verifier, playbook yardstick
+//   contractReview.analysisService.ts  start / run / read the analyst's analysis
+//   contractReview.analysisDecisions.ts decide its redlines, export it (Markdown, Word)
 
 export {
     buildClauses,
@@ -39,6 +42,32 @@ export {
     type ControleColumn,
     type TabularColumn,
 } from "./contractReview.controle";
+export {
+    ANALYSIS_READY_JOB,
+    ANALYST_ANALYSIS_JOB,
+    getAnalysisById,
+    getLatestAnalysis,
+    handleAnalystAnalysis,
+    markAnalystAnalysisFailed,
+    startAnalystAnalysis,
+    type ContractAnalysis,
+} from "./contractReview.analysisService";
+export {
+    analysisDocx,
+    analysisMarkdown,
+    decideAnalysisRedline,
+    exportAnalysis,
+    listRedlineDecisions,
+    type RedlineDecision,
+} from "./contractReview.analysisDecisions";
+export {
+    ANALYSIS_NOTICE,
+    type AnalysisItem,
+    type AnalysisResult,
+    type IntakeAnswer,
+    type OpenPoint,
+    type Redline,
+} from "./contractReview.analysis";
 export type { Caller } from "./contractReview.shared";
 
 export { CONTRACT_REVIEW_TOOLS } from "./contractReview.mcp";

@@ -180,6 +180,24 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "respondeu" };
         case "request.delivered":
             return { verb: "entregou o pedido" };
+        case "analysis.completed":
+            return { verb: "analisou o contrato" };
+        case "analysis.failed":
+            return { verb: "não conseguiu analisar o contrato" };
+        case "intake.prefilled": {
+            const n = Number(after.filled ?? 0);
+            return n > 0
+                ? { verb: "leu o contrato e preencheu", object: n === 1 ? "1 item do checklist" : `${n} itens do checklist` }
+                : { verb: "leu o contrato para o checklist" };
+        }
+        case "intake.answered":
+            return { verb: "respondeu o checklist" };
+        case "intake.completed":
+            return { verb: "completou o checklist" };
+        case "request.critical_alert": {
+            const n = Number(after.critical ?? 0);
+            return { verb: "avisou a liderança:", object: n === 1 ? "1 risco crítico" : `${n || "há"} riscos críticos` };
+        }
         case "participant.invited":
             return { verb: "convidou", object: text(after.label) ?? text(after.email) };
         case "participant.revoked":

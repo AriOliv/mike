@@ -11305,12 +11305,19 @@ create index if not exists idx_card_events_at
 
 -- Append-only. The backend connects as service_role, which RLS does not
 -- restrict, so the trigger is the real guard. A retention purge will be a
--- dedicated security-definer function, never an ad hoc delete.
+-- dedicated security-definer function, never an ad hoc delete. The one
+-- DELETE let through is the cascade from deleting the card: by then the
+-- project row is gone (20261022_97).
 create or replace function public.card_events_append_only() returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
+  if tg_op = 'DELETE' and not exists (
+    select 1 from public.projects p where p.id = old.project_id
+  ) then
+    return old;
+  end if;
   raise exception 'card_events is append-only';
 end
 $$;
@@ -11621,6 +11628,45 @@ alter table public.legal_requester_areas enable row level security;
 revoke all on public.legal_requester_areas from anon, authenticated;
 grant select, insert, update, delete on public.legal_requester_areas to service_role;
 
+-- Migration date: 2026-10-22 (20261022_91_request_intake.sql)
+--
+-- The intake checklist of a request to the legal team: what the team needs
+-- to know before it analyses a contract (who approved it, the counterparty,
+-- value and recurrence, confidential information, personal data...).
+--
+-- legal_teams.intake_template is the organization's own checklist, a list of
+-- {key, label, kind, required, hint?}; empty means the generic one in the
+-- code. legal_requests.intake holds the answers by key: {value, source:
+-- requester | inferred, confirmed, quote?}. An inferred answer was read from
+-- the attached contract by the agent and waits for the requester to confirm.
+--
+-- legal_requests.critical_alert_at marks the one alert per request the
+-- Head gets when the contract's analysis finds a critical risk.
+
+alter table public.legal_teams
+  add column if not exists intake_template jsonb not null default '[]'::jsonb;
+
+alter table public.legal_teams
+  drop constraint if exists legal_teams_intake_template_check;
+alter table public.legal_teams
+  add constraint legal_teams_intake_template_check
+    check (jsonb_typeof(intake_template) = 'array');
+
+alter table public.legal_requests
+  add column if not exists intake jsonb not null default '{}'::jsonb,
+  add column if not exists intake_completed_at timestamptz,
+  add column if not exists critical_alert_at timestamptz;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_intake_check;
+alter table public.legal_requests
+  add constraint legal_requests_intake_check
+    check (jsonb_typeof(intake) = 'object');
+
+create index if not exists idx_legal_requests_org_alert
+  on public.legal_requests(org_id, critical_alert_at desc)
+  where critical_alert_at is not null;
+
 -- Migration date: 2026-10-20 (20261020_94_watched_folders.sql)
 --
 -- Automatic review of watched folders: the home screen's queue.
@@ -11868,6 +11914,74 @@ revoke all on public.chat_link_challenges from anon, authenticated;
 grant select, insert, update, delete on public.chat_identity_links to service_role;
 grant select, insert, update, delete on public.chat_link_challenges to service_role;
 
+-- ── Fork: analyst's analysis of a contract (20261022_92) ──
+-- The analyst's analysis of a contract: the reading a legal analyst writes
+-- before the team decides (executive summary, critical risks, points of
+-- attention, favourable points, redline suggestions, compliance, open
+-- points). One row per analysis of a document version, so a new version gets
+-- a new analysis and the old one stays as it was. The result is a draft for
+-- the legal team, never shown to the requester. Fork-only table (slot _92).
+
+create table if not exists public.contract_analyses (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  -- The request whose intake answers framed the analysis, if any.
+  request_id uuid references public.legal_requests(id) on delete set null,
+  document_id uuid references public.documents(id) on delete set null,
+  version_id uuid references public.document_versions(id) on delete set null,
+  -- The playbook used as the yardstick (the organization's for the contract's
+  -- type), and its run, whose findings set the traffic light.
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  playbook_run_id uuid references public.playbook_runs(id) on delete set null,
+  -- The intake answers the analysis considered: [{key, label, value, source}].
+  intake jsonb not null default '[]'::jsonb,
+  model text,
+  status text not null default 'queued',
+  result jsonb,
+  -- Quotes the verifier could not find in the document, with the reason.
+  dropped_citations jsonb not null default '[]'::jsonb,
+  -- {model, calls, input_tokens, output_tokens, estimated_cost_usd}.
+  usage jsonb,
+  error text,
+  requested_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+alter table public.contract_analyses drop constraint if exists contract_analyses_status_check;
+alter table public.contract_analyses add constraint contract_analyses_status_check
+  check (status in ('queued', 'running', 'done', 'failed'));
+create index if not exists idx_contract_analyses_project
+  on public.contract_analyses(project_id, created_at desc);
+-- One live analysis per document version: asking again returns it.
+create unique index if not exists uq_contract_analyses_version
+  on public.contract_analyses(version_id) where version_id is not null;
+
+-- One decision per redline suggestion: accepted (applied as a tracked change),
+-- edited (applied with the person's wording) or rejected.
+create table if not exists public.contract_analysis_decisions (
+  analysis_id uuid not null references public.contract_analyses(id) on delete cascade,
+  redline_id text not null,
+  decision text not null,
+  edited_text text,
+  edit jsonb,
+  reason text,
+  decided_by text not null,
+  decided_at timestamptz not null default now(),
+  primary key (analysis_id, redline_id)
+);
+alter table public.contract_analysis_decisions drop constraint if exists contract_analysis_decisions_decision_check;
+alter table public.contract_analysis_decisions add constraint contract_analysis_decisions_decision_check
+  check (decision in ('aceito', 'editado', 'rejeitado'));
+
+alter table public.contract_analyses enable row level security;
+alter table public.contract_analysis_decisions enable row level security;
+revoke all on public.contract_analyses, public.contract_analysis_decisions from anon, authenticated;
+grant select, insert, update, delete on public.contract_analyses, public.contract_analysis_decisions
+  to service_role;
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12045,6 +12159,9 @@ insert into public.schema_migrations (filename) values
   ('20261021_90_legal_agent.sql'),
   ('20261021_91_mcp_access_tokens.sql'),
   ('20261022_90_chat_identity_links.sql'),
+  ('20261022_91_request_intake.sql'),
+  ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
-  ('20261022_96_mcp_oauth.sql')
+  ('20261022_96_mcp_oauth.sql'),
+  ('20261022_97_card_events_cascade.sql')
 on conflict (filename) do nothing;

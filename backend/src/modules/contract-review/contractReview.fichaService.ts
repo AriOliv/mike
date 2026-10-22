@@ -93,7 +93,11 @@ export async function getFicha(db: Db, caller: Caller, projectId: string): Promi
     const allowed = await requireContractView(db, caller, projectId);
     if (!allowed.ok) return allowed;
     try {
-        return ok(view(await loadRow(db, projectId)));
+        const shown = view(await loadRow(db, projectId));
+        // Before any extraction the viewer still shows the contract: an
+        // analysis or a request's attachment has no Ficha yet.
+        if (!shown.document_id) shown.document_id = (await contractDocument(db, projectId))?.documentId ?? null;
+        return ok(shown);
     } catch (error) {
         return internalFailure(error);
     }
