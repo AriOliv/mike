@@ -10,12 +10,19 @@ import { TABULAR_TOOLS } from "../tabular/tabular.service";
 import { whoAmITool } from "./mcp.whoami";
 import type { AnyMcpTool } from "./mcp.types";
 
+/**
+ * Writes the server offers, by name. A module may export write tools (with
+ * their confirm.preview) before they are switched on here; each one enters
+ * the catalog deliberately, in its own reviewed change (doc 09 §6).
+ */
+export const WRITE_TOOLS_ENABLED: ReadonlySet<string> = new Set<string>([]);
+
 let cached: readonly AnyMcpTool[] | null = null;
 
-/** The phase 1 catalog: read tools only. */
-export function readTools(): readonly AnyMcpTool[] {
+/** Every tool the server publishes: the reads, and the writes switched on above. */
+export function catalogTools(): readonly AnyMcpTool[] {
     cached ??= [
-        whoAmITool(() => readTools()),
+        whoAmITool(() => catalogTools()),
         ...CONTRACT_REVIEW_TOOLS,
         ...CONTRACT_TOOLS,
         ...REGULATORY_TOOLS,
@@ -23,8 +30,6 @@ export function readTools(): readonly AnyMcpTool[] {
         ...DASHBOARD_TOOLS,
         // Structural fit to McpTool (the legal-agent module declares its own context subset).
         ...(AGENT_TOOLS as unknown as AnyMcpTool[]),
-    ].filter(
-        (t) => t.access === "read",
-    );
+    ].filter((t) => t.access === "read" || (WRITE_TOOLS_ENABLED.has(t.name) && !!t.confirm));
     return cached;
 }
