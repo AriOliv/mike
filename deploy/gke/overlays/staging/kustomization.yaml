@@ -11,6 +11,7 @@ resources:
   - ../../base
 components:
   - ../../staging-egress
+  - ../../staging-egress-proxy
 configMapGenerator:
   - name: mike-env
     literals:
