@@ -54,23 +54,44 @@ function world() {
 }
 
 describe("when the term ends", () => {
-    it("is the start plus the months, on the same day", () => {
-        expect(termEnd("2026-11-12", 12)).toBe("2027-11-12");
-        expect(termEnd("2026-01-15", 1)).toBe("2026-02-15");
-        expect(termEnd("2026-11-12", 36)).toBe("2029-11-12");
+    it("is the start plus the months, minus one day", () => {
+        expect(termEnd("2026-11-12", 12)).toBe("2027-11-11");
+        expect(termEnd("2026-01-15", 1)).toBe("2026-02-14");
+        expect(termEnd("2026-11-12", 36)).toBe("2029-11-11");
+        expect(termEnd("2026-06-10", 6)).toBe("2026-12-09");
     });
 
-    it("falls on the last day of a shorter month: 31/01 + 1 month = 28/02", () => {
+    it("ends a term that starts on the 1st on the last day of the month before", () => {
+        expect(termEnd("2026-01-01", 12)).toBe("2026-12-31");
+        expect(termEnd("2026-03-01", 1)).toBe("2026-03-31");
+        expect(termEnd("2026-02-01", 1)).toBe("2026-02-28");
+        expect(termEnd("2028-02-01", 1)).toBe("2028-02-29");
+        expect(termEnd("2026-01-01", 600)).toBe("2075-12-31");
+    });
+
+    it("never spills into the next month: a day the month does not have ends on its last day", () => {
         expect(termEnd("2027-01-31", 1)).toBe("2027-02-28");
         expect(termEnd("2028-01-31", 1)).toBe("2028-02-29");
         expect(termEnd("2026-08-31", 6)).toBe("2027-02-28");
-        expect(termEnd("2024-02-29", 12)).toBe("2025-02-28");
+        expect(termEnd("2026-12-31", 2)).toBe("2027-02-28");
+        expect(termEnd("2026-03-31", 1)).toBe("2026-04-30");
+        expect(termEnd("2026-01-30", 1)).toBe("2026-02-28");
+        expect(termEnd("2026-01-29", 1)).toBe("2026-02-28");
+        expect(termEnd("2026-01-28", 1)).toBe("2026-02-27");
     });
 
-    it("crosses years and centuries without drifting", () => {
-        expect(termEnd("2026-12-31", 2)).toBe("2027-02-28");
-        expect(termEnd("2026-12-15", 1)).toBe("2027-01-15");
-        expect(termEnd("2026-01-01", 600)).toBe("2076-01-01");
+    it("handles the leap day on both sides", () => {
+        expect(termEnd("2024-02-29", 12)).toBe("2025-02-28");
+        expect(termEnd("2024-02-29", 48)).toBe("2028-02-28");
+        expect(termEnd("2023-02-28", 12)).toBe("2024-02-27");
+        expect(termEnd("2023-03-01", 12)).toBe("2024-02-29");
+        expect(termEnd("2027-03-01", 12)).toBe("2028-02-29");
+    });
+
+    it("crosses years without drifting", () => {
+        expect(termEnd("2026-12-15", 1)).toBe("2027-01-14");
+        expect(termEnd("2026-12-01", 1)).toBe("2026-12-31");
+        expect(termEnd("2026-12-31", 12)).toBe("2027-12-30");
     });
 
     it("is empty until both values are known, and for a date that does not exist", () => {
