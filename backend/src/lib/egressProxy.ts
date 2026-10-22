@@ -37,7 +37,7 @@ function agentFor(proxyUrl: string): ProxyAgent {
 }
 
 /**
- * GET through the proxy, https only, exact host from `allowedHosts`, no
+ * GET through the proxy, https on 443 only, exact host from `allowedHosts`, no
  * redirects followed (a redirect is a second destination nobody listed).
  */
 export async function proxiedFetch(
@@ -46,7 +46,7 @@ export async function proxiedFetch(
     options: { proxyUrl: string; allowedHosts: readonly string[] },
 ): Promise<Response> {
     const target = new URL(url);
-    if (target.protocol !== "https:" || target.username || target.password || !options.allowedHosts.includes(target.hostname.toLowerCase())) {
+    if (target.protocol !== "https:" || (target.port !== "" && target.port !== "443") || target.username || target.password || !options.allowedHosts.includes(target.hostname.toLowerCase())) {
         throw new EgressHostNotAllowedError(target.hostname);
     }
     return (await undiciFetch(target, {

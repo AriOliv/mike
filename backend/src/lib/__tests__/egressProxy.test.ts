@@ -37,6 +37,8 @@ describe("proxiedFetch", () => {
             "https://brasilapi.com.br.evil.test/x",
             "https://evil.test@brasilapi.com.br/x",
             "http://brasilapi.com.br/x",
+            "https://brasilapi.com.br:8443/x",
+            "https://brasilapi.com.br./x",
             "https://169.254.169.254/latest",
             "https://localhost/x",
         ]) {
@@ -46,7 +48,7 @@ describe("proxiedFetch", () => {
     });
 
     it("sends an allowed host through the proxy dispatcher, without following redirects", async () => {
-        await proxiedFetch("https://BrasilAPI.com.br/api/cnpj/v1/1", {}, OPTS);
+        await proxiedFetch("https://BrasilAPI.com.br:443/api/cnpj/v1/1", {}, OPTS);
         expect(undici.fetch).toHaveBeenCalledOnce();
         const [target, init] = undici.fetch.mock.calls[0] as unknown as [URL, { redirect: string; dispatcher: unknown }];
         expect(target.hostname).toBe("brasilapi.com.br");

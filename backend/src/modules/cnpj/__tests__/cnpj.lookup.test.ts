@@ -1,7 +1,7 @@
 // L-54: validation, sources, cache and the flag. No network: a fake fetcher
 // answers; the CNPJs are the well-known test number 11.222.333/0001-81.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 import { fromBrasilApi, fromReceitaWs, lookupCnpj, validCnpj, type Fetcher } from "../cnpj.lookup";
 
@@ -123,5 +123,19 @@ describe("lookupCnpj", () => {
             kind: "not_found",
             code: "cnpj_not_found",
         });
+    });
+});
+
+describe("a broken fetcher setup", () => {
+    it("is logged by name, without the URL, and still ends as unreachable", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const broken: Fetcher = async () => {
+            throw new TypeError("Invalid URL http://user:segredo@proxy");
+        };
+        const r = await lookupCnpj(scriptedDb([{ table: "cnpj_lookups", data: null }]).db, CNPJ, { fetcher: broken, now: NOW });
+        expect(r).toMatchObject({ ok: false, code: "cnpj_unreachable" });
+        expect(warn.mock.calls.flat().join(" ")).toContain("TypeError");
+        expect(warn.mock.calls.flat().join(" ")).not.toContain("segredo");
+        warn.mockRestore();
     });
 });

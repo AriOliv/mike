@@ -153,8 +153,10 @@ export async function lookupCnpj(
             const { error } = await db.from("cnpj_lookups").upsert({ cnpj, payload: record, fetched_at });
             if (error) return internalFailure(error);
             return ok({ ...record, fonte: source.id, consultado_em: fetched_at });
-        } catch {
-            // Timeout, blocked egress or a bad body: try the next source.
+        } catch (error) {
+            // Timeout, blocked egress, a bad body or a malformed proxy URL: try the
+            // next source, but leave the reason in the log (name only: no URL, it may carry credentials).
+            console.warn(`[cnpj] ${source.id} failed: ${error instanceof Error ? error.name : "error"}`);
         }
     }
     // A stale answer beats none when both sources are down.
