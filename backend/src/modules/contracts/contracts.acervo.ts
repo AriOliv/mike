@@ -18,6 +18,7 @@
 // coverage is returned so it can say how many are still being indexed —
 // zero matches in an unindexed contract proves nothing.
 
+import { workspaceMatches, type WorkspaceFilter } from "../../lib/workspace";
 import type { Db } from "../../lib/supabase";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { mapWithConcurrency } from "../../lib/concurrency";
@@ -331,6 +332,8 @@ export async function askAcervo(
     db: Db,
     caller: Caller,
     body: Record<string, unknown>,
+    /** Only contracts in this workspace (the home screen's cut); null = every contract the caller sees. */
+    workspace: WorkspaceFilter = null,
 ): Promise<ServiceResult<AcervoAnswer>> {
     const question = typeof body.question === "string" ? body.question.trim() : "";
     if (!question) return failure("validation", "Escreva uma pergunta.");
@@ -375,7 +378,8 @@ export async function askAcervo(
             .not("lane", "is", null)
             .is("archived_at", null);
         if (error) return internalFailure(error);
-        for (const p of (data ?? []) as Project[]) if (inScope(p, scope)) projects.push(p);
+        for (const p of (data ?? []) as Project[])
+            if (inScope(p, scope) && workspaceMatches(workspace, p.org_id)) projects.push(p);
     }
     if (projects.length === 0) return ok(base);
     base.total = projects.length;

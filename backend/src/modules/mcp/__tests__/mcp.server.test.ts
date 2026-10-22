@@ -67,19 +67,24 @@ describe("/mcp over HTTP", () => {
     it("answers mike_quem_sou for the token's person and records the client", async () => {
         const client = await connect(await token());
         const { tools } = await client.listTools();
+        // The team, default scopes: every read but the head-only Painel.
         expect(tools.map((t) => t.name)).toEqual([
             "mike_quem_sou",
             "mike_contratos_buscar",
             "mike_contratos_ficha",
             "mike_contratos_documento",
             "mike_contratos_atividade",
+            "mike_prazos_proximos",
+            "mike_base_perguntar",
+            "mike_radar_mudancas",
+            "mike_radar_contratos_afetados",
         ]);
         for (const t of tools) expect(t.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
 
         const r = await client.callTool({ name: "mike_quem_sou", arguments: {} });
         expect(r.isError).toBeFalsy();
         expect(r.structuredContent).toMatchObject({ nome: "Ana Teste", email: "ana@exemplo.test", papel: "team", workspace: "personal", cliente: "claude-code" });
-        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 5 ferramentas disponíveis.");
+        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 9 ferramentas disponíveis.");
         expect(tables.mcp_access_tokens[0].last_client).toBe("claude-code");
 
         expect(audit.recordAudit).toHaveBeenCalledWith(
@@ -96,15 +101,19 @@ describe("/mcp over HTTP", () => {
         await client.close();
     });
 
-    it("shows a requester only mike_quem_sou, and a token without contratos:read no contract tool", async () => {
+    it("shows a requester only mike_quem_sou, the Painel only to the head, and only the token's scopes", async () => {
         state.role = "requester";
         const requester = await connect(await token());
         expect((await requester.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou"]);
         await requester.close();
 
         state.role = "head";
+        const head = await connect(await token());
+        expect((await head.listTools()).tools.map((t) => t.name)).toContain("mike_painel_metricas");
+        await head.close();
+
         const narrow = await connect(await token({ scopes: ["prazos:read"] }));
-        expect((await narrow.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou"]);
+        expect((await narrow.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou", "mike_prazos_proximos"]);
         const refused = await narrow.callTool({ name: "mike_contratos_buscar", arguments: {} });
         expect(refused.isError).toBe(true);
         await narrow.close();

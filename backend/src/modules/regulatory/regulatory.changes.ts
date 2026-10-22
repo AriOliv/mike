@@ -327,6 +327,19 @@ export async function listChanges(
     }
 }
 
+/** One change the caller can see, with its affected contracts filtered by their project access. */
+export async function getChange(db: Db, caller: Caller, changeId: string): Promise<ServiceResult<RegulatoryChange>> {
+    if (!/^[0-9a-f-]{36}$/i.test(changeId)) return failure("not_found", "Mudança não encontrada.");
+    try {
+        const visible = await loadVisibleChange(db, caller, changeId);
+        if (!visible) return failure("not_found", "Mudança não encontrada.");
+        const [change] = await resolveAffected(db, caller, [visible.change]);
+        return ok(change);
+    } catch (err) {
+        return internalFailure(err);
+    }
+}
+
 /** A change and its scan, or null when the caller cannot see the scan. */
 export async function loadVisibleChange(
     db: Db,
