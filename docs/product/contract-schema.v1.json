@@ -1,0 +1,3586 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clm.avenia.tech/schemas/contract-schema.v1.json",
+  "title": "Ficha do Contrato v1",
+  "description": "Schema da ficha estruturada de um contrato (CLM Avenia). Ver docs/product/02-ficha-do-contrato.md. Palavras-chave x-* são anotações (x-planilha = coluna da planilha do Legal; x-origem = ia|humano|sistema|derivado; x-nucleo = campo núcleo).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contrato_id",
+    "documento",
+    "extracao",
+    "identificacao",
+    "obrigacoes",
+    "pagamento",
+    "vigencia",
+    "rescisao",
+    "alteracao_parte",
+    "dados_pessoais",
+    "responsabilidade",
+    "regulatorio",
+    "foro",
+    "gestao",
+    "derivados"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "contrato_id": {
+      "type": "string",
+      "description": "projects.id do card na esteira."
+    },
+    "documento": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_id",
+        "document_version_id",
+        "ocr"
+      ],
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "document_version_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nome": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "paginas": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "ocr": {
+          "type": "boolean",
+          "description": "Texto veio de OCR (qualidade menor; confiança máxima 'media')."
+        }
+      }
+    },
+    "extracao": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modelo",
+        "prompt_version",
+        "executado_em"
+      ],
+      "properties": {
+        "modelo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executado_em": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "verificado_em": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "identificacao": {
+      "type": "object",
+      "description": "Quem, o quê e que tipo de documento.",
+      "additionalProperties": false,
+      "required": [
+        "tipo_contrato",
+        "contraparte",
+        "entidade_avenia",
+        "papel_avenia",
+        "objeto",
+        "natureza_documento",
+        "idioma",
+        "anexos_referenciados"
+      ],
+      "properties": {
+        "tipo_contrato": {
+          "description": "Classificação do contrato. Pode ser 'inferido' (sem cláusula única) com justificativa em notes.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "categoria",
+                    "descricao"
+                  ],
+                  "properties": {
+                    "categoria": {
+                      "enum": [
+                        "nda",
+                        "prestacao_servicos",
+                        "msa",
+                        "pedido_sow",
+                        "licenca_saas",
+                        "parceria_comercial",
+                        "indicacao_rebate",
+                        "parceiro_bancario_baas",
+                        "arranjo_psp_adquirencia",
+                        "liquidez_otc_cambio",
+                        "custodia_cripto",
+                        "cliente_api_plataforma",
+                        "locacao",
+                        "prestador_pj",
+                        "mutuo_emprestimo",
+                        "carta_intencao_mou",
+                        "procuracao",
+                        "outro"
+                      ]
+                    },
+                    "descricao": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "A"
+        },
+        "contraparte": {
+          "description": "Razão social da outra parte, como qualificada no preâmbulo.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "nome",
+                    "documento",
+                    "tipo_documento",
+                    "pais"
+                  ],
+                  "properties": {
+                    "nome": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "documento": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "CNPJ/CPF só dígitos, ou tax id estrangeiro."
+                    },
+                    "tipo_documento": {
+                      "enum": [
+                        "cnpj",
+                        "cpf",
+                        "estrangeiro",
+                        null
+                      ]
+                    },
+                    "pais": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[A-Z]{2}$"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "B"
+        },
+        "entidade_avenia": {
+          "description": "Qual entidade do grupo assina (validar contra a lista canônica de entidades).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "nome",
+                    "documento"
+                  ],
+                  "properties": {
+                    "nome": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "documento": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true
+        },
+        "papel_avenia": {
+          "description": "Avenia paga/recebe o serviço? Define a direção de várias regras de risco.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "contratante",
+                "contratada",
+                "mutuo",
+                "outro",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true
+        },
+        "objeto": {
+          "description": "Objeto em uma frase.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "natureza_documento": {
+          "description": "Aditivo/distrato altera uma ficha existente em vez de criar outra.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "contrato_principal",
+                "aditivo",
+                "distrato",
+                "termo_adesao",
+                "pedido_sow",
+                "carta_intencao",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "idioma": {
+          "description": "Idioma prevalente.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "pt",
+                "en",
+                "es",
+                "outro",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "anexos_referenciados": {
+          "description": "Anexos/documentos incorporados por referência (ex.: DPA por URL, tabela de tarifas). presente_no_documento=false é lacuna de análise.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "nome",
+                      "referencia",
+                      "presente_no_documento"
+                    ],
+                    "properties": {
+                      "nome": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "referencia": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "presente_no_documento": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        }
+      }
+    },
+    "obrigacoes": {
+      "description": "Obrigações periódicas/importantes de qualquer parte (relatórios, certidões, SLAs com prazo, entregas). Cada item com sua própria citação.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/campo"
+        }
+      ],
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "descricao",
+                  "parte_obrigada",
+                  "tipo",
+                  "periodicidade",
+                  "prazo",
+                  "data",
+                  "gatilho",
+                  "citations"
+                ],
+                "properties": {
+                  "descricao": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "parte_obrigada": {
+                    "enum": [
+                      "avenia",
+                      "contraparte",
+                      "ambas",
+                      null
+                    ]
+                  },
+                  "tipo": {
+                    "enum": [
+                      "periodica",
+                      "pontual",
+                      "continua",
+                      "condicional"
+                    ]
+                  },
+                  "periodicidade": {
+                    "enum": [
+                      "diaria",
+                      "semanal",
+                      "mensal",
+                      "trimestral",
+                      "semestral",
+                      "anual",
+                      "outra",
+                      null
+                    ]
+                  },
+                  "prazo": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/duration"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "data": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/date"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "gatilho": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Evento que dispara o prazo (ex.: 'recebimento da fatura')."
+                  },
+                  "citations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "$ref": "#/$defs/citacao"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "unevaluatedProperties": false,
+      "x-origem": "ia",
+      "x-nucleo": false,
+      "x-planilha": "F"
+    },
+    "pagamento": {
+      "type": "object",
+      "description": "Preço e condições de pagamento.",
+      "additionalProperties": false,
+      "required": [
+        "prazo",
+        "multa_moratoria",
+        "juros_mora",
+        "correcao_monetaria",
+        "reajuste",
+        "valor",
+        "tributos",
+        "moeda_conversao"
+      ],
+      "properties": {
+        "prazo": {
+          "description": "Prazo de pagamento.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "prazo",
+                    "gatilho",
+                    "dia_fixo"
+                  ],
+                  "properties": {
+                    "prazo": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "gatilho": {
+                      "enum": [
+                        "emissao_nf",
+                        "recebimento_fatura",
+                        "fim_do_periodo",
+                        "antecipado",
+                        "dia_fixo",
+                        "outro",
+                        null
+                      ]
+                    },
+                    "dia_fixo": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 1,
+                      "maximum": 31
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false,
+          "x-planilha": "G"
+        },
+        "multa_moratoria": {
+          "description": "Multa por atraso de pagamento.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "percentual",
+                    "valor",
+                    "base"
+                  ],
+                  "properties": {
+                    "percentual": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100,
+                          "description": "Percentual em pontos (2 = 2%)."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "valor": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/money"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "base": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false,
+          "x-planilha": "H"
+        },
+        "juros_mora": {
+          "description": "Juros de mora.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "percentual",
+                    "periodo",
+                    "pro_rata_die",
+                    "capitalizacao"
+                  ],
+                  "properties": {
+                    "percentual": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100,
+                          "description": "Percentual em pontos (2 = 2%)."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "periodo": {
+                      "enum": [
+                        "dia",
+                        "mes",
+                        "ano",
+                        null
+                      ]
+                    },
+                    "pro_rata_die": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
+                    "capitalizacao": {
+                      "enum": [
+                        "simples",
+                        "composta",
+                        "nao_especificada",
+                        null
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false,
+          "x-planilha": "I"
+        },
+        "correcao_monetaria": {
+          "description": "Correção monetária de valores em atraso (coluna J da planilha). Reajuste periódico de preço vai em `reajuste`.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "indice",
+                    "indice_substituto",
+                    "aplica_a"
+                  ],
+                  "properties": {
+                    "indice": {
+                      "enum": [
+                        "IPCA",
+                        "IGP-M",
+                        "INPC",
+                        "IGP-DI",
+                        "IPC-FIPE",
+                        "SELIC",
+                        "CDI",
+                        "TR",
+                        "outro",
+                        "nenhum",
+                        null
+                      ]
+                    },
+                    "indice_substituto": {
+                      "enum": [
+                        "IPCA",
+                        "IGP-M",
+                        "INPC",
+                        "IGP-DI",
+                        "IPC-FIPE",
+                        "SELIC",
+                        "CDI",
+                        "TR",
+                        "outro",
+                        "nenhum",
+                        null
+                      ]
+                    },
+                    "aplica_a": {
+                      "enum": [
+                        "atraso",
+                        "preco",
+                        "ambos",
+                        null
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false,
+          "x-planilha": "J"
+        },
+        "reajuste": {
+          "description": "Reajuste periódico do preço.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "indice",
+                    "periodicidade",
+                    "data_base_regra",
+                    "data_base",
+                    "teto_percentual"
+                  ],
+                  "properties": {
+                    "indice": {
+                      "enum": [
+                        "IPCA",
+                        "IGP-M",
+                        "INPC",
+                        "IGP-DI",
+                        "IPC-FIPE",
+                        "SELIC",
+                        "CDI",
+                        "TR",
+                        "outro",
+                        "nenhum",
+                        null
+                      ]
+                    },
+                    "periodicidade": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "data_base_regra": {
+                      "enum": [
+                        "aniversario_contrato",
+                        "data_fixa",
+                        "nao_especificada",
+                        null
+                      ]
+                    },
+                    "data_base": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/date"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "teto_percentual": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100,
+                          "description": "Percentual em pontos (2 = 2%)."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "valor": {
+          "description": "Contraprestação. Tarifas em bps/percentual são comuns em contratos de pagamento e cripto.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "modelo",
+                    "itens",
+                    "valor_estimado_anual",
+                    "quem_paga"
+                  ],
+                  "properties": {
+                    "modelo": {
+                      "enum": [
+                        "fixo_unico",
+                        "recorrente",
+                        "por_transacao",
+                        "percentual",
+                        "tabela_anexa",
+                        "sem_contraprestacao",
+                        "misto"
+                      ]
+                    },
+                    "itens": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "descricao",
+                          "valor",
+                          "percentual",
+                          "bps",
+                          "periodicidade",
+                          "minimo"
+                        ],
+                        "properties": {
+                          "descricao": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "valor": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/money"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "percentual": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 100,
+                                "description": "Percentual em pontos (2 = 2%)."
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "bps": {
+                            "type": [
+                              "number",
+                              "null"
+                            ],
+                            "minimum": 0
+                          },
+                          "periodicidade": {
+                            "enum": [
+                              "unico",
+                              "mensal",
+                              "anual",
+                              "por_transacao",
+                              "por_evento",
+                              "outra",
+                              null
+                            ]
+                          },
+                          "minimo": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/money"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "valor_estimado_anual": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/money"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quem_paga": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "K"
+        },
+        "tributos": {
+          "description": "Tratamento de tributos.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "regime",
+                    "retencoes"
+                  ],
+                  "properties": {
+                    "regime": {
+                      "enum": [
+                        "inclusos_no_preco",
+                        "acrescidos_ao_preco",
+                        "gross_up",
+                        "nao_especificado"
+                      ]
+                    },
+                    "retencoes": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "ISS",
+                          "IRRF",
+                          "PIS",
+                          "COFINS",
+                          "CSLL",
+                          "INSS",
+                          "IOF",
+                          "CIDE",
+                          "outro"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false,
+          "x-planilha": "L"
+        },
+        "moeda_conversao": {
+          "description": "Moeda do contrato e regra de conversão quando não for BRL.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "moeda",
+                    "regra_conversao"
+                  ],
+                  "properties": {
+                    "moeda": {
+                      "type": "string",
+                      "pattern": "^[A-Z]{3,5}$"
+                    },
+                    "regra_conversao": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Ex.: 'PTAX venda do dia útil anterior ao pagamento'."
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        }
+      }
+    },
+    "vigencia": {
+      "type": "object",
+      "description": "Datas e renovação. A IA extrai o literal; vencimento atual e janelas de aviso são calculados em `derivados`.",
+      "additionalProperties": false,
+      "required": [
+        "data_assinatura",
+        "data_inicio",
+        "prazo",
+        "data_vencimento",
+        "renovacao"
+      ],
+      "properties": {
+        "data_assinatura": {
+          "description": "Data de assinatura (em assinatura eletrônica, a da última assinatura).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "M"
+        },
+        "data_inicio": {
+          "description": "Início da vigência, se diferente da assinatura.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "prazo": {
+          "description": "Prazo de vigência.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "tipo",
+                    "duracao"
+                  ],
+                  "properties": {
+                    "tipo": {
+                      "enum": [
+                        "determinado",
+                        "indeterminado"
+                      ]
+                    },
+                    "duracao": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "N"
+        },
+        "data_vencimento": {
+          "description": "Data de término SÓ quando escrita no contrato. Não calcular aqui.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "P"
+        },
+        "renovacao": {
+          "description": "Renovação e o aviso para impedi-la (distinto do aviso de rescisão imotivada).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "tipo",
+                    "periodo",
+                    "limite_renovacoes",
+                    "aviso_nao_renovacao",
+                    "forma_notificacao"
+                  ],
+                  "properties": {
+                    "tipo": {
+                      "enum": [
+                        "automatica",
+                        "mediante_aditivo",
+                        "opcao_unilateral",
+                        "sem_renovacao",
+                        "nao_regulada"
+                      ]
+                    },
+                    "periodo": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "limite_renovacoes": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "aviso_nao_renovacao": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "forma_notificacao": {
+                      "enum": [
+                        "email",
+                        "carta_ar",
+                        "cartorio",
+                        "plataforma",
+                        "qualquer_meio_escrito",
+                        "nao_especificada",
+                        null
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "Q"
+        }
+      }
+    },
+    "rescisao": {
+      "type": "object",
+      "description": "Saída do contrato.",
+      "additionalProperties": false,
+      "required": [
+        "imotivada",
+        "multa_rescisoria"
+      ],
+      "properties": {
+        "imotivada": {
+          "description": "Rescisão antecipada sem justa causa (R) e aviso prévio (S, o da Avenia).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "permitida_para",
+                    "aviso_previo_avenia",
+                    "aviso_previo_contraparte",
+                    "forma_notificacao"
+                  ],
+                  "properties": {
+                    "permitida_para": {
+                      "enum": [
+                        "ambas",
+                        "somente_avenia",
+                        "somente_contraparte",
+                        "nenhuma"
+                      ]
+                    },
+                    "aviso_previo_avenia": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "aviso_previo_contraparte": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "forma_notificacao": {
+                      "enum": [
+                        "email",
+                        "carta_ar",
+                        "cartorio",
+                        "plataforma",
+                        "qualquer_meio_escrito",
+                        "nao_especificada",
+                        null
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "R,S"
+        },
+        "multa_rescisoria": {
+          "description": "Multa rescisória (T: existe; U: valor).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "existe",
+                    "tipo",
+                    "percentual",
+                    "meses",
+                    "valor",
+                    "descricao",
+                    "devida_por",
+                    "hipotese"
+                  ],
+                  "properties": {
+                    "existe": {
+                      "type": "boolean"
+                    },
+                    "tipo": {
+                      "enum": [
+                        "fixo",
+                        "percentual_valor_total",
+                        "percentual_saldo",
+                        "meses_remuneracao",
+                        "proporcional",
+                        "formula",
+                        null
+                      ]
+                    },
+                    "percentual": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100,
+                          "description": "Percentual em pontos (2 = 2%)."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "meses": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "valor": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/money"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "descricao": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "devida_por": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    },
+                    "hipotese": {
+                      "enum": [
+                        "imotivada",
+                        "motivada",
+                        "ambas",
+                        null
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "T,U"
+        }
+      }
+    },
+    "alteracao_parte": {
+      "type": "object",
+      "description": "Cessão e mudança de controle (relevante para captação, M&A e reorganização do grupo).",
+      "additionalProperties": false,
+      "required": [
+        "cessao",
+        "mudanca_controle"
+      ],
+      "properties": {
+        "cessao": {
+          "description": "Cessão da posição contratual. Planilha: V Sim/Não = regime != vedada; W = regime; X = prazo_antecedencia; Y = penalidade.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "regime",
+                    "aplica_a",
+                    "excecoes",
+                    "prazo_antecedencia",
+                    "penalidade"
+                  ],
+                  "properties": {
+                    "regime": {
+                      "enum": [
+                        "livre",
+                        "notificacao",
+                        "consentimento_previo",
+                        "vedada",
+                        "nao_regulada"
+                      ]
+                    },
+                    "aplica_a": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    },
+                    "excecoes": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "afiliadas",
+                          "reorganizacao_societaria",
+                          "sucessor_fusao_incorporacao",
+                          "outro"
+                        ]
+                      }
+                    },
+                    "prazo_antecedencia": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "penalidade": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "tipo",
+                            "descricao"
+                          ],
+                          "properties": {
+                            "tipo": {
+                              "enum": [
+                                "rescisao",
+                                "multa",
+                                "ineficacia_da_cessao",
+                                "perdas_e_danos",
+                                "outra"
+                              ]
+                            },
+                            "descricao": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "valor": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/money"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "percentual": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 100,
+                                  "description": "Percentual em pontos (2 = 2%)."
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "V,W,X,Y"
+        },
+        "mudanca_controle": {
+          "description": "Mudança de controle societário. Planilha: Z..AC, mesma leitura de cessão.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "regime",
+                    "aplica_a",
+                    "excecoes",
+                    "prazo_antecedencia",
+                    "penalidade",
+                    "direito_rescisao_contraparte",
+                    "define_controle"
+                  ],
+                  "properties": {
+                    "regime": {
+                      "enum": [
+                        "livre",
+                        "notificacao",
+                        "consentimento_previo",
+                        "vedada",
+                        "nao_regulada"
+                      ]
+                    },
+                    "aplica_a": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    },
+                    "excecoes": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "afiliadas",
+                          "reorganizacao_societaria",
+                          "sucessor_fusao_incorporacao",
+                          "outro"
+                        ]
+                      }
+                    },
+                    "prazo_antecedencia": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "penalidade": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "tipo",
+                            "descricao"
+                          ],
+                          "properties": {
+                            "tipo": {
+                              "enum": [
+                                "rescisao",
+                                "multa",
+                                "ineficacia_da_cessao",
+                                "perdas_e_danos",
+                                "outra"
+                              ]
+                            },
+                            "descricao": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "valor": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/money"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "percentual": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 100,
+                                  "description": "Percentual em pontos (2 = 2%)."
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "direito_rescisao_contraparte": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
+                    "define_controle": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ],
+                      "description": "O contrato define o que é 'controle' (percentual, poder de eleger administradores)?"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "Z,AA,AB,AC"
+        }
+      }
+    },
+    "dados_pessoais": {
+      "type": "object",
+      "description": "LGPD e sigilo de dados.",
+      "additionalProperties": false,
+      "required": [
+        "compartilhamento",
+        "papel_avenia",
+        "papel_contraparte",
+        "dpa",
+        "transferencia_internacional",
+        "prazo_notificacao_incidente",
+        "sigilo_financeiro"
+      ],
+      "properties": {
+        "compartilhamento": {
+          "description": "Há tratamento/compartilhamento de dados pessoais entre as partes.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "AD"
+        },
+        "papel_avenia": {
+          "description": "Agente de tratamento da Avenia.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "controlador",
+                "operador",
+                "controlador_conjunto",
+                "suboperador",
+                "nao_definido",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true,
+          "x-planilha": "AE"
+        },
+        "papel_contraparte": {
+          "description": "Agente de tratamento da contraparte.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "controlador",
+                "operador",
+                "controlador_conjunto",
+                "suboperador",
+                "nao_definido",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "dpa": {
+          "description": "Onde estão as cláusulas de tratamento de dados.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "no_corpo",
+                "anexo",
+                "por_referencia",
+                "ausente",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "transferencia_internacional": {
+          "description": "Transferência internacional de dados.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "ocorre",
+                    "mecanismo"
+                  ],
+                  "properties": {
+                    "ocorre": {
+                      "type": "boolean"
+                    },
+                    "mecanismo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Ex.: cláusulas-padrão ANPD, consentimento, adequação."
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "prazo_notificacao_incidente": {
+          "description": "Prazo para a contraparte avisar a Avenia de incidente de segurança.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/duration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "sigilo_financeiro": {
+          "description": "Envolve dados cobertos por sigilo financeiro/bancário de clientes.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        }
+      }
+    },
+    "responsabilidade": {
+      "type": "object",
+      "description": "Exposição financeira além do preço.",
+      "additionalProperties": false,
+      "required": [
+        "limitacao",
+        "multa_geral",
+        "indenizacao_terceiros"
+      ],
+      "properties": {
+        "limitacao": {
+          "description": "Limitação de responsabilidade.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "existe",
+                    "protege",
+                    "tipo",
+                    "valor",
+                    "meses",
+                    "excecoes",
+                    "exclui_danos_indiretos"
+                  ],
+                  "properties": {
+                    "existe": {
+                      "type": "boolean"
+                    },
+                    "protege": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    },
+                    "tipo": {
+                      "enum": [
+                        "valor_fixo",
+                        "multiplo_remuneracao",
+                        "meses_remuneracao",
+                        "ilimitada",
+                        null
+                      ]
+                    },
+                    "valor": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/money"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "meses": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "excecoes": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "dolo",
+                          "culpa_grave",
+                          "dados_pessoais",
+                          "confidencialidade",
+                          "propriedade_intelectual",
+                          "trabalhista",
+                          "regulatoria_multas",
+                          "indenizacao_terceiros",
+                          "outro"
+                        ]
+                      }
+                    },
+                    "exclui_danos_indiretos": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true
+        },
+        "multa_geral": {
+          "description": "Multa por descumprimento (não moratória, não rescisória).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "existe",
+                    "valor",
+                    "percentual",
+                    "natureza",
+                    "devida_por",
+                    "hipoteses",
+                    "limitada"
+                  ],
+                  "properties": {
+                    "existe": {
+                      "type": "boolean"
+                    },
+                    "valor": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/money"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "percentual": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100,
+                          "description": "Percentual em pontos (2 = 2%)."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "natureza": {
+                      "enum": [
+                        "compensatoria",
+                        "nao_compensatoria",
+                        "nao_especificada",
+                        null
+                      ]
+                    },
+                    "devida_por": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    },
+                    "hipoteses": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "limitada": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false,
+          "x-planilha": "AF"
+        },
+        "indenizacao_terceiros": {
+          "description": "Obrigação de indenizar/defender contra reclamações de terceiros.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "existe",
+                    "devida_por",
+                    "escopo"
+                  ],
+                  "properties": {
+                    "existe": {
+                      "type": "boolean"
+                    },
+                    "devida_por": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    },
+                    "escopo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        }
+      }
+    },
+    "regulatorio": {
+      "type": "object",
+      "description": "Cláusulas que importam para uma instituição regulada (IP/SPSAV, parceiros bancários).",
+      "additionalProperties": false,
+      "required": [
+        "pld_ft",
+        "anticorrupcao",
+        "confidencialidade",
+        "acesso_regulador_auditoria",
+        "alteracao_unilateral",
+        "suspensao_servico",
+        "exclusividade",
+        "segregacao_ativos_clientes"
+      ],
+      "properties": {
+        "pld_ft": {
+          "description": "Há declarações/obrigações de prevenção à lavagem de dinheiro e financiamento ao terrorismo.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "anticorrupcao": {
+          "description": "Há cláusula anticorrupção.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "confidencialidade": {
+          "description": "Confidencialidade.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "existe",
+                    "prazo_sobrevivencia",
+                    "sobrevivencia_indeterminada",
+                    "carve_out_autoridades",
+                    "exige_aviso_previo_a_contraparte"
+                  ],
+                  "properties": {
+                    "existe": {
+                      "type": "boolean"
+                    },
+                    "prazo_sobrevivencia": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sobrevivencia_indeterminada": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
+                    "carve_out_autoridades": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ],
+                      "description": "Permite divulgar a reguladores/autoridades (BCB, COAF, ordem judicial) sem violar o contrato."
+                    },
+                    "exige_aviso_previo_a_contraparte": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ],
+                      "description": "Exige avisar a contraparte antes de qualquer divulgação a autoridade."
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true
+        },
+        "acesso_regulador_auditoria": {
+          "description": "Acesso do regulador, auditoria e plano de saída (serviços terceirizados relevantes).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "acesso_regulador",
+                    "auditoria_pela_avenia",
+                    "plano_saida"
+                  ],
+                  "properties": {
+                    "acesso_regulador": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
+                    "auditoria_pela_avenia": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
+                    "plano_saida": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "alteracao_unilateral": {
+          "description": "A contraparte pode alterar preço ou termos por conta própria.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "contraparte_pode_alterar",
+                    "escopo",
+                    "aviso",
+                    "direito_de_sair_sem_multa"
+                  ],
+                  "properties": {
+                    "contraparte_pode_alterar": {
+                      "type": "boolean"
+                    },
+                    "escopo": {
+                      "enum": [
+                        "preco",
+                        "termos",
+                        "ambos",
+                        null
+                      ]
+                    },
+                    "aviso": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "direito_de_sair_sem_multa": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": true
+        },
+        "suspensao_servico": {
+          "description": "A contraparte pode suspender/bloquear o serviço (crítico com parceiro bancário).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "contraparte_pode_suspender",
+                    "hipoteses",
+                    "aviso"
+                  ],
+                  "properties": {
+                    "contraparte_pode_suspender": {
+                      "type": "boolean"
+                    },
+                    "hipoteses": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "aviso": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "exclusividade": {
+          "description": "Exclusividade, não concorrência ou não aliciamento.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "existe",
+                    "obriga",
+                    "escopo",
+                    "prazo"
+                  ],
+                  "properties": {
+                    "existe": {
+                      "type": "boolean"
+                    },
+                    "obriga": {
+                      "enum": [
+                        "avenia",
+                        "contraparte",
+                        "ambas",
+                        null
+                      ]
+                    },
+                    "escopo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "prazo": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/duration"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "segregacao_ativos_clientes": {
+          "description": "Em custódia/liquidez de cripto ou recursos de clientes: há segregação patrimonial dos ativos dos clientes?",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "aplicavel",
+                    "prevista"
+                  ],
+                  "properties": {
+                    "aplicavel": {
+                      "type": "boolean"
+                    },
+                    "prevista": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        }
+      }
+    },
+    "foro": {
+      "type": "object",
+      "description": "Lei e disputas.",
+      "additionalProperties": false,
+      "required": [
+        "lei_aplicavel",
+        "solucao_disputas"
+      ],
+      "properties": {
+        "lei_aplicavel": {
+          "description": "Lei aplicável.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "jurisdicao"
+                  ],
+                  "properties": {
+                    "jurisdicao": {
+                      "type": "string",
+                      "description": "Ex.: 'BR', 'US-NY', 'GB'."
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        },
+        "solucao_disputas": {
+          "description": "Foro ou arbitragem.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/campo"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "meio",
+                    "foro_ou_camara",
+                    "sede"
+                  ],
+                  "properties": {
+                    "meio": {
+                      "enum": [
+                        "judicial",
+                        "arbitragem",
+                        "mediacao_e_arbitragem"
+                      ]
+                    },
+                    "foro_ou_camara": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sede": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "ia",
+          "x-nucleo": false
+        }
+      }
+    },
+    "gestao": {
+      "type": "object",
+      "description": "Preenchido pelo Legal ou pelo sistema. Não é extraído do contrato.",
+      "additionalProperties": false,
+      "required": [
+        "area_responsavel",
+        "dono_email",
+        "link_drive",
+        "status_contrato",
+        "historico_alteracao_parte",
+        "antecedencia_alerta_dias",
+        "validacao"
+      ],
+      "properties": {
+        "area_responsavel": {
+          "description": "Área dona da relação.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/auditado"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "comercial",
+                "operacoes",
+                "produto",
+                "tecnologia",
+                "financeiro",
+                "compliance",
+                "pessoas",
+                "marketing",
+                "diretoria",
+                "outro",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "humano",
+          "x-planilha": "C"
+        },
+        "dono_email": {
+          "description": "Pessoa responsável pela próxima ação. Padrão: assignee do card.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/auditado"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "email"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "humano"
+        },
+        "link_drive": {
+          "description": "Espelho no Drive.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/auditado"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uri"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "sistema",
+          "x-planilha": "D"
+        },
+        "status_contrato": {
+          "description": "Situação. Sugerido por `derivados.ativo`; o humano confirma (rescisão não aparece no texto).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/auditado"
+            }
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "em_negociacao",
+                "vigente",
+                "vencido",
+                "rescindido",
+                "suspenso",
+                null
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "humano",
+          "x-planilha": "E"
+        },
+        "historico_alteracao_parte": {
+          "description": "Eventos já ocorridos de cessão ou mudança de controle (colunas AG/AH, leitura a confirmar com o Legal).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/auditado"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "tipo",
+                      "data",
+                      "descricao",
+                      "documento_ref"
+                    ],
+                    "properties": {
+                      "tipo": {
+                        "enum": [
+                          "cessao",
+                          "mudanca_controle"
+                        ]
+                      },
+                      "data": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/$defs/date"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "descricao": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "documento_ref": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "humano",
+          "x-planilha": "AG,AH"
+        },
+        "antecedencia_alerta_dias": {
+          "description": "Sobrescreve o padrão de antecedência do alerta de renovação para este contrato.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/auditado"
+            }
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "unevaluatedProperties": false,
+          "x-origem": "humano"
+        },
+        "validacao": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "estado"
+          ],
+          "properties": {
+            "estado": {
+              "enum": [
+                "rascunho_ia",
+                "em_validacao",
+                "validado"
+              ]
+            },
+            "validado_por": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "validado_em": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    },
+    "derivados": {
+      "type": "object",
+      "description": "Calculado pelo código a partir dos campos acima. Nunca pelo modelo. Recalculado a cada leitura/validação.",
+      "additionalProperties": false,
+      "x-origem": "derivado",
+      "properties": {
+        "vencimento_atual": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Fim do período corrente: data_vencimento ou início+prazo; rola para frente a cada renovação automática."
+        },
+        "data_limite_aviso_calendario": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "vencimento_atual − aviso (nao_renovacao se renova automaticamente; senão aviso_previo_avenia)."
+        },
+        "data_limite_aviso_efetiva": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Recuada para o último dia útil (feriados nacionais BR, ou do foro quando estrangeiro)."
+        },
+        "data_envio_recomendada": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "data_limite_aviso_efetiva − folga de entrega (carta/cartório)."
+        },
+        "data_alerta": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "data_envio_recomendada − antecedência de alerta."
+        },
+        "dias_para_vencimento": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "readOnly": true,
+          "description": "Calculado na leitura (coluna O); não é persistido.",
+          "x-planilha": "O"
+        },
+        "dias_ate_limite_aviso": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "readOnly": true,
+          "description": "data_limite_aviso_efetiva − hoje. Calculado na leitura; usado por REN-02."
+        },
+        "ativo": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Sugestão de vigência para a coluna E."
+        },
+        "proximo_reajuste": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "proxima_acao": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tipo",
+                "data",
+                "descricao",
+                "dono_email"
+              ],
+              "properties": {
+                "tipo": {
+                  "enum": [
+                    "decidir_renovacao",
+                    "enviar_aviso",
+                    "reajuste",
+                    "obrigacao",
+                    "validar_ficha",
+                    "tratar_risco"
+                  ]
+                },
+                "data": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/date"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "descricao": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "dono_email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "risco_geral": {
+          "enum": [
+            "critico",
+            "atencao",
+            "ok",
+            null
+          ],
+          "description": "Mesmo vocabulário de projects.risk_level."
+        },
+        "completude": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "nucleo_total",
+            "nucleo_encontrados",
+            "nucleo_validados"
+          ],
+          "properties": {
+            "nucleo_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nucleo_encontrados": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nucleo_validados": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "memoria_calculo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Como cada data foi calculada, legível pelo Legal."
+        }
+      }
+    },
+    "achados": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/achado"
+      },
+      "description": "Saída do avaliador de risco. Persistido em tabela própria; aqui para export."
+    }
+  },
+  "$defs": {
+    "date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "duration": {
+      "description": "Prazo relativo como está no contrato. A IA preenche amount/unit/day_count; `days` é calculado pelo código (nunca pelo modelo).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "unit",
+        "day_count"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "horas",
+            "dias",
+            "meses",
+            "anos"
+          ]
+        },
+        "day_count": {
+          "enum": [
+            "corridos",
+            "uteis",
+            "nao_especificado"
+          ],
+          "description": "Dias úteis x corridos. 'nao_especificado' é tratado como corridos no cálculo e sinalizado."
+        },
+        "days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Equivalente em dias corridos, preenchido pelo normalizador quando computável sem data-âncora (unidade dias/horas corridos)."
+        }
+      }
+    },
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d{1,8})?$",
+          "description": "Decimal como string (sem float). 'R$ 1.234,56' -> '1234.56'."
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3,5}$",
+          "description": "ISO 4217 (BRL, USD, EUR) ou ticker (USDC, USDT, BRLA)."
+        }
+      }
+    },
+    "citacao": {
+      "description": "Trecho que embasa o valor. `quote` é VERBATIM; page/clause vêm do extrator; span/verified/match são preenchidos pelo verificador.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quote",
+        "page",
+        "clause"
+      ],
+      "properties": {
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1500
+        },
+        "page": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "clause": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Ex.: '11.2', 'Cláusula Décima', 'Anexo II, item 3'."
+        },
+        "document_version_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "span": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "start",
+                "end"
+              ],
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "match": {
+          "enum": [
+            "exato",
+            "normalizado",
+            "aproximado",
+            "nao_encontrado",
+            null
+          ]
+        }
+      }
+    },
+    "revisao": {
+      "description": "Validação humana do campo.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "pendente",
+            "confirmado",
+            "corrigido"
+          ]
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "E-mail de quem validou."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "campo": {
+      "description": "Envelope de todo campo extraído. Nunca há valor sem status; 'não encontrado' é explícito.",
+      "type": "object",
+      "required": [
+        "status",
+        "value",
+        "citations",
+        "confidence",
+        "origin"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "encontrado",
+            "inferido",
+            "ambiguo",
+            "nao_encontrado",
+            "nao_aplicavel"
+          ],
+          "description": "encontrado: está no texto (citação obrigatória). inferido: conclusão sobre o conjunto (ex.: tipo de contrato), justificativa obrigatória. ambiguo: cláusulas conflitantes ou redação dúbia (citações + nota). nao_encontrado: o contrato não trata do tema. nao_aplicavel: o tema não cabe neste tipo de contrato."
+        },
+        "value": {},
+        "citations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/citacao"
+          }
+        },
+        "confidence": {
+          "enum": [
+            "alta",
+            "media",
+            "baixa",
+            null
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "origin": {
+          "enum": [
+            "ia",
+            "humano",
+            "sistema"
+          ]
+        },
+        "ai_value": {
+          "description": "Valor original da IA, preservado quando um humano corrige. Alimenta as métricas de qualidade."
+        },
+        "review": {
+          "$ref": "#/$defs/revisao"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "encontrado",
+                  "ambiguo"
+                ]
+              },
+              "origin": {
+                "const": "ia"
+              }
+            },
+            "required": [
+              "status",
+              "origin"
+            ]
+          },
+          "then": {
+            "properties": {
+              "citations": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "encontrado",
+                  "inferido"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "nao_encontrado",
+                  "nao_aplicavel"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "inferido",
+                  "ambiguo"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "notes"
+            ],
+            "properties": {
+              "notes": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "auditado": {
+      "description": "Valor preenchido por humano ou sistema (não extraído), com trilha.",
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {},
+        "updated_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "achado": {
+      "description": "Resultado de uma regra de risco (risk-rules.v1.yaml) sobre esta ficha.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "severidade",
+        "titulo",
+        "justificativa",
+        "campos",
+        "citations",
+        "avaliado_por",
+        "estado"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "pattern": "^[A-Z]{3,4}-\\d{2}$"
+        },
+        "severidade": {
+          "enum": [
+            "critica",
+            "alta",
+            "media",
+            "baixa",
+            "info"
+          ]
+        },
+        "titulo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "justificativa": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acao_sugerida": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "campos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/citacao"
+          }
+        },
+        "avaliado_por": {
+          "enum": [
+            "motor",
+            "ia"
+          ]
+        },
+        "depende_de_campo_nao_validado": {
+          "type": "boolean"
+        },
+        "estado": {
+          "enum": [
+            "aberto",
+            "risco_aceito",
+            "mitigado",
+            "falso_positivo"
+          ]
+        },
+        "decidido_por": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decidido_em": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

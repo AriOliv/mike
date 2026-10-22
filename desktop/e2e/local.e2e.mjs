@@ -166,7 +166,7 @@ try {
     organisation: "Mike Local CI",
   });
   await page
-    .getByRole("button", { name: "Assistant", exact: true })
+    .getByRole("button", { name: "Account menu", exact: true })
     .first()
     .waitFor({ timeout: 20_000 });
   console.log(`✓ signed up + onboarded + auto-signed-in as ${EMAIL} (no network)`);
@@ -278,7 +278,7 @@ try {
   //    password login goes), and OnboardingGate then decides: round one is a
   //    brand-new account, so it stays on the wizard and we walk it; round two
   //    is the SAME account coming back with onboarding already complete, so
-  //    the gate bounces it straight to /assistant and the helper is a no-op.
+  //    the gate bounces it straight to /inicio and the helper is a no-op.
   //    That asymmetry is the interesting half of the guest story, which is why
   //    the same helper runs in both rounds instead of only the first.
   for (const round of ["first click (creates the guest account)", "second click (signs into it)"]) {
@@ -303,7 +303,7 @@ try {
       organisation: "Mike Local CI",
     });
     await page
-      .getByRole("button", { name: "Assistant", exact: true })
+      .getByRole("button", { name: "Account menu", exact: true })
       .first()
       .waitFor({ timeout: 20_000 });
     console.log(`✓ guest mode, ${round}: /login → signed-in product`);
@@ -341,7 +341,7 @@ try {
   await page.waitForURL((url) => url.href.startsWith(FRONTEND_URL), { timeout: 120_000 });
   const warmBootMs = Date.now() - relaunchedAt;
   await page
-    .getByRole("button", { name: "Assistant", exact: true })
+    .getByRole("button", { name: "Account menu", exact: true })
     .first()
     .waitFor({ timeout: 30_000 });
   assert(!/\/(login|signup|onboarding)/.test(page.url()),
@@ -350,7 +350,17 @@ try {
   await page.getByText(GUEST_PROJECT, { exact: false }).first().waitFor({ timeout: 20_000 });
   assert(walk(storageRoot).some((file) => !file.startsWith(path.join(storageRoot, "mike-workflows") + path.sep)),
     "the first run's upload must still be on disk after quit + relaunch");
-  const relaunchLog = readFileSync(path.join(USER_DATA_DIR, "local", "logs", "postgres.log"), "utf8").slice(pgLog.length);
+  // One FATAL is expected on a healthy warm boot: a client can connect in the
+  // instant between the postmaster accepting connections and the startup
+  // process finishing, and Postgres turns it away with "the database system is
+  // starting up" (seen 20 ms after "ready to accept connections"). The client
+  // retries; nothing was recovered. Only that exact line is dropped: any other
+  // FATAL or PANIC still fails the boot.
+  const relaunchLog = readFileSync(path.join(USER_DATA_DIR, "local", "logs", "postgres.log"), "utf8")
+    .slice(pgLog.length)
+    .split("\n")
+    .filter((line) => !/FATAL:\s+the database system is starting up$/.test(line.trim()))
+    .join("\n");
   assert(!/(FATAL|PANIC|database system was not properly shut down)/.test(relaunchLog),
     "warm boot must not pay crash recovery or fail");
   console.log(`✓ returning user: relaunch on the same workspace → product in ${(warmBootMs / 1000).toFixed(1)}s, guest project + first run's upload still there`);

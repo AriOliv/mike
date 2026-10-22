@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     GENERIC_FAILURE_MESSAGE,
+    NOTICE_LABELS,
     SUPPORT_EMAIL,
     UserVisibleError,
     buildSupportMailto,
@@ -294,5 +295,48 @@ describe("support URL privacy", () => {
         const body = new URL(href).searchParams.get("body");
         expect(body).toContain("Page: https://app.example/auth/callback");
         expect(body).not.toMatch(/secret|hidden|password|user@/);
+    });
+});
+
+describe("describeError in Portuguese", () => {
+    it("titles the failed action as 'Não consegui …'", () => {
+        const described = describeError(new Error("boom"), {
+            action: "carregar os pedidos.",
+            lang: "pt",
+        });
+        expect(described.title).toBe("Não consegui carregar os pedidos");
+        expect(described.message).toBe(
+            "Algo deu errado. Tente de novo e, se continuar, fale com o suporte.",
+        );
+    });
+
+    it("uses the Portuguese kind title and message without an action", () => {
+        const described = describeError({ status: 403 }, { lang: "pt" });
+        expect(described.title).toBe("Sem permissão");
+        expect(described.message).toBe("Você não tem permissão para fazer isso.");
+    });
+
+    it("keeps a call site's fallback and the backend's own 4xx detail", () => {
+        expect(describeError(new Error("x"), { lang: "pt", fallback: "Tente mais tarde." }).message).toBe(
+            "Tente mais tarde.",
+        );
+        expect(describeError({ status: 422, message: "Contraparte obrigatória." }, { lang: "pt" }).message).toBe(
+            "Contraparte obrigatória.",
+        );
+    });
+
+    it("stays in English when no language is asked for", () => {
+        expect(describeError(new Error("boom"), { action: "load the requests" }).title).toBe(
+            "Couldn't load the requests",
+        );
+    });
+
+    it("labels the notice's own buttons per language", () => {
+        expect(NOTICE_LABELS.pt).toEqual({
+            retry: "Tentar de novo",
+            signIn: "Entrar",
+            support: "Falar com o suporte",
+        });
+        expect(NOTICE_LABELS.en.retry).toBe("Retry");
     });
 });

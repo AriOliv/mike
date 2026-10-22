@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_HOME } from "@/app/lib/authRedirects";
 import { useEffect, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
@@ -35,7 +36,7 @@ export function OnboardingGate({ children }: { children: ReactNode }) {
             return;
         }
         if (!needsOnboarding && isOnboardingRoute) {
-            router.replace("/assistant");
+            router.replace(DEFAULT_HOME);
         }
     }, [
         isOnboardingRoute,

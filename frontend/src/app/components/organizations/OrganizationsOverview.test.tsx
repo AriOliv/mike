@@ -362,12 +362,12 @@ describe("OrganizationsOverview", () => {
     render(<SettingsLayout><OrganizationsOverview /></SettingsLayout>);
 
     expect(await screen.findByRole("button", {
-      name: "Organizations 1 pending invitation",
+      name: "Organizações 1 convite pendente",
     })).toBeVisible();
     await user.click(await screen.findByRole("button", {
       name: `${action} Inviting Chambers`,
     }));
-    expect(await screen.findByRole("button", { name: "Organizations" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Organizações" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Invitations" })).not.toBeInTheDocument();
   });
 

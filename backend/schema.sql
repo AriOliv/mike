@@ -1022,6 +1022,8 @@ create table if not exists public.projects (
   lane text,
   risk_level text,
   requester_name text,
+  -- the requesting area ("Comercial"), mirrored from the request
+  requester_area text,
   lane_updated_at timestamptz,
   -- where the card lives on the mirrored Notion board (null until synced)
   notion_page_id text,
@@ -1119,6 +1121,144 @@ create table if not exists public.app_settings (
   value text not null default '',
   updated_at timestamptz not null default now()
 );
+
+-- Regulatory radar ("radar regulatório"): saved scans over Brazilian public
+-- sources (BCB normativos, DOU, CVM and Receita news) and the changes each
+-- scan found, crossed with the contract base.
+--
+-- A scan belongs to an organization when org_id is set (every member sees it
+-- and its changes) and to its creator otherwise. A change is shared triage
+-- state for whoever sees its scan: read, starred and archived are team-wide,
+-- because a team of three triages one list together. Contracts a change
+-- affects are stored as ids and filtered by the reader's project access at
+-- read time, so nobody learns of a contract they cannot open.
+--
+-- Backend-owned, like the other contract tables: browser roles get nothing,
+-- RLS is on with no policies, service_role does the work. Idempotent.
+
+create table if not exists public.regulatory_scans (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete set null,
+  org_id uuid references public.organizations(id) on delete cascade,
+  name text not null check (length(name) between 1 and 120),
+  -- the preset this scan started from (bcb_pagamentos_cripto, lgpd_anpd ...)
+  preset text,
+  -- source ids from the backend's registry: bcb_normativos | dou | cvm_noticias | rfb_noticias
+  sources text[] not null default '{}',
+  -- DOU issuers the scan follows (matched on the act's hierarchy)
+  issuers text[] not null default '{}',
+  -- an item must mention one of these (accent- and case-insensitive); empty = all
+  keywords text[] not null default '{}',
+  -- Avenia themes the scan covers: psp | cripto | cambio | lgpd | pld
+  topics text[] not null default '{}',
+  enabled boolean not null default true,
+  last_run_at timestamptz,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_regulatory_scans_org on public.regulatory_scans(org_id);
+create index if not exists idx_regulatory_scans_user on public.regulatory_scans(user_id);
+create index if not exists idx_regulatory_scans_due
+  on public.regulatory_scans(last_run_at) where enabled;
+
+create table if not exists public.regulatory_changes (
+  id uuid primary key default gen_random_uuid(),
+  scan_id uuid not null references public.regulatory_scans(id) on delete cascade,
+  source text not null,
+  -- the source's own id for the item (BCB listItemId, DOU urlTitle, RSS link)
+  external_id text not null,
+  title text not null,
+  act_type text,
+  issuer text,
+  published_at date,
+  url text,
+  -- verbatim official text the change is cited from
+  excerpt text,
+  -- two-line summary in PT; null when no model ran or its quote did not check out
+  summary text,
+  summary_quote text,
+  impact text not null default 'baixo' check (impact in ('alto', 'medio', 'baixo')),
+  impact_reason text,
+  effective_date date,
+  topics text[] not null default '{}',
+  matched_terms text[] not null default '{}',
+  -- [{project_id, term, quote}] — which contracts mention what
+  affected jsonb not null default '[]'::jsonb,
+  suggested_action text,
+  status text not null default 'nova' check (status in ('nova', 'lida', 'arquivada')),
+  starred boolean not null default false,
+  -- what the team did about it
+  request_project_id uuid references public.projects(id) on delete set null,
+  obligation_id uuid references public.obligations(id) on delete set null,
+  decided_by text,
+  decided_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (scan_id, source, external_id)
+);
+
+create index if not exists idx_regulatory_changes_scan
+  on public.regulatory_changes(scan_id, published_at desc);
+create index if not exists idx_regulatory_changes_open
+  on public.regulatory_changes(scan_id) where status <> 'arquivada';
+
+alter table public.regulatory_scans enable row level security;
+alter table public.regulatory_changes enable row level security;
+revoke all on public.regulatory_scans from anon, authenticated;
+revoke all on public.regulatory_changes from anon, authenticated;
+grant select, insert, update, delete
+  on public.regulatory_scans, public.regulatory_changes
+  to service_role;
+
+-- Access tokens for agents calling the Mike MCP server (/mcp), doc 09 §3.
+--
+-- A token always acts for a person. kind 'pessoal' acts as its owner
+-- (user_id). kind 'servico' (a bot such as Hermes, doc 09 §3.2) belongs to
+-- one org, is created by an owner/admin (user_id), and acts as the org member
+-- whose CONFIRMED chat identity link the call names, and only when can_act_as
+-- was granted explicitly. A personal token can never act as anyone else.
+-- org_id is the workspace the token reads: the same filter the home screen
+-- applies, null for the personal workspace.
+--
+-- Only the SHA-256 of the token is stored; the plain token is shown once at
+-- creation. Revoking stamps revoked_at and never deletes, so the audit trail
+-- keeps pointing at a row. Backend-owned like the other contract tables:
+-- browser roles get nothing, RLS is on with no policies. Idempotent.
+
+create table if not exists public.mcp_access_tokens (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null default 'pessoal',
+  name text not null,
+  token_hash text not null unique,
+  token_prefix text not null,
+  scopes text[] not null default '{}',
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  last_used_at timestamptz,
+  last_client text,
+  can_act_as boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint mcp_access_tokens_kind_check check (kind in ('pessoal', 'servico')),
+  constraint mcp_access_tokens_act_as_check
+    check (not can_act_as or (kind = 'servico' and org_id is not null)),
+  constraint mcp_access_tokens_servico_org_check
+    check (kind <> 'servico' or org_id is not null),
+  constraint mcp_access_tokens_name_check check (char_length(name) between 1 and 80)
+);
+
+create index if not exists idx_mcp_access_tokens_user
+  on public.mcp_access_tokens(user_id, created_at desc);
+
+alter table public.mcp_access_tokens enable row level security;
+revoke all on public.mcp_access_tokens from anon, authenticated;
+-- delete too: schema.sql's blanket service_role grant (which runs after this
+-- table) gives it, and fresh and upgraded installs must match. The backend
+-- never deletes a token; revoking stamps revoked_at.
+grant select, insert, update, delete on public.mcp_access_tokens to service_role;
 
 create index if not exists idx_projects_user
   on public.projects(user_id);
@@ -5659,6 +5799,43 @@ create table if not exists public.playbooks (
 create index if not exists idx_playbooks_user_updated on public.playbooks(user_id, updated_at desc);
 create index if not exists idx_playbooks_org_updated on public.playbooks(org_id, updated_at desc);
 alter table public.playbooks enable row level security;
+
+-- "Adicionar ao playbook" from a regulatory change: a SUGGESTED rule an admin
+-- approves before it counts. Nothing here writes to a playbook; an approved
+-- suggestion is what the playbook owner applies. Fork-only table (slot _96).
+-- Backend-owned like the radar's tables: browser roles get nothing.
+
+create table if not exists public.regulatory_rule_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  change_id uuid not null references public.regulatory_changes(id) on delete cascade,
+  org_id uuid references public.organizations(id) on delete cascade,
+  -- the playbook the rule is meant for, when one was chosen
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  title text not null check (length(title) between 1 and 300),
+  -- the proposed rule text, in the playbook's own words
+  guidance text not null check (length(guidance) between 1 and 4000),
+  -- the official passage the rule rests on
+  source_quote text,
+  source_url text,
+  status text not null default 'pendente'
+    check (status in ('pendente', 'aprovada', 'rejeitada')),
+  suggested_by text not null,
+  decided_by text,
+  decided_at timestamptz,
+  decision_note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- One open suggestion per change: suggesting again edits it instead.
+create unique index if not exists uq_regulatory_rule_suggestions_open
+  on public.regulatory_rule_suggestions(change_id) where status = 'pendente';
+create index if not exists idx_regulatory_rule_suggestions_org
+  on public.regulatory_rule_suggestions(org_id, status);
+
+alter table public.regulatory_rule_suggestions enable row level security;
+revoke all on public.regulatory_rule_suggestions from anon, authenticated;
+grant select, insert, update, delete on public.regulatory_rule_suggestions to service_role;
 
 create table if not exists public.playbook_runs (
   id uuid primary key default gen_random_uuid(),
@@ -10926,6 +11103,777 @@ grant execute on function public.queue_document_text(uuid,boolean),public.backfi
 -- Queue only a bounded first batch. The maintenance sweep resumes the rest.
 select public.backfill_document_text(100,false);
 
+-- Migration date: 2026-10-20 (20261020_92_card_events.sql)
+--
+-- The contract pipeline's activity log and its agent runs.
+--
+-- card_events is the CLM's domain log, append-only: who (a person, an agent,
+-- the system or the Hermes bot) changed what on a card, before and after, and
+-- through which agent run. The activity feed on the home screen and on every
+-- card reads it, so people and agents share one timeline.
+--
+-- agent_runs is one row per agent execution: version, model, cost. It keeps
+-- hashes and the validated structured output, never the contract text or the
+-- prompt, to keep the personal-data surface small.
+--
+-- agent_runs comes first so card_events.run_id can reference it. There is no
+-- link the other way: a run is tied to the events it caused only through
+-- card_events.run_id, which avoids a reference cycle.
+
+create table if not exists public.agent_runs (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete restrict,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  -- intake | extrator | verificador | risco | redator | vigia | notificador | qa | revisor
+  agent text not null,
+  agent_version text not null,
+  -- db_jobs.id of the job that ran it, when one did.
+  job_id uuid,
+  status text not null default 'running'
+    constraint agent_runs_status_check
+      check (status in ('running', 'succeeded', 'failed', 'skipped', 'needs_human')),
+  -- agent:project:document sha, so the same document is not processed twice.
+  dedupe_key text,
+  model_alias text,
+  model_resolved text,
+  prompt_sha text,
+  input_doc_sha text,
+  tokens_in integer,
+  tokens_out integer,
+  cost_usd numeric(10, 5),
+  latency_ms integer,
+  output jsonb,
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+
+create unique index if not exists uq_agent_runs_dedupe
+  on public.agent_runs(dedupe_key)
+  where dedupe_key is not null and status = 'succeeded';
+create index if not exists idx_agent_runs_project
+  on public.agent_runs(project_id, started_at desc);
+create index if not exists idx_agent_runs_org_month
+  on public.agent_runs(org_id, started_at);
+
+alter table public.agent_runs enable row level security;
+revoke all on public.agent_runs from anon, authenticated;
+grant select, insert, update on public.agent_runs to service_role;
+
+create table if not exists public.card_events (
+  id bigint generated always as identity primary key,
+  org_id uuid references public.organizations(id) on delete restrict,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  at timestamptz not null default now(),
+  actor_type text not null
+    constraint card_events_actor_type_check
+      check (actor_type in ('user', 'agent', 'system', 'hermes')),
+  -- user id | 'agent:extrator@3' | 'hermes:docbot' | 'cron:vigia'
+  actor_id text not null,
+  -- How the feed names the actor without a join ("Agente de revisão", a
+  -- requester's name). Display only; actor_id is the identity.
+  actor_name text,
+  -- The e-mail of whoever asked, when a bot acted for them (Hermes, MCP).
+  on_behalf_of text,
+  -- lane.changed | field.updated | document.added | agent.started |
+  -- agent.suggested | agent.failed | review.completed | request.created |
+  -- assignee.changed | comment.added | notification.sent ...
+  action text not null,
+  field text,
+  before jsonb,
+  after jsonb,
+  run_id uuid references public.agent_runs(id) on delete set null,
+  source text not null default 'ui'
+    constraint card_events_source_check
+      check (source in ('ui', 'mcp', 'notion', 'cron', 'agent', 'api'))
+);
+
+create index if not exists idx_card_events_project_at
+  on public.card_events(project_id, at desc);
+create index if not exists idx_card_events_action_at
+  on public.card_events(action, at desc);
+create index if not exists idx_card_events_at
+  on public.card_events(at desc);
+
+-- Append-only. The backend connects as service_role, which RLS does not
+-- restrict, so the trigger is the real guard. A retention purge will be a
+-- dedicated security-definer function, never an ad hoc delete. The one
+-- DELETE let through is the cascade from deleting the card: by then the
+-- project row is gone (20261022_97).
+create or replace function public.card_events_append_only() returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE' and not exists (
+    select 1 from public.projects p where p.id = old.project_id
+  ) then
+    return old;
+  end if;
+  raise exception 'card_events is append-only';
+end
+$$;
+
+drop trigger if exists trg_card_events_no_update on public.card_events;
+create trigger trg_card_events_no_update
+  before update or delete on public.card_events
+  for each row execute function public.card_events_append_only();
+
+alter table public.card_events enable row level security;
+revoke all on public.card_events from anon, authenticated;
+grant select, insert on public.card_events to service_role;
+grant usage, select on sequence public.card_events_id_seq to service_role;
+
+-- Agent cost per contract: the badge on a card and the cost panel.
+create or replace view public.contract_agent_costs
+with (security_invoker = true) as
+select org_id, project_id,
+       count(*) filter (where status = 'succeeded') as runs_ok,
+       count(*) filter (where status = 'failed') as runs_failed,
+       coalesce(sum(cost_usd), 0) as cost_usd,
+       max(finished_at) as last_run_at
+from public.agent_runs
+group by org_id, project_id;
+
+revoke all on public.contract_agent_costs from anon, authenticated;
+grant select on public.contract_agent_costs to service_role;
+-- ── Fork: Ficha do Contrato and contract reviews (20261020_97, 20261020_98) ──
+-- The Ficha do Contrato (docs/product/contract-schema.v1.json): one versioned
+-- JSON per contract project, every field in the schema's envelope, and the
+-- risk-rule findings computed from it by code. Fork-only table (slot _97).
+-- The backend fronts all access, so browser roles get nothing.
+
+create table if not exists public.contract_fichas (
+  project_id uuid primary key references public.projects(id) on delete cascade,
+  schema_version text not null default '1.0',
+  ficha jsonb not null default '{}'::jsonb,
+  document_id uuid references public.documents(id) on delete set null,
+  document_version_id uuid references public.document_versions(id) on delete set null,
+  model text,
+  prompt_version text,
+  rules_version text,
+  findings jsonb not null default '[]'::jsonb,
+  risk_overall text,
+  extracted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.contract_fichas drop constraint if exists contract_fichas_risk_overall_check;
+alter table public.contract_fichas add constraint contract_fichas_risk_overall_check
+  check (risk_overall is null or risk_overall in ('critico', 'atencao', 'ok'));
+
+-- Who confirmed or corrected which field, with the model's reading kept:
+-- the audit trail and the quality metric (correction rate per field).
+create table if not exists public.contract_field_reviews (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  path text not null,
+  action text not null,
+  ai_value jsonb,
+  final_value jsonb,
+  reviewer text not null,
+  comment text,
+  created_at timestamptz not null default now()
+);
+alter table public.contract_field_reviews drop constraint if exists contract_field_reviews_action_check;
+alter table public.contract_field_reviews add constraint contract_field_reviews_action_check
+  check (action in ('confirmado', 'corrigido'));
+create index if not exists idx_contract_field_reviews_project
+  on public.contract_field_reviews(project_id, created_at desc);
+
+alter table public.contract_fichas enable row level security;
+alter table public.contract_field_reviews enable row level security;
+revoke all on public.contract_fichas, public.contract_field_reviews from anon, authenticated;
+grant select, insert, update, delete on public.contract_fichas, public.contract_field_reviews
+  to service_role;
+
+-- A contract review is a playbook run tied to a contract project: the run
+-- (upstream playbook_runs) keeps the findings and the tracked-change version;
+-- this row records which contract it reviewed and what each person decided
+-- on each suggestion. Fork-only tables (slot _98).
+
+create table if not exists public.contract_review_runs (
+  run_id uuid primary key references public.playbook_runs(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  document_id uuid references public.documents(id) on delete set null,
+  playbook_id uuid not null references public.playbooks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_contract_review_runs_project
+  on public.contract_review_runs(project_id, created_at desc);
+
+-- One decision per finding: accepted, edited (with the person's wording), or
+-- rejected (with an optional one-line reason that feeds playbook tuning).
+create table if not exists public.contract_review_decisions (
+  run_id uuid not null references public.contract_review_runs(run_id) on delete cascade,
+  finding_id text not null,
+  decision text not null,
+  edited_text text,
+  -- The tracked change an edit made in place of the suggestion's.
+  edit jsonb,
+  reason text,
+  decided_by text not null,
+  decided_at timestamptz not null default now(),
+  primary key (run_id, finding_id)
+);
+alter table public.contract_review_decisions drop constraint if exists contract_review_decisions_decision_check;
+alter table public.contract_review_decisions add constraint contract_review_decisions_decision_check
+  check (decision in ('aceito', 'editado', 'rejeitado'));
+
+alter table public.contract_review_runs enable row level security;
+alter table public.contract_review_decisions enable row level security;
+revoke all on public.contract_review_runs, public.contract_review_decisions from anon, authenticated;
+grant select, insert, update, delete on public.contract_review_runs, public.contract_review_decisions
+  to service_role;
+
+-- ── Requests to the legal team (20261020_93_legal_requests) ──────────────────
+-- Requests to the legal team ("pedidos"). Anyone in the company asks for a
+-- contract review, a draft or an opinion; the request gets a readable number
+-- (LEG-0001), an SLA, an AI summary, and a card on the pipeline's first lane.
+--
+-- The card is an ordinary pipeline project in the legal team's organization,
+-- so the team works it with everything a project already has. The requester
+-- is NOT given access to that project: they see the request through its own
+-- narrow surface (status, questions, delivery), never the team's portfolio.
+-- People outside the team who must follow one request -- an outside law firm,
+-- a colleague from the business -- are request participants, scoped to that
+-- request and expiring.
+
+-- Which organization is the legal team. One per deployment in practice; a
+-- table rather than a setting so it is an ordinary foreign key and the team's
+-- members are just that organization's members.
+create table if not exists public.legal_teams (
+  org_id uuid primary key references public.organizations(id) on delete cascade,
+  -- SLA in business days, by request kind. Defaults apply to missing kinds.
+  sla_days jsonb not null default '{}'::jsonb,
+  -- When true, the triage agent's suggested assignee is applied at once
+  -- instead of waiting for the Head to accept it.
+  auto_assign boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.legal_teams enable row level security;
+revoke all on public.legal_teams from anon, authenticated;
+grant select, insert, update, delete on public.legal_teams to service_role;
+
+create sequence if not exists public.legal_request_number_seq;
+revoke all on sequence public.legal_request_number_seq from anon, authenticated;
+grant usage, select on sequence public.legal_request_number_seq to service_role;
+
+create table if not exists public.legal_requests (
+  id uuid primary key default gen_random_uuid(),
+  number bigint not null unique default nextval('public.legal_request_number_seq'),
+  org_id uuid not null references public.organizations(id) on delete restrict,
+  -- The card. Kept when the card is deleted so the requester's history and
+  -- the number survive; the request then shows as closed.
+  project_id uuid unique references public.projects(id) on delete set null,
+  requester_id uuid references auth.users(id) on delete set null,
+  requester_email text not null,
+  requester_name text,
+  -- the requesting area, and where it came from (form, chat bot, remembered,
+  -- or read by the triage agent: the weakest)
+  requester_area text,
+  requester_area_source text
+    constraint legal_requests_requester_area_source_check
+      check (requester_area_source is null
+             or requester_area_source in ('form', 'slack', 'perfil', 'triagem')),
+  kind text not null
+    constraint legal_requests_kind_check
+      check (kind in ('contrato_novo', 'revisao', 'aditivo', 'nda', 'parecer', 'outro')),
+  title text not null,
+  counterparty text,
+  context text not null default '',
+  urgency text not null default 'normal'
+    constraint legal_requests_urgency_check check (urgency in ('normal', 'alta', 'urgente')),
+  needed_by date,
+  due_at timestamptz not null,
+  -- novo | em_triagem | em_andamento | aguardando_solicitante | entregue | cancelado
+  status text not null default 'novo'
+    constraint legal_requests_status_check
+      check (status in ('novo', 'em_triagem', 'em_andamento', 'aguardando_solicitante', 'entregue', 'cancelado')),
+  -- Time the SLA spent paused while waiting on the requester.
+  paused_at timestamptz,
+  paused_seconds integer not null default 0,
+  assignee_id uuid references auth.users(id) on delete set null,
+  assigned_at timestamptz,
+  summary text,
+  -- The triage agent's latest suggestion and the team's verdict on it:
+  -- {kind, counterparty, area, assignee_id, playbook_id, reasons[], missing[],
+  --  decision: null | 'accepted' | 'edited' | 'rejected', decided_by, decided_at}
+  triage jsonb,
+  -- What the team sent back: {message, document_ids[], delivered_by}
+  delivery jsonb,
+  delivered_at timestamptz,
+  -- Where the request came from, to answer in the same place later.
+  source jsonb not null default '{"channel": "form"}'::jsonb,
+  idempotency_key text unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint legal_requests_email_lowercase check (requester_email = lower(requester_email))
+);
+
+create index if not exists idx_legal_requests_requester
+  on public.legal_requests(requester_email, created_at desc);
+create index if not exists idx_legal_requests_org_status
+  on public.legal_requests(org_id, status, due_at);
+create index if not exists idx_legal_requests_assignee
+  on public.legal_requests(assignee_id, status)
+  where assignee_id is not null;
+create index if not exists idx_legal_requests_org_area
+  on public.legal_requests(org_id, requester_area)
+  where requester_area is not null;
+
+alter table public.legal_requests enable row level security;
+revoke all on public.legal_requests from anon, authenticated;
+grant select, insert, update, delete on public.legal_requests to service_role;
+
+-- People outside the team who follow one request. Addressed by normalized
+-- email so an outside firm can be invited before it has an account.
+create table if not exists public.legal_request_participants (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.legal_requests(id) on delete cascade,
+  email text not null,
+  -- 'external': an outside firm (can answer and attach); 'viewer': follows only.
+  role text not null default 'external'
+    constraint legal_request_participants_role_check check (role in ('external', 'viewer')),
+  label text,
+  invited_by uuid references auth.users(id) on delete set null,
+  expires_at timestamptz not null default now() + interval '90 days',
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (request_id, email),
+  constraint legal_request_participants_email_lowercase check (email = lower(email))
+);
+
+create index if not exists idx_legal_request_participants_email
+  on public.legal_request_participants(email)
+  where revoked_at is null;
+
+alter table public.legal_request_participants enable row level security;
+revoke all on public.legal_request_participants from anon, authenticated;
+grant select, insert, update, delete on public.legal_request_participants to service_role;
+
+-- The conversation between the team and the requester (and invited
+-- participants). Internal notes stay on the card's activity, not here.
+create table if not exists public.legal_request_messages (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.legal_requests(id) on delete cascade,
+  author_id uuid references auth.users(id) on delete set null,
+  author_email text not null,
+  author_name text,
+  -- 'question': the team asks and waits; 'answer': the requester replies;
+  -- 'note': anything else visible to the requester.
+  kind text not null default 'note'
+    constraint legal_request_messages_kind_check check (kind in ('question', 'answer', 'note')),
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_legal_request_messages_request
+  on public.legal_request_messages(request_id, created_at);
+
+alter table public.legal_request_messages enable row level security;
+revoke all on public.legal_request_messages from anon, authenticated;
+grant select, insert, update, delete on public.legal_request_messages to service_role;
+
+-- Outbox of e-mail notifications. A job sends pending rows; the dedupe key
+-- keeps a retried event from mailing twice.
+create table if not exists public.legal_request_notifications (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.legal_requests(id) on delete cascade,
+  template text not null
+    constraint legal_request_notifications_template_check
+      check (template in ('request.created', 'request.assigned', 'request.question',
+                          'request.delivered', 'request.invited')),
+  recipient text not null,
+  payload jsonb not null default '{}'::jsonb,
+  dedupe_key text not null unique,
+  status text not null default 'pending'
+    constraint legal_request_notifications_status_check
+      check (status in ('pending', 'sent', 'failed', 'skipped')),
+  attempts integer not null default 0,
+  last_error text,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+
+create index if not exists idx_legal_request_notifications_pending
+  on public.legal_request_notifications(created_at)
+  where status = 'pending';
+
+alter table public.legal_request_notifications enable row level security;
+revoke all on public.legal_request_notifications from anon, authenticated;
+grant select, insert, update, delete on public.legal_request_notifications to service_role;
+
+-- A person's requesting area, remembered so the request form asks once
+-- (20261020_99_requester_area).
+create table if not exists public.legal_requester_areas (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  area text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.legal_requester_areas enable row level security;
+revoke all on public.legal_requester_areas from anon, authenticated;
+grant select, insert, update, delete on public.legal_requester_areas to service_role;
+
+-- Migration date: 2026-10-22 (20261022_91_request_intake.sql)
+--
+-- The intake checklist of a request to the legal team: what the team needs
+-- to know before it analyses a contract (who approved it, the counterparty,
+-- value and recurrence, confidential information, personal data...).
+--
+-- legal_teams.intake_template is the organization's own checklist, a list of
+-- {key, label, kind, required, hint?}; empty means the generic one in the
+-- code. legal_requests.intake holds the answers by key: {value, source:
+-- requester | inferred, confirmed, quote?}. An inferred answer was read from
+-- the attached contract by the agent and waits for the requester to confirm.
+--
+-- legal_requests.critical_alert_at marks the one alert per request the
+-- Head gets when the contract's analysis finds a critical risk.
+
+alter table public.legal_teams
+  add column if not exists intake_template jsonb not null default '[]'::jsonb;
+
+alter table public.legal_teams
+  drop constraint if exists legal_teams_intake_template_check;
+alter table public.legal_teams
+  add constraint legal_teams_intake_template_check
+    check (jsonb_typeof(intake_template) = 'array');
+
+alter table public.legal_requests
+  add column if not exists intake jsonb not null default '{}'::jsonb,
+  add column if not exists intake_completed_at timestamptz,
+  add column if not exists critical_alert_at timestamptz;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_intake_check;
+alter table public.legal_requests
+  add constraint legal_requests_intake_check
+    check (jsonb_typeof(intake) = 'object');
+
+create index if not exists idx_legal_requests_org_alert
+  on public.legal_requests(org_id, critical_alert_at desc)
+  where critical_alert_at is not null;
+
+-- Migration date: 2026-10-20 (20261020_94_watched_folders.sql)
+--
+-- Automatic review of watched folders: the home screen's queue.
+--
+-- A watched folder is a group of contract cards the legal team wants read as
+-- soon as a document lands in them: one batch upload, or a Drive folder whose
+-- files are already mirrored. Every new document version in a watched card
+-- gets one contract_reviews row; a background job fills in the contract's
+-- terms (the Ficha) and runs the folder's playbook, and the row keeps what a
+-- person needs to triage it without opening the document: the agent's step,
+-- the traffic-light counts, a short summary and who should look at it.
+
+create table if not exists public.watched_folders (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete restrict,
+  created_by uuid references auth.users(id) on delete set null,
+  name text not null,
+  -- upload: a batch sent from the home screen; drive: a mirrored Drive folder.
+  source text not null default 'upload'
+    constraint watched_folders_source_check check (source in ('upload', 'drive')),
+  drive_folder_id text,
+  drive_link text,
+  -- The playbook new documents are reviewed against; null reads only the Ficha.
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  -- Who new reviews are assigned to; null leaves them for the head to assign.
+  default_assignee_email text,
+  active boolean not null default true,
+  last_scanned_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_watched_folders_org
+  on public.watched_folders(org_id) where active;
+
+alter table public.projects
+  add column if not exists watched_folder_id uuid
+    references public.watched_folders(id) on delete set null;
+
+create index if not exists idx_projects_watched_folder
+  on public.projects(watched_folder_id) where watched_folder_id is not null;
+
+create table if not exists public.contract_reviews (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete restrict,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  document_id uuid not null references public.documents(id) on delete cascade,
+  -- The version reviewed; a new version gets a new review.
+  version_id uuid not null references public.document_versions(id) on delete cascade,
+  watched_folder_id uuid references public.watched_folders(id) on delete set null,
+  -- queued → running → ready (a person should look) → done (a person decided).
+  status text not null default 'queued'
+    constraint contract_reviews_status_check
+      check (status in ('queued', 'running', 'ready', 'done', 'failed')),
+  -- What the agent is doing right now, shown instead of a bare spinner.
+  step text
+    constraint contract_reviews_step_check
+      check (step is null or step in ('lendo', 'ficha', 'playbook')),
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  playbook_run_id uuid references public.playbook_runs(id) on delete set null,
+  agent_run_id uuid references public.agent_runs(id) on delete set null,
+  -- The person whose models and keys the agent runs with.
+  requested_by uuid references auth.users(id) on delete set null,
+  assignee_email text,
+  aligned integer not null default 0,
+  needs_review integer not null default 0,
+  deviates integer not null default 0,
+  summary text,
+  error text,
+  -- Who accepted the review and when; null until a person decides.
+  decided_by uuid references auth.users(id) on delete set null,
+  decided_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz,
+  constraint contract_reviews_version_unique unique (version_id)
+);
+
+create index if not exists idx_contract_reviews_project
+  on public.contract_reviews(project_id, created_at desc);
+create index if not exists idx_contract_reviews_status
+  on public.contract_reviews(status, updated_at desc);
+create index if not exists idx_contract_reviews_assignee
+  on public.contract_reviews(assignee_email, status)
+  where assignee_email is not null;
+
+-- When a person last opened the home screen, for "since your last visit".
+create table if not exists public.home_visits (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  previous_seen_at timestamptz,
+  last_seen_at timestamptz not null default now()
+);
+
+alter table public.watched_folders enable row level security;
+alter table public.contract_reviews enable row level security;
+alter table public.home_visits enable row level security;
+
+revoke all on public.watched_folders from anon, authenticated;
+revoke all on public.contract_reviews from anon, authenticated;
+revoke all on public.home_visits from anon, authenticated;
+
+grant select, insert, update, delete
+  on public.watched_folders, public.contract_reviews, public.home_visits
+  to service_role;
+
+-- Migration date: 2026-10-21 (20261021_90_legal_agent.sql)
+--
+-- The legal team's chat agent ("Agente do Legal"): how it behaves in an
+-- organization, and the chat channels it is set up for.
+--
+-- The channel (Slack, WhatsApp, Telegram) only talks; the work and the record
+-- stay in Mike, reached through its MCP server. These rows are what the bot
+-- reads to know who it is, when it answers, who may ask for what and when a
+-- person of the legal team must decide.
+--
+-- No secret lives here. Bot tokens, signing secrets and verify tokens stay in
+-- the deployment's secret store; a channel row keeps only what is safe to
+-- show on a settings page (a workspace name, a bot's @username, the last
+-- digits of a phone number) and its setup status.
+
+create table if not exists public.legal_agent_settings (
+  org_id uuid primary key references public.organizations(id) on delete cascade,
+  -- Off until an owner or admin turns it on: a bot reading this row stays silent.
+  enabled boolean not null default false,
+  display_name text not null default 'Assistente do Legal',
+  -- Who it is and how it works, in the team's words; becomes the bot's persona.
+  persona text not null default '',
+  tone text not null default 'cordial'
+    constraint legal_agent_settings_tone_check check (tone in ('formal', 'cordial', 'direto')),
+  -- {timezone, days: [1..7], start: "HH:MM", end: "HH:MM", outside: "avisa_e_registra" | "so_registra"}
+  hours jsonb not null default '{}'::jsonb,
+  -- [{area, kinds: [request kind]}]: who may ask for what. Empty = anyone, anything.
+  permissions jsonb not null default '[]'::jsonb,
+  -- {risk_levels: [...], kinds: [...], low_confidence: bool, escalate_to_email}
+  -- On top of the fixed rule: signing, sending out and accepting risk always go to a person.
+  escalation jsonb not null default '{}'::jsonb,
+  -- {deadline_days: [30, 7, 1], renewals: bool, radar: bool, digest_time: "HH:MM"}
+  proactive jsonb not null default '{}'::jsonb,
+  updated_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.legal_agent_channels (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  kind text not null
+    constraint legal_agent_channels_kind_check check (kind in ('slack', 'whatsapp', 'telegram')),
+  -- rascunho: being set up; configurado: the setup files were generated and
+  -- someone marked it installed. Nothing here connects a bot by itself.
+  status text not null default 'rascunho'
+    constraint legal_agent_channels_status_check check (status in ('rascunho', 'configurado', 'pausado')),
+  name text not null,
+  -- Non-secret details only (see the note at the top).
+  config jsonb not null default '{}'::jsonb,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_legal_agent_channels_org
+  on public.legal_agent_channels(org_id);
+
+alter table public.legal_agent_settings enable row level security;
+alter table public.legal_agent_channels enable row level security;
+revoke all on public.legal_agent_settings from anon, authenticated;
+revoke all on public.legal_agent_channels from anon, authenticated;
+grant select, insert, update, delete on public.legal_agent_settings to service_role;
+grant select, insert, update, delete on public.legal_agent_channels to service_role;
+
+-- Migration date: 2026-10-22 (20261022_90_chat_identity_links.sql)
+--
+-- Who is talking on a chat channel, for the legal team's agent (doc 10 §6.2).
+--
+-- The chat bot (Hermes) calls Mike with a service token of one organization
+-- and names the person only by their chat identity: <platform>:<team>:<user>.
+-- Mike acts as someone only through a link that person confirmed once, while
+-- logged in to Mike; the e-mail a chat platform reports is never the proof.
+--
+--   chat_identity_links    a confirmed link: (org, platform, team, user) → user_id,
+--                          180 days, revocable
+--   chat_link_challenges   the one-time link the bot hands out when there is no
+--                          link yet: only the SHA-256 of its token is stored, it
+--                          is bound to (org, platform, team, user), lasts 15 min
+--                          and works once. The link is made for whoever confirms
+--                          it (their session), so opening someone else's link
+--                          only links yourself.
+--
+-- A link is only honoured for a workspace the organization registered on one
+-- of its agent channels (legal_agent_channels.platform_team_id), so a link
+-- made in another company's Slack cannot be used here.
+
+alter table public.legal_agent_channels
+  add column if not exists platform_team_id text;
+
+create unique index if not exists idx_legal_agent_channels_team
+  on public.legal_agent_channels(org_id, kind, platform_team_id)
+  where platform_team_id is not null;
+
+create table if not exists public.chat_identity_links (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  platform text not null
+    constraint chat_identity_links_platform_check check (platform in ('slack', 'whatsapp', 'telegram')),
+  platform_team_id text not null,
+  platform_user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  confirmed_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '180 days'),
+  revoked_at timestamptz,
+  -- The service token whose call led to this link, for the admin's list.
+  created_via_token_id uuid,
+  created_at timestamptz not null default now()
+);
+
+-- One live link per chat identity in an organization.
+create unique index if not exists idx_chat_identity_links_active
+  on public.chat_identity_links(org_id, platform, platform_team_id, platform_user_id)
+  where revoked_at is null;
+
+create index if not exists idx_chat_identity_links_user
+  on public.chat_identity_links(user_id, created_at desc);
+
+create table if not exists public.chat_link_challenges (
+  id uuid primary key default gen_random_uuid(),
+  token_hash text not null unique,
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  platform text not null
+    constraint chat_link_challenges_platform_check check (platform in ('slack', 'whatsapp', 'telegram')),
+  platform_team_id text not null,
+  platform_user_id text not null,
+  created_via_token_id uuid,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_chat_link_challenges_expiry
+  on public.chat_link_challenges(expires_at) where used_at is null;
+
+alter table public.chat_identity_links enable row level security;
+alter table public.chat_link_challenges enable row level security;
+revoke all on public.chat_identity_links from anon, authenticated;
+revoke all on public.chat_link_challenges from anon, authenticated;
+grant select, insert, update, delete on public.chat_identity_links to service_role;
+grant select, insert, update, delete on public.chat_link_challenges to service_role;
+
+-- ── Fork: analyst's analysis of a contract (20261022_92) ──
+-- The analyst's analysis of a contract: the reading a legal analyst writes
+-- before the team decides (executive summary, critical risks, points of
+-- attention, favourable points, redline suggestions, compliance, open
+-- points). One row per analysis of a document version, so a new version gets
+-- a new analysis and the old one stays as it was. The result is a draft for
+-- the legal team, never shown to the requester. Fork-only table (slot _92).
+
+create table if not exists public.contract_analyses (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  -- The request whose intake answers framed the analysis, if any.
+  request_id uuid references public.legal_requests(id) on delete set null,
+  document_id uuid references public.documents(id) on delete set null,
+  version_id uuid references public.document_versions(id) on delete set null,
+  -- The playbook used as the yardstick (the organization's for the contract's
+  -- type), and its run, whose findings set the traffic light.
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  playbook_run_id uuid references public.playbook_runs(id) on delete set null,
+  -- The intake answers the analysis considered: [{key, label, value, source}].
+  intake jsonb not null default '[]'::jsonb,
+  model text,
+  status text not null default 'queued',
+  result jsonb,
+  -- Quotes the verifier could not find in the document, with the reason.
+  dropped_citations jsonb not null default '[]'::jsonb,
+  -- {model, calls, input_tokens, output_tokens, estimated_cost_usd}.
+  usage jsonb,
+  error text,
+  requested_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+alter table public.contract_analyses drop constraint if exists contract_analyses_status_check;
+alter table public.contract_analyses add constraint contract_analyses_status_check
+  check (status in ('queued', 'running', 'done', 'failed'));
+create index if not exists idx_contract_analyses_project
+  on public.contract_analyses(project_id, created_at desc);
+-- One live analysis per document version: asking again returns it.
+create unique index if not exists uq_contract_analyses_version
+  on public.contract_analyses(version_id) where version_id is not null;
+
+-- One decision per redline suggestion: accepted (applied as a tracked change),
+-- edited (applied with the person's wording) or rejected.
+create table if not exists public.contract_analysis_decisions (
+  analysis_id uuid not null references public.contract_analyses(id) on delete cascade,
+  redline_id text not null,
+  decision text not null,
+  edited_text text,
+  edit jsonb,
+  reason text,
+  decided_by text not null,
+  decided_at timestamptz not null default now(),
+  primary key (analysis_id, redline_id)
+);
+alter table public.contract_analysis_decisions drop constraint if exists contract_analysis_decisions_decision_check;
+alter table public.contract_analysis_decisions add constraint contract_analysis_decisions_decision_check
+  check (decision in ('aceito', 'editado', 'rejeitado'));
+
+alter table public.contract_analyses enable row level security;
+alter table public.contract_analysis_decisions enable row level security;
+revoke all on public.contract_analyses, public.contract_analysis_decisions from anon, authenticated;
+grant select, insert, update, delete on public.contract_analyses, public.contract_analysis_decisions
+  to service_role;
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -11090,6 +12038,20 @@ insert into public.schema_migrations (filename) values
   ('20261020_02_web_search_api_keys.sql'),
   ('20261020_90_task_fields.sql'),
   ('20261020_91_contract_tables_grants.sql'),
+  ('20261020_92_card_events.sql'),
+  ('20261020_93_legal_requests.sql'),
+  ('20261020_94_watched_folders.sql'),
+  ('20261020_95_regulatory_radar.sql'),
+  ('20261020_96_regulatory_rule_suggestions.sql'),
+  ('20261020_97_contract_fichas.sql'),
+  ('20261020_98_contract_reviews.sql'),
+  ('20261020_99_requester_area.sql'),
   ('20261021_01_chat_subagent_runs.sql'),
-  ('20261021_02_user_subagent_defaults.sql')
+  ('20261021_02_user_subagent_defaults.sql'),
+  ('20261021_90_legal_agent.sql'),
+  ('20261021_91_mcp_access_tokens.sql'),
+  ('20261022_90_chat_identity_links.sql'),
+  ('20261022_91_request_intake.sql'),
+  ('20261022_92_contract_analyses.sql'),
+  ('20261022_97_card_events_cascade.sql')
 on conflict (filename) do nothing;

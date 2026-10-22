@@ -3,7 +3,7 @@
 
 import type { Db } from "../../lib/supabase";
 import { checkProjectAccess, type ProjectAccess } from "../../lib/access";
-import { can, DOCUMENT_EDIT_FORBIDDEN } from "../../lib/permissions";
+import { can } from "../../lib/permissions";
 import { downloadFile } from "../../lib/storage";
 import { extractPdfText } from "../../lib/pdfText";
 import { failure, type ServiceFailure } from "../../lib/serviceResult";
@@ -21,7 +21,7 @@ export function isIsoDate(value: unknown): value is string {
     return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
 }
 
-const PROJECT_NOT_FOUND = failure("not_found", "Project not found");
+const PROJECT_NOT_FOUND = failure("not_found", "Não encontrei este contrato.");
 
 /** The caller may see the project. */
 export async function requireProjectView(
@@ -43,7 +43,7 @@ export async function requireProjectEdit(
     const view = await requireProjectView(db, caller, projectId);
     if (!view.ok) return view;
     if (!can(view.access.projectRole, "content.edit")) {
-        return failure("forbidden", DOCUMENT_EDIT_FORBIDDEN);
+        return failure("forbidden", "Você pode ver este contrato, mas não alterá-lo.");
     }
     return view;
 }
@@ -153,7 +153,7 @@ export function parseModelJson(raw: string): Record<string, unknown> {
 }
 
 export const MODEL_REQUIRED =
-    "Choose a tabular review model in Settings before running contract analysis.";
+    "Escolha um modelo de revisão em Configurações para eu poder ler contratos.";
 
 /**
  * The model contract analysis runs on: the caller's tabular-review model,

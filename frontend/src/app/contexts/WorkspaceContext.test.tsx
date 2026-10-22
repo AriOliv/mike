@@ -245,6 +245,58 @@ describe("WorkspaceProvider", () => {
     });
 });
 
+describe("the workspace an account starts in with nothing remembered", () => {
+    it("is the one team organization the account belongs to", async () => {
+        // Its own organization is never listed as a team; ignore one if it is.
+        mocks.listOrgs.mockResolvedValue([
+            { ...ACME, kind: "team" },
+            { id: "org-own", name: "Own", role: "owner", kind: "personal" },
+        ]);
+        renderProvider();
+        // Personal until the organizations are known, and not remembered yet.
+        expect(screen.getByText(/^personal\|personal\|loading/)).toBeInTheDocument();
+        expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+        await screen.findByText(`${ACME.id}|${ACME.id}|loaded|Acme LLP`);
+        await waitFor(() => expect(window.localStorage.getItem(STORAGE_KEY)).toBe(ACME.id));
+    });
+
+    it("is Personal when the account belongs to several teams", async () => {
+        mocks.listOrgs.mockResolvedValue([
+            { ...ACME, kind: "team" },
+            { ...BETA, kind: "team" },
+        ]);
+        renderProvider();
+        await screen.findByText("personal|personal|loaded|none");
+        await waitFor(() => expect(window.localStorage.getItem(STORAGE_KEY)).toBe(PERSONAL_WORKSPACE));
+    });
+
+    it("never overrides a remembered workspace, Personal included", async () => {
+        mocks.listOrgs.mockResolvedValue([{ ...ACME, kind: "team" }]);
+        window.localStorage.setItem(STORAGE_KEY, PERSONAL_WORKSPACE);
+        renderProvider();
+        await screen.findByText("personal|personal|loaded|none");
+        expect(window.localStorage.getItem(STORAGE_KEY)).toBe(PERSONAL_WORKSPACE);
+    });
+
+    it("keeps a choice made before the organizations arrive", async () => {
+        let arrive: (value: unknown) => void = () => {};
+        mocks.listOrgs.mockImplementationOnce(() => new Promise((resolve) => (arrive = resolve)));
+        mocks.listOrgs.mockResolvedValue([{ ...ACME, kind: "team" }]);
+        renderProvider();
+        act(() => latest.setWorkspace(PERSONAL_WORKSPACE));
+        await act(async () => arrive([{ ...ACME, kind: "team" }]));
+        expect(screen.getByText("personal|personal|loaded|none")).toBeInTheDocument();
+    });
+
+    it("stays Personal, and undecided, when the organizations cannot be read", async () => {
+        mocks.listOrgs.mockRejectedValue(new Error("network"));
+        renderProvider();
+        await waitFor(() => expect(mocks.listOrgs).toHaveBeenCalled());
+        expect(screen.getByText(/^personal\|personal\|loading/)).toBeInTheDocument();
+        expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+});
+
 describe("the active organization's model provider keys", () => {
     it("are not read in the personal workspace", async () => {
         renderProvider();

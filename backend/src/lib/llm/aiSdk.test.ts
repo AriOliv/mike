@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { config } from "./__tests__/mockLanguageModel";
 import {
+  completeAiSdkText,
   DEFAULT_MAX_ITERATIONS,
   maxOutputTokensFor,
   stopNotice,
@@ -70,4 +72,37 @@ describe("stopNotice", () => {
     expect(stopNotice(1, DEFAULT_MAX_ITERATIONS, "tool-calls")).toBe("");
     expect(stopNotice(0, DEFAULT_MAX_ITERATIONS, undefined)).toBe("");
   });
+});
+
+describe("completeAiSdkText", () => {
+    async function model(usage: { input?: number; output?: number }) {
+        const { MockLanguageModelV3 } = await import("ai/test");
+        return new MockLanguageModelV3({
+            doGenerate: async () => ({
+                content: [{ type: "text", text: "ok" }],
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                    inputTokens: { total: usage.input, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+                    outputTokens: { total: usage.output, text: undefined, reasoning: undefined },
+                },
+                warnings: [],
+            }),
+        });
+    }
+
+    it("reports the provider's token counts", async () => {
+        const reported: unknown[] = [];
+        const text = await completeAiSdkText(
+            { user: "oi", onUsage: (usage) => reported.push(usage) },
+            config(await model({ input: 1200, output: 300 })),
+        );
+        expect(text).toBe("ok");
+        expect(reported).toEqual([{ inputTokens: 1200, outputTokens: 300 }]);
+    });
+
+    it("stays quiet when the provider reports nothing", async () => {
+        const reported: unknown[] = [];
+        await completeAiSdkText({ user: "oi", onUsage: (usage) => reported.push(usage) }, config(await model({})));
+        expect(reported).toEqual([]);
+    });
 });
