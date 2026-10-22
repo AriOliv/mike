@@ -9,7 +9,7 @@
  *  - New accounts receive editable default workflows, including "Proofread"
  *  - markdown-editor.tsx: editorProps class = "markdown-editor-content" on the ProseMirror div
  *  - WorkflowDetailPage save status: text "Saving…" → "Saved" rendered in a plain <span>
- *  - settings/page.tsx: h2 "Profile"; display name autosaves on blur
+ *  - settings/page.tsx: h2 "Perfil"; display name autosaves on blur
  *  - settings/layout.tsx: h1 "Configurações" in layout header
  *  - settings/byok/page.tsx: provider cards open dialogs with individually labelled key fields.
  */
@@ -218,15 +218,15 @@ test.describe("Settings", () => {
             page.getByRole("heading", { name: "Configurações" }),
         ).toBeVisible({ timeout: 10_000 });
 
-        // The Profile section has its own h2
+        // The Perfil section has its own h2
         await expect(
-            page.getByRole("heading", { name: "Profile" }),
+            page.getByRole("heading", { name: "Perfil" }),
         ).toBeVisible({ timeout: 10_000 });
 
         // The email is rendered in the (editable) Email input, so assert its
         // value rather than page text.
         // REGRESSION: fails if user auth context is not propagated to the settings page
-        await expect(page.getByPlaceholder("Enter your email")).toHaveValue(
+        await expect(page.getByPlaceholder("Digite seu e-mail")).toHaveValue(
             e2eAccount.email,
             { timeout: 10_000 },
         );
@@ -246,8 +246,8 @@ test.describe("Settings", () => {
             page.getByRole("heading", { name: "Configurações" }),
         ).toBeVisible({ timeout: 10_000 });
 
-        // The Display Name Input has placeholder "Enter your name"
-        const nameInput = page.getByPlaceholder("Enter your name");
+        // The display name input has placeholder "Digite seu nome"
+        const nameInput = page.getByPlaceholder("Digite seu nome");
         await expect(nameInput).toBeVisible({ timeout: 10_000 });
 
         const newName = `E2E Test User ${Date.now()}`;
@@ -267,7 +267,7 @@ test.describe("Settings", () => {
         //  late overwrite slipped a stale value in, the persist check fails and
         //  the block re-runs after auth has settled.
         //
-        // REGRESSION: a broken profile PATCH / save handler never reaches "Saved" and never
+        // REGRESSION: a broken profile PATCH / save handler never reaches "Salvo" and never
         // persists newName, so every attempt fails and toPass exhausts → the test fails.
         await expect(async () => {
             // Reload at the START of each attempt so a failed or stale profile GET
@@ -292,7 +292,7 @@ test.describe("Settings", () => {
             await expect(nameInput).toHaveValue(newName, { timeout: 2_000 });
 
             await nameInput.press("Tab");
-            await expect(nameStatus).toHaveText("Saved", { timeout: 8_000 });
+            await expect(nameStatus).toHaveText("Salvo", { timeout: 8_000 });
 
             // Navigate away and back; the freshly fetched profile must show newName.
             await page.goto("/assistant");

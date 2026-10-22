@@ -45,9 +45,9 @@ interface EmailWarning {
 // differs here, because a validation failure on this screen can only mean
 // the address itself.
 const EMAIL_ERROR_MESSAGES = authMessages({
-  validation_failed: "Enter a valid email address.",
-  invalid_request: "Enter a valid email address.",
-  reauthentication_needed: "Log in again before changing your email.",
+  validation_failed: "Digite um endereço de e-mail válido.",
+  invalid_request: "Digite um endereço de e-mail válido.",
+  reauthentication_needed: "Entre de novo antes de trocar seu e-mail.",
 });
 
 const EMAIL_TAKEN_CODES = new Set(["email_exists", "user_already_exists"]);
@@ -55,6 +55,14 @@ const EMAIL_RATE_LIMIT_CODES = new Set([
   "over_email_send_rate_limit",
   "over_request_rate_limit",
 ]);
+
+// The backend stores the plan name in English ("Free" by default).
+const TIER_LABELS: Record<string, string> = { free: "Gratuito" };
+
+function tierLabel(tier: string | undefined): string {
+  const name = tier || "Free";
+  return TIER_LABELS[name.toLowerCase()] ?? name;
+}
 
 /** Composes authenticated account settings, including profile-photo editing and account security controls. */
 export default function SettingsPage() {
@@ -99,8 +107,8 @@ export default function SettingsPage() {
     }
     setEmailStatus(
       user.pendingEmail
-        ? "One confirmation was accepted. Confirm the email change from both your current and new addresses to finish."
-        : "Email updated.",
+        ? "Uma das confirmações foi aceita. Confirme a troca nos dois endereços, o atual e o novo, para concluir."
+        : "E-mail atualizado.",
     );
     window.history.replaceState({}, "", "/settings");
   }, [user]);
@@ -131,12 +139,13 @@ export default function SettingsPage() {
       }
       setDeleteConfirm(false);
       notifyError(error, {
-        action: "delete your account",
+        action: "excluir sua conta",
+        lang: "pt",
         // Retry re-opens the confirmation instead of deleting outright: a
         // button in a notice must never be the only thing between a stray
         // click and an irreversible account deletion.
         onRetry: () => setDeleteConfirm(true),
-        supportNote: "Account deletion failed.",
+        supportNote: "Falha ao excluir a conta.",
       });
     }
   };
@@ -165,8 +174,8 @@ export default function SettingsPage() {
       setEmailSaved(true);
       setEmailStatus(
         pendingEmail
-          ? `Confirmation sent to your current address and ${pendingEmail}. Confirm both messages to finish the change. Your current email remains ${updatedUser.email} until then.`
-          : "Email updated.",
+          ? `Enviamos uma confirmação para o seu endereço atual e para ${pendingEmail}. Confirme as duas mensagens para concluir a troca. Até lá, seu e-mail continua ${updatedUser.email}.`
+          : "E-mail atualizado.",
       );
       setTimeout(() => setEmailSaved(false), 2000);
     } catch (error: unknown) {
@@ -174,16 +183,17 @@ export default function SettingsPage() {
       // The backend passes GoTrue's `code` through, so the outcome is decided
       // by that code rather than by matching English in the message.
       const described = describeError(error, {
-        action: "update your email",
+        action: "atualizar seu e-mail",
+        lang: "pt",
         codeMessages: EMAIL_ERROR_MESSAGES,
-        fallback: "Unable to update your email. Try again.",
+        fallback: "Não consegui atualizar seu e-mail. Tente de novo.",
       });
 
       if (described.code && EMAIL_TAKEN_CODES.has(described.code)) {
         setEmail(user?.pendingEmail || user?.email || "");
         setEmailWarning({
-          title: "Email already registered",
-          message: "An account with this email already exists.",
+          title: "E-mail já cadastrado",
+          message: "Já existe uma conta com este e-mail.",
         });
         return;
       }
@@ -194,9 +204,9 @@ export default function SettingsPage() {
       ) {
         setEmail(user?.pendingEmail || user?.email || "");
         setEmailWarning({
-          title: "Email change unavailable",
+          title: "Troca de e-mail indisponível",
           message:
-            "You can’t change your email this often. Wait a few minutes before trying again.",
+            "Não dá para trocar de e-mail com tanta frequência. Espere alguns minutos e tente de novo.",
         });
         return;
       }
@@ -228,20 +238,20 @@ export default function SettingsPage() {
     <div className="space-y-8">
       {/* Profile Settings */}
       <section className="space-y-3">
-        <SettingsHeading>Profile</SettingsHeading>
+        <SettingsHeading>Perfil</SettingsHeading>
         <GlassCardUI>
           <SettingsRow layout="stacked">
             <div>
               <div className="flex items-start justify-between gap-3">
-                <FieldLabel htmlFor="display-name">Display Name</FieldLabel>
+                <FieldLabel htmlFor="display-name">Nome de exibição</FieldLabel>
                 <span
                   className="text-xs text-gray-400"
                   aria-live="polite"
                 >
                   {isSavingName
-                    ? "Saving..."
+                    ? "Salvando..."
                     : saved
-                      ? "Saved"
+                      ? "Salvo"
                       : ""}
                 </span>
               </div>
@@ -254,7 +264,7 @@ export default function SettingsPage() {
                   setSaved(false);
                 }}
                 onBlur={() => void handleSaveDisplayName()}
-                placeholder="Enter your name"
+                placeholder="Digite seu nome"
               />
             </div>
           </SettingsRow>
@@ -264,12 +274,12 @@ export default function SettingsPage() {
 
       {/* Email */}
       <section className="space-y-3">
-        <SettingsHeading>Email</SettingsHeading>
+        <SettingsHeading>E-mail</SettingsHeading>
         <GlassCardUI>
           <SettingsRow layout="stacked">
             <div className="space-y-2">
               <SettingsTextInput
-                aria-label="Email address"
+                aria-label="Endereço de e-mail"
                 type="email"
                 value={email}
                 disabled={requiresPasswordForEmailChange}
@@ -279,18 +289,18 @@ export default function SettingsPage() {
                   setEmailWarning(null);
                   setEmailSaved(false);
                 }}
-                placeholder="Enter your email"
+                placeholder="Digite seu e-mail"
               />
               {emailStatus ? (
                 <p className="text-xs text-gray-500">{emailStatus}</p>
               ) : user.pendingEmail ? (
                 <p className="text-xs text-gray-500">
-                  Pending confirmation: {user.pendingEmail}
+                  Aguardando confirmação: {user.pendingEmail}
                 </p>
               ) : null}
               {emailStatus && (
                 <p className="text-xs text-gray-400">
-                  Current email: {user.email}
+                  E-mail atual: {user.email}
                 </p>
               )}
               <div className="flex justify-end">
@@ -308,12 +318,12 @@ export default function SettingsPage() {
                   className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                 >
                   {requiresPasswordForEmailChange
-                    ? "Update"
+                    ? "Alterar"
                     : isSavingEmail
-                      ? "Saving..."
+                      ? "Salvando..."
                       : emailSaved
-                        ? "Saved"
-                        : "Save"}
+                        ? "Salvo"
+                        : "Salvar"}
                 </button>
               </div>
             </div>
@@ -323,11 +333,11 @@ export default function SettingsPage() {
 
       {/* Plan */}
       <section className="space-y-3">
-        <SettingsHeading>Usage Plan</SettingsHeading>
+        <SettingsHeading>Plano</SettingsHeading>
         <GlassCardUI>
           <SettingsRow layout="stacked">
             <p className="text-base font-medium text-gray-500 capitalize">
-              {profile?.tier || "Free"}
+              {tierLabel(profile?.tier)}
             </p>
           </SettingsRow>
         </GlassCardUI>
@@ -335,13 +345,13 @@ export default function SettingsPage() {
 
       {/* Danger Zone */}
       <section className="space-y-3">
-        <SettingsHeading tone="danger">Danger Zone</SettingsHeading>
+        <SettingsHeading tone="danger">Zona de perigo</SettingsHeading>
         <GlassCardUI>
           <SettingsRow>
             <div className="min-w-0 space-y-1">
-              <SettingsLabel>Delete account</SettingsLabel>
+              <SettingsLabel>Excluir conta</SettingsLabel>
               <SettingsDescription>
-                Permanently delete your account and personal workspace. Organization work follows the member removal policy.
+                Exclui de vez sua conta e seu espaço pessoal. O trabalho nas organizações segue a regra de remoção de membros.
               </SettingsDescription>
             </div>
             <PillButtonUI
@@ -353,19 +363,19 @@ export default function SettingsPage() {
               className="w-full shrink-0 sm:w-auto"
             >
               <Trash2 className="h-4 w-4 shrink-0" />
-              Delete account
+              Excluir conta
             </PillButtonUI>
           </SettingsRow>
         </GlassCardUI>
       </section>
       <ConfirmPopup
         open={deleteConfirm}
-        title="Delete account?"
-        message="This permanently deletes your account and personal workspace. In each organization, shared work without another owner transfers to a remaining organization owner. Unshared private work is retained for 30 days for organization owners to recover or delete. You must appoint another owner or delete any organization you solely own first."
-        confirmLabel="Delete"
+        title="Excluir conta?"
+        message="Isso exclui de vez sua conta e seu espaço pessoal. Em cada organização, o trabalho compartilhado que não tem outro titular passa para um titular que continua na organização. O trabalho privado não compartilhado fica guardado por 30 dias, para os titulares da organização recuperarem ou excluírem. Antes, nomeie outro titular ou exclua cada organização em que só você é titular."
+        confirmLabel="Excluir"
         confirmVariant="danger"
         confirmStatus={isDeleting ? "loading" : "idle"}
-        cancelLabel="Cancel"
+        cancelLabel="Cancelar"
         onCancel={() => {
           if (isDeleting) return;
           setDeleteConfirm(false);
@@ -381,11 +391,11 @@ export default function SettingsPage() {
       <Modal
         open={googleEmailModalOpen}
         onClose={() => setGoogleEmailModalOpen(false)}
-        breadcrumbs={["Account", "Change email"]}
+        breadcrumbs={["Conta", "Trocar e-mail"]}
         size="sm"
         className="h-auto"
         primaryAction={{
-          label: "Go to Security",
+          label: "Ir para Segurança",
           onClick: () => {
             setGoogleEmailModalOpen(false);
             router.push("/settings/security");
@@ -393,8 +403,8 @@ export default function SettingsPage() {
         }}
       >
         <p className="pb-5 text-sm leading-relaxed text-gray-600">
-          Your account was created with Google. To change your email, first add
-          a password in Settings &gt; Security &gt; Password.
+          Sua conta foi criada com o Google. Para trocar o e-mail, primeiro crie
+          uma senha em Configurações &gt; Segurança &gt; Senha.
         </p>
       </Modal>
       <MfaVerificationPopup
@@ -405,8 +415,8 @@ export default function SettingsPage() {
           setAccountDeleteMfaOpen(false);
           void handleDeleteAccount();
         }}
-        title="Two-factor verification required"
-        message="Account deletion is sensitive. Enter a code from your authenticator app to continue."
+        title="Verificação em duas etapas"
+        message="Excluir a conta é uma ação sensível. Digite um código do seu app autenticador para continuar."
       />
       <MfaVerificationPopup
         open={emailMfaOpen}
@@ -416,8 +426,8 @@ export default function SettingsPage() {
           setEmailMfaOpen(false);
           void handleSaveEmail();
         }}
-        title="Two-factor verification required"
-        message="Email changes are sensitive. Enter a code from your authenticator app to continue."
+        title="Verificação em duas etapas"
+        message="Trocar o e-mail é uma ação sensível. Digite um código do seu app autenticador para continuar."
       />
     </div>
   );
