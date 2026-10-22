@@ -67,13 +67,19 @@ describe("/mcp over HTTP", () => {
     it("answers mike_quem_sou for the token's person and records the client", async () => {
         const client = await connect(await token());
         const { tools } = await client.listTools();
-        expect(tools.map((t) => t.name)).toEqual(["mike_quem_sou"]);
-        expect(tools[0].annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+        expect(tools.map((t) => t.name)).toEqual([
+            "mike_quem_sou",
+            "mike_contratos_buscar",
+            "mike_contratos_ficha",
+            "mike_contratos_documento",
+            "mike_contratos_atividade",
+        ]);
+        for (const t of tools) expect(t.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
 
         const r = await client.callTool({ name: "mike_quem_sou", arguments: {} });
         expect(r.isError).toBeFalsy();
         expect(r.structuredContent).toMatchObject({ nome: "Ana Teste", email: "ana@exemplo.test", papel: "team", workspace: "personal", cliente: "claude-code" });
-        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 1 ferramentas disponíveis.");
+        expect((r.content as { text: string }[])[0].text).toBe("Agindo em nome de Ana Teste (time do Legal). 5 ferramentas disponíveis.");
         expect(tables.mcp_access_tokens[0].last_client).toBe("claude-code");
 
         expect(audit.recordAudit).toHaveBeenCalledWith(
@@ -88,6 +94,20 @@ describe("/mcp over HTTP", () => {
             }),
         );
         await client.close();
+    });
+
+    it("shows a requester only mike_quem_sou, and a token without contratos:read no contract tool", async () => {
+        state.role = "requester";
+        const requester = await connect(await token());
+        expect((await requester.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou"]);
+        await requester.close();
+
+        state.role = "head";
+        const narrow = await connect(await token({ scopes: ["prazos:read"] }));
+        expect((await narrow.listTools()).tools.map((t) => t.name)).toEqual(["mike_quem_sou"]);
+        const refused = await narrow.callTool({ name: "mike_contratos_buscar", arguments: {} });
+        expect(refused.isError).toBe(true);
+        await narrow.close();
     });
 
     it("refuses a missing, unknown or revoked token with 401 and a Portuguese message", async () => {
