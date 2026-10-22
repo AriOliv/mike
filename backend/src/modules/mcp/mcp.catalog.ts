@@ -4,26 +4,34 @@
 import { CONTRACT_REVIEW_TOOLS } from "../contract-review/contractReview.service";
 import { CONTRACT_TOOLS } from "../contracts/contracts.service";
 import { DASHBOARD_TOOLS } from "../dashboard/dashboard.service";
+import { AGENT_TOOLS } from "../legal-agent/legalAgent.service";
 import { REGULATORY_TOOLS } from "../regulatory/regulatory.service";
 import { REQUEST_TOOLS } from "../requests/requests.service";
 import { TABULAR_TOOLS } from "../tabular/tabular.service";
 import { whoAmITool } from "./mcp.whoami";
 import type { AnyMcpTool } from "./mcp.types";
 
+/**
+ * Writes the server offers, by name. A module may export write tools (with
+ * their confirm.preview) before they are switched on here; each one enters
+ * the catalog deliberately, in its own reviewed change (doc 09 §6).
+ */
+export const WRITE_TOOLS_ENABLED: ReadonlySet<string> = new Set<string>([]);
+
 let cached: readonly AnyMcpTool[] | null = null;
 
-/** The phase 1 catalog: read tools only. */
-export function readTools(): readonly AnyMcpTool[] {
+/** Every tool the server publishes: the reads, and the writes switched on above. */
+export function catalogTools(): readonly AnyMcpTool[] {
     cached ??= [
-        whoAmITool(() => readTools()),
+        whoAmITool(() => catalogTools()),
         ...CONTRACT_REVIEW_TOOLS,
         ...CONTRACT_TOOLS,
         ...REQUEST_TOOLS,
         ...REGULATORY_TOOLS,
         ...TABULAR_TOOLS,
         ...DASHBOARD_TOOLS,
-    ].filter(
-        (t) => t.access === "read",
-    );
+        // Structural fit to McpTool (the legal-agent module declares its own context subset).
+        ...(AGENT_TOOLS as unknown as AnyMcpTool[]),
+    ].filter((t) => t.access === "read" || (WRITE_TOOLS_ENABLED.has(t.name) && !!t.confirm));
     return cached;
 }

@@ -78,6 +78,7 @@ describe("Tokens de acesso para agentes", () => {
         expect(items[0].textContent).toContain("Usado há 5 min pelo Claude Code");
         expect(items[0].textContent).toContain("Expira em 29 dias");
         expect(items[0].textContent).toContain("Ler contratos · Ver prazos");
+        expect(items[0].textContent).not.toContain("todas as permissões");
         expect(within(items[0]).getByRole("button", { name: "Revogar Claude Code do notebook" })).toBeTruthy();
         // Inactive is neutral grey, never the red of a failure.
         const revoked = within(items[1]).getByText("Revogado");
