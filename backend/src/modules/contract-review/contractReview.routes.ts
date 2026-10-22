@@ -17,6 +17,9 @@ import {
     listContractPortfolio,
     listContractReviews,
     startContractReview,
+    getAnalysisById,
+    getLatestAnalysis,
+    startAnalystAnalysis,
     type Caller,
 } from "./contractReview.service";
 
@@ -95,6 +98,40 @@ contractReviewRouter.patch(
     "/ficha/fields",
     asyncRoute(async (req, res) => {
         send(res, await decideFichaField(createServerSupabase(), caller(res), req.params.projectId, body(req)));
+    }),
+);
+
+// The analyst's analysis: a draft for the legal team (editors of the contract).
+contractReviewRouter.get(
+    "/analysis",
+    asyncRoute(async (req, res) => {
+        send(res, await getLatestAnalysis(createServerSupabase(), caller(res), req.params.projectId));
+    }),
+);
+
+contractReviewRouter.post(
+    "/analysis",
+    asyncRoute(async (req, res) => {
+        const input = body(req);
+        send(
+            res,
+            await startAnalystAnalysis(createServerSupabase(), caller(res), req.params.projectId, {
+                request_id: input.request_id as string | null | undefined,
+                intake: input.intake,
+            }),
+            202,
+        );
+    }),
+);
+
+contractReviewRouter.get(
+    "/analysis/:analysisId",
+    asyncRoute(async (req, res) => {
+        const result = await getAnalysisById(createServerSupabase(), caller(res), req.params.analysisId);
+        // An analysis of another contract answers like one that does not exist.
+        if (result.ok && result.data.project_id !== req.params.projectId)
+            return void res.status(404).json({ detail: "Análise não encontrada." });
+        send(res, result);
     }),
 );
 
