@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alertLabel, daysUntil, dueLabel, ownerLabel, parseAlertDays } from "./obligations";
+import { ALERT_DAY_CHOICES, alertLabel, daysUntil, dueLabel, ownerLabel, parseAlertDays } from "./obligations";
 
 describe("obligation helpers", () => {
     it("counts days from today, midnight to midnight", () => {
@@ -28,6 +28,11 @@ describe("obligation helpers", () => {
         expect(ownerLabel({ owner_email: "ana@x.io" }, "Ana@X.io")).toBe("Você");
         expect(ownerLabel({ owner_email: "bia@x.io" }, "ana@x.io")).toBe("bia@x.io");
         expect(ownerLabel({ owner_email: "bia@x.io" })).toBe("bia@x.io");
+        expect(ownerLabel({ owner_email: "bia@x.io" }, "ana@x.io", [{ email: "bia@x.io", name: "Bia" }])).toBe("Bia");
+    });
+
+    it("offers 30 days among the usual lead times", () => {
+        expect(ALERT_DAY_CHOICES).toContain(30);
     });
 
     it("accepts a lead time of 0 to 365 days only", () => {

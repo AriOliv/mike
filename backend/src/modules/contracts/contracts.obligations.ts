@@ -31,11 +31,23 @@ function isEmail(value: string): boolean {
     return at > 0 && at === value.lastIndexOf("@") && value.indexOf(".", at) > at + 1 && !/[\s,()]/.test(value) && value.length <= 254;
 }
 
+/**
+ * The e-mails of the people who may own a deadline (the legal team), when the
+ * deployment has one: an owner outside it would never be warned, silently.
+ */
+export type OwnerOptions = { members?: string[] };
+
 /** The owner: an e-mail, lower-cased; null clears it. */
-function parseOwner(value: unknown): { ok: true; value: string | null } | { ok: false; detail: string } {
+function parseOwner(
+    value: unknown,
+    options: OwnerOptions = {},
+): { ok: true; value: string | null } | { ok: false; detail: string } {
     if (value === null || value === "") return { ok: true, value: null };
     const text = normalizeString(value)?.toLowerCase();
     if (!text || !isEmail(text)) return { ok: false, detail: "Informe o e-mail de quem cuida do prazo." };
+    if (options.members && !options.members.includes(text)) {
+        return { ok: false, detail: "Não encontrei essa pessoa no time do Legal." };
+    }
     return { ok: true, value: text };
 }
 
@@ -76,6 +88,7 @@ export async function createObligation(
     db: Db,
     caller: Caller,
     body: Record<string, unknown>,
+    options: OwnerOptions = {},
 ): Promise<ServiceResult<Obligation>> {
     const title = normalizeString(body.title);
     const dueDate = body.due_date;
@@ -86,7 +99,7 @@ export async function createObligation(
         return failure("validation", `mark must be one of: ${MARKS.join(", ")}`);
     }
 
-    const owner = "owner_email" in body ? parseOwner(body.owner_email) : ({ ok: true, value: null } as const);
+    const owner = "owner_email" in body ? parseOwner(body.owner_email, options) : ({ ok: true, value: null } as const);
     if (!owner.ok) return failure("validation", owner.detail);
     const alertDays = "alert_days" in body ? parseAlertDays(body.alert_days) : ({ ok: true, value: DEFAULT_ALERT_DAYS } as const);
     if (!alertDays.ok) return failure("validation", alertDays.detail);
@@ -122,6 +135,7 @@ export async function updateObligation(
     caller: Caller,
     id: string,
     body: Record<string, unknown>,
+    options: OwnerOptions = {},
 ): Promise<ServiceResult<Obligation>> {
     const patch: Record<string, unknown> = {};
     if ("done" in body) patch.done = !!body.done;
@@ -142,7 +156,7 @@ export async function updateObligation(
     }
     if ("note" in body) patch.note = normalizeString(body.note);
     if ("owner_email" in body) {
-        const owner = parseOwner(body.owner_email);
+        const owner = parseOwner(body.owner_email, options);
         if (!owner.ok) return failure("validation", owner.detail);
         patch.owner_email = owner.value;
     }

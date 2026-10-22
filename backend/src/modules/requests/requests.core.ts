@@ -1266,3 +1266,20 @@ export async function whoAmI(
         areas: REQUESTER_AREAS,
     });
 }
+
+
+/** The legal team's people, for a picker ("who looks after this"). Team members only. */
+export async function listLegalTeamMembers(
+    db: Db,
+    caller: Caller,
+): Promise<ServiceResult<{ user_id: string; email: string; name: string }[]>> {
+    try {
+        const team = await loadLegalTeam(db);
+        if (!team) return NO_LEGAL_TEAM;
+        if (!(await teamRole(db, caller, team.org_id))) return TEAM_ONLY;
+        const members = await loadTeamMembers(db, team.org_id);
+        return ok(members.sort((a, b) => a.name.localeCompare(b.name, "pt-BR")));
+    } catch (error) {
+        return internalFailure(error);
+    }
+}

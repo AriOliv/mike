@@ -22,11 +22,19 @@ export function alertLabel(days: number): string {
     return days === 1 ? "avisa 1 dia antes" : `avisa ${days} dias antes`;
 }
 
-/** Whose deadline it is, for a row: the owner's e-mail, or "você" when there is none. */
-export function ownerLabel(item: Pick<Obligation, "owner_email">, me?: string | null): string {
+/** Whose deadline it is, for a row: "Você", the person's name, or their e-mail. */
+export function ownerLabel(
+    item: Pick<Obligation, "owner_email">,
+    me?: string | null,
+    people: { email: string; name: string }[] = [],
+): string {
     if (!item.owner_email) return "Sem responsável";
-    return me && item.owner_email === me.toLowerCase() ? "Você" : item.owner_email;
+    if (me && item.owner_email === me.toLowerCase()) return "Você";
+    return people.find((p) => p.email === item.owner_email)?.name ?? item.owner_email;
 }
+
+/** The lead times offered in the picker; anything else goes through "Outro…". */
+export const ALERT_DAY_CHOICES = [0, 7, 15, 30, 60, 90] as const;
 
 export function parseAlertDays(value: string): number | null {
     if (!/^\d{1,3}$/.test(value.trim())) return null;

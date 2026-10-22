@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import {
     getObligationAlerts,
+    getObligationOwners,
     getObligations,
     updateObligation,
     type Obligation,
     type ObligationAlert,
     type ObligationMark,
+    type ObligationOwner,
 } from "@/app/lib/mikeApi";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { ObligationOwnerEditor } from "@/app/components/radar/ObligationOwnerEditor";
@@ -24,9 +26,9 @@ const MARK_STYLES: Record<ObligationMark, string> = {
 };
 
 const MARK_LABELS: Record<ObligationMark, string> = {
-    critico: "critical",
-    tarefa: "task",
-    recorrente: "recurring",
+    critico: "crítico",
+    tarefa: "tarefa",
+    recorrente: "recorrente",
 };
 
 // Deadlines are grouped by how soon they land, which is how a legal team
@@ -50,6 +52,7 @@ export default function RadarPage() {
     const { user } = useAuth();
     const me = user?.email?.toLowerCase() ?? null;
     const [alerts, setAlerts] = useState<ObligationAlert[]>([]);
+    const [people, setPeople] = useState<ObligationOwner[]>([]);
     const [items, setItems] = useState<Obligation[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -57,15 +60,18 @@ export default function RadarPage() {
 
     const load = useCallback(async () => {
         try {
-            const [all, mine] = await Promise.all([
+            const [all, mine, team] = await Promise.all([
                 getObligations(),
                 getObligationAlerts().catch(() => [] as ObligationAlert[]),
+                // Not everyone is on the team; they just cannot hand a deadline on.
+                getObligationOwners().catch(() => [] as ObligationOwner[]),
             ]);
             setItems(all);
             setAlerts(mine);
+            setPeople(team);
             setError(null);
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Failed to load deadlines");
+            setError(e instanceof Error ? e.message : "Não foi possível carregar os prazos.");
         } finally {
             setLoading(false);
         }
@@ -74,6 +80,8 @@ export default function RadarPage() {
     useEffect(() => {
         void load();
     }, [load]);
+
+    const attention = useMemo(() => new Set(alerts.map((a) => a.id)), [alerts]);
 
     const grouped = useMemo(() => {
         const out: Record<string, Obligation[]> = {};
@@ -97,7 +105,7 @@ export default function RadarPage() {
         } catch (e) {
             setItems(previous);
             setAlerts(previousAlerts);
-            setError(e instanceof Error ? e.message : "Could not update the deadline");
+            setError(e instanceof Error ? e.message : "Não foi possível atualizar o prazo.");
         }
     }
 
@@ -152,32 +160,50 @@ export default function RadarPage() {
             )}
 
             <div className="flex-1 overflow-y-auto px-6 pb-8">
-                {alerts.length > 0 && (
-                    <section aria-label="Pedem sua atenção" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                        <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-amber-800">
+                {alerts.length > 0 ? (
+                    <section
+                        aria-label="Pedem sua atenção"
+                        className={`mb-6 rounded-xl border px-4 py-3 ${
+                            alerts.some((a) => a.days_left < 0) ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"
+                        }`}
+                    >
+                        <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-600">
                             Pedem sua atenção · {alerts.length}
                         </h2>
                         <ul className="space-y-1.5">
                             {alerts.map((a) => (
-                                <li key={a.id} className="flex items-baseline justify-between gap-3 text-sm">
-                                    <span className="min-w-0 truncate text-gray-800">
+                                <li key={a.id} className="flex items-center gap-2 text-sm">
+                                    <button
+                                        onClick={() => void markDone(a)}
+                                        title="Dar baixa"
+                                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-gray-400 bg-white text-transparent hover:border-emerald-500 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-900"
+                                    >
+                                        <Check className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                        onClick={() => a.project_id && router.push(`/projects/${a.project_id}`)}
+                                        disabled={!a.project_id}
+                                        className="min-w-0 flex-1 truncate text-left text-gray-800 enabled:hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-900"
+                                    >
                                         {a.title}
                                         {a.projects?.counterparty || a.projects?.name ? (
                                             <span className="text-gray-500"> · {a.projects.counterparty || a.projects.name}</span>
                                         ) : null}
-                                    </span>
-                                    <span className={`shrink-0 text-xs ${a.days_left < 0 ? "text-red-600" : "text-amber-800"}`}>
+                                    </button>
+                                    <span className={`shrink-0 text-xs ${a.days_left < 0 ? "font-medium text-red-700" : "text-gray-600"}`}>
                                         {dueLabel(a.days_left)}
                                     </span>
                                 </li>
                             ))}
                         </ul>
                     </section>
+                ) : (
+                    items.length > 0 && <p className="mb-4 text-xs text-gray-400">Nada pede sua atenção agora.</p>
                 )}
 
                 {items.length === 0 && (
                     <div className="rounded-xl border border-dashed border-gray-200 px-4 py-12 text-center text-sm text-gray-400">
-                        No upcoming deadlines. Obligations extracted from contracts show up here.
+                        Nenhum prazo por vir. As obrigações extraídas dos contratos aparecem aqui.
                     </div>
                 )}
 
@@ -203,7 +229,7 @@ export default function RadarPage() {
                                     >
                                         <button
                                             onClick={() => void markDone(item)}
-                                            title="Mark as done"
+                                            title="Dar baixa"
                                             className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-gray-300 text-transparent transition hover:border-emerald-500 hover:text-emerald-600"
                                         >
                                             <Check className="h-3 w-3" />
@@ -219,6 +245,11 @@ export default function RadarPage() {
                                                 >
                                                     {MARK_LABELS[item.mark]}
                                                 </span>
+                                                {attention.has(item.id) && (
+                                                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
+                                                        em atenção
+                                                    </span>
+                                                )}
                                             </div>
                                             {item.projects?.name && (
                                                 <button
@@ -234,6 +265,7 @@ export default function RadarPage() {
                                             <ObligationOwnerEditor
                                                 item={item}
                                                 me={me}
+                                                people={people}
                                                 onSaved={(next) => {
                                                     setItems((xs) => xs.map((x) => (x.id === next.id ? { ...x, ...next } : x)));
                                                     void getObligationAlerts().then(setAlerts, () => undefined);
@@ -257,9 +289,7 @@ export default function RadarPage() {
                                                         : "text-gray-400"
                                                 }`}
                                             >
-                                                {daysUntil(item.due_date) < 0
-                                                    ? `${Math.abs(daysUntil(item.due_date))}d overdue`
-                                                    : `in ${daysUntil(item.due_date)}d`}
+                                                {dueLabel(daysUntil(item.due_date))}
                                             </div>
                                         </div>
                                     </div>

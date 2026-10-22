@@ -22,6 +22,7 @@ export {
     DEFAULT_ALERT_DAYS,
     type Obligation,
     type ObligationAlert,
+    type OwnerOptions,
 } from "./contracts.obligations";
 export { getDossier, putDossier, type Dossier } from "./contracts.dossiers";
 export {

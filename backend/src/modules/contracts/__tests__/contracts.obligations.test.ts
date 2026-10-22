@@ -73,6 +73,29 @@ describe("deadline owner and warning lead time", () => {
         fake.done();
     });
 
+    it("refuses an owner outside the legal team, in Portuguese, before writing", async () => {
+        const fake = scriptedDb([]);
+        const options = { members: ["bia@example.com"] };
+        const created = await createObligation(fake.db, caller, { title: "A", due_date: "2026-11-20", owner_email: "zed@example.com" }, options);
+        expect(created).toMatchObject({ ok: false, kind: "validation", detail: "Não encontrei essa pessoa no time do Legal." });
+        const updated = await updateObligation(fake.db, caller, "o1", { owner_email: "zed@example.com" }, options);
+        expect(updated).toMatchObject({ ok: false, kind: "validation", detail: "Não encontrei essa pessoa no time do Legal." });
+        fake.done();
+    });
+
+    it("accepts a member of the legal team, however it is typed", async () => {
+        const fake = scriptedDb([{ table: "obligations", op: "insert", data: row() }]);
+        await createObligation(fake.db, caller, { title: "A", due_date: "2026-11-20", owner_email: "BIA@example.com" }, { members: ["bia@example.com"] });
+        expect(fake.calls[0].payload).toMatchObject({ owner_email: "bia@example.com" });
+        fake.done();
+    });
+
+    it("takes the owner away without asking who is on the team", async () => {
+        const fake = scriptedDb([{ table: "obligations", op: "update", data: row() }]);
+        expect((await updateObligation(fake.db, caller, "o1", { owner_email: null }, { members: [] })).ok).toBe(true);
+        fake.done();
+    });
+
     it("hands a deadline to someone, or takes the owner away", async () => {
         const fake = scriptedDb([
             { table: "obligations", op: "update", data: row({ owner_email: "bia@example.com" }) },

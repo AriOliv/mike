@@ -2,7 +2,9 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Obligation, ObligationAlert } from "@/app/lib/mikeApi";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => nav }));
+vi.mock("@/app/components/ui/toast", () => ({ showToast: vi.fn() }));
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: { id: "u", email: "Ana@Example.com" } }),
 }));
@@ -13,6 +15,7 @@ vi.mock("@/app/components/shared/PageHeader", () => ({
 const api = vi.hoisted(() => ({
     getObligations: vi.fn(),
     getObligationAlerts: vi.fn(),
+    getObligationOwners: vi.fn(),
     updateObligation: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (actual) => ({
@@ -45,7 +48,9 @@ const alertOf = (over: Partial<ObligationAlert> = {}): ObligationAlert => ({ ...
 beforeEach(() => {
     api.getObligations.mockReset();
     api.getObligationAlerts.mockReset();
+    api.getObligationOwners.mockReset().mockResolvedValue([{ user_id: "b", email: "bia@x.io", name: "Bia" }]);
     api.updateObligation.mockReset();
+    nav.push.mockReset();
 });
 
 describe("Radar page", () => {
@@ -59,12 +64,75 @@ describe("Radar page", () => {
         expect(within(block).getByText("vence hoje")).toBeTruthy();
     });
 
-    it("shows no attention block when nothing is due", async () => {
+    it("says once that nothing asks for attention, instead of hiding the feature", async () => {
         api.getObligations.mockResolvedValue([ob()]);
         api.getObligationAlerts.mockResolvedValue([]);
         render(<RadarPage />);
         await screen.findByText("Aviso de não renovação");
         expect(screen.queryByRole("region", { name: "Pedem sua atenção" })).toBeNull();
+        expect(screen.getByText("Nada pede sua atenção agora.")).toBeTruthy();
+    });
+
+    it("turns the block red only when something is overdue", async () => {
+        api.getObligations.mockResolvedValue([ob()]);
+        api.getObligationAlerts.mockResolvedValue([alertOf({ days_left: 3 })]);
+        const { unmount } = render(<RadarPage />);
+        expect((await screen.findByRole("region", { name: "Pedem sua atenção" })).className).toContain("bg-amber-50");
+        unmount();
+        api.getObligationAlerts.mockResolvedValue([alertOf({ days_left: -1 })]);
+        render(<RadarPage />);
+        expect((await screen.findByRole("region", { name: "Pedem sua atenção" })).className).toContain("bg-red-50");
+    });
+
+    it("opens the contract from an attention row", async () => {
+        api.getObligations.mockResolvedValue([ob({ project_id: "p1" })]);
+        api.getObligationAlerts.mockResolvedValue([alertOf({ project_id: "p1", projects: { name: "Contrato X", counterparty: "Acme", lane: null } })]);
+        render(<RadarPage />);
+        const block = await screen.findByRole("region", { name: "Pedem sua atenção" });
+        fireEvent.click(within(block).getByRole("button", { name: /Aviso de não renovação/ }));
+        expect(nav.push).toHaveBeenCalledWith("/projects/p1");
+    });
+
+    it("does not link an attention row that has no contract", async () => {
+        api.getObligations.mockResolvedValue([ob()]);
+        api.getObligationAlerts.mockResolvedValue([alertOf()]);
+        render(<RadarPage />);
+        const block = await screen.findByRole("region", { name: "Pedem sua atenção" });
+        expect((within(block).getByRole("button", { name: /Aviso de não renovação/ }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("marks, in the list, the deadlines that are also in the attention block", async () => {
+        api.getObligations.mockResolvedValue([ob(), ob({ id: "o2", title: "Outro" })]);
+        api.getObligationAlerts.mockResolvedValue([alertOf()]);
+        render(<RadarPage />);
+        await screen.findByText("em atenção");
+        expect(screen.getAllByText("em atenção")).toHaveLength(1);
+    });
+
+    it("ticks a deadline off from the attention block", async () => {
+        api.getObligations.mockResolvedValue([ob()]);
+        api.getObligationAlerts.mockResolvedValue([alertOf()]);
+        api.updateObligation.mockResolvedValue(ob({ done: true }));
+        render(<RadarPage />);
+        const block = await screen.findByRole("region", { name: "Pedem sua atenção" });
+        fireEvent.click(within(block).getByTitle("Dar baixa"));
+        await waitFor(() => expect(api.updateObligation).toHaveBeenCalledWith("o1", { done: true }));
+    });
+
+    it("words the days in one vocabulary on the list and in the block", async () => {
+        api.getObligations.mockResolvedValue([ob({ due_date: day(-2) })]);
+        api.getObligationAlerts.mockResolvedValue([alertOf({ days_left: -2 })]);
+        render(<RadarPage />);
+        await screen.findByRole("region", { name: "Pedem sua atenção" });
+        expect(screen.getAllByText("venceu há 2 dias")).toHaveLength(2);
+    });
+
+    it("still works for someone off the team, who just has no one to hand a deadline to", async () => {
+        api.getObligationOwners.mockRejectedValueOnce(new Error("403"));
+        api.getObligations.mockResolvedValue([ob()]);
+        api.getObligationAlerts.mockResolvedValue([]);
+        render(<RadarPage />);
+        expect(await screen.findByText("Aviso de não renovação")).toBeTruthy();
     });
 
     it("still lists the deadlines when the alerts cannot be loaded", async () => {
@@ -78,11 +146,13 @@ describe("Radar page", () => {
         api.getObligations.mockResolvedValue([
             ob({ owner_email: "ana@example.com" }),
             ob({ id: "o2", title: "Outro", owner_email: null }),
+            ob({ id: "o3", title: "Terceiro", owner_email: "bia@x.io" }),
         ]);
         api.getObligationAlerts.mockResolvedValue([]);
         render(<RadarPage />);
         expect(await screen.findByRole("button", { name: "Você · avisa 30 dias antes" })).toBeTruthy();
         expect(screen.getByRole("button", { name: "Sem responsável · avisa 30 dias antes" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Bia · avisa 30 dias antes" })).toBeTruthy();
     });
 
     it("drops a deadline from the list and the attention block when ticked off", async () => {
@@ -91,7 +161,7 @@ describe("Radar page", () => {
         api.updateObligation.mockResolvedValue(ob({ done: true }));
         render(<RadarPage />);
         await screen.findByRole("region", { name: "Pedem sua atenção" });
-        fireEvent.click(screen.getByTitle("Mark as done"));
+        fireEvent.click(screen.getAllByTitle("Dar baixa")[1]);
         await waitFor(() => expect(screen.queryByRole("region", { name: "Pedem sua atenção" })).toBeNull());
         expect(api.updateObligation).toHaveBeenCalledWith("o1", { done: true });
     });
@@ -102,7 +172,7 @@ describe("Radar page", () => {
         api.updateObligation.mockRejectedValueOnce(new Error("offline"));
         render(<RadarPage />);
         await screen.findByText("Aviso de não renovação");
-        fireEvent.click(screen.getByTitle("Mark as done"));
+        fireEvent.click(screen.getByTitle("Dar baixa"));
         expect(await screen.findByText("offline")).toBeTruthy();
         expect(screen.getByText("Aviso de não renovação")).toBeTruthy();
     });
@@ -113,9 +183,11 @@ describe("Radar page", () => {
         api.updateObligation.mockResolvedValue(ob({ owner_email: "bia@x.io", alert_days: 5 }));
         render(<RadarPage />);
         fireEvent.click(await screen.findByRole("button", { name: "Sem responsável · avisa 30 dias antes" }));
-        fireEvent.change(screen.getByLabelText("Responsável (e-mail)"), { target: { value: "bia@x.io" } });
+        fireEvent.change(await screen.findByLabelText("Responsável"), { target: { value: "bia@x.io" } });
+        fireEvent.change(screen.getByLabelText("Avisar antes"), { target: { value: "outro" } });
+        fireEvent.change(screen.getByLabelText("Dias"), { target: { value: "5" } });
         fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-        await screen.findByRole("button", { name: "bia@x.io · avisa 5 dias antes" });
+        await screen.findByRole("button", { name: "Bia · avisa 5 dias antes" });
         expect(api.getObligationAlerts).toHaveBeenCalledTimes(2);
     });
 
@@ -123,7 +195,7 @@ describe("Radar page", () => {
         api.getObligations.mockResolvedValue([]);
         api.getObligationAlerts.mockResolvedValue([]);
         render(<RadarPage />);
-        expect(await screen.findByText(/No upcoming deadlines/)).toBeTruthy();
+        expect(await screen.findByText(/Nenhum prazo por vir/)).toBeTruthy();
     });
 
     it("shows the load error", async () => {

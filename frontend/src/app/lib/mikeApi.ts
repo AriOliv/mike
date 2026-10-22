@@ -5186,6 +5186,17 @@ export async function getObligationAlerts(): Promise<ObligationAlert[]> {
     return apiRequest("/obligations/alerts");
 }
 
+/** A person who can own a deadline: the legal team. */
+export interface ObligationOwner {
+    user_id: string;
+    email: string;
+    name: string;
+}
+
+export async function getObligationOwners(): Promise<ObligationOwner[]> {
+    return apiRequest("/obligations/owners");
+}
+
 export async function getObligations(params?: {
     from?: string;
     to?: string;
