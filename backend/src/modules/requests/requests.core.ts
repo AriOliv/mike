@@ -50,6 +50,7 @@ import {
     type RequestStatus,
     type Urgency,
 } from "./requests.shared";
+import { buildStrip, loadStageHistory, syncStage, type StageRow, type StageStrip } from "./requests.stages";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
 import { loadTemplate, queueIntakePrefill } from "./requests.checklist";
 import { applyAssignmentRules } from "./requests.rules";
@@ -119,6 +120,10 @@ export type RequestTeamView = RequestPublicView & {
     intake_completed_at: string | null;
     /** The analysis found a critical risk and the Head was alerted. */
     critical_alert_at: string | null;
+    /** The spine: current stage, who holds the ball and since when, and the strip. */
+    stage: StageStrip;
+    /** The stages it went through, oldest first; the open one is the current stage. */
+    stages: StageRow[];
 };
 
 export type RequestMessage = {
@@ -378,6 +383,7 @@ export async function createRequest(
         return internalFailure(insertError);
     }
     const row = created as unknown as RequestRow;
+    await syncStage(db, row, "pedido recebido");
 
     let attached = 0;
     try {
@@ -556,8 +562,14 @@ async function buildView(
         .eq("request_id", row.id)
         .order("created_at", { ascending: true });
     if (error) throw error;
+    // The history follows the request: a card moved on the board, or a request
+    // older than the history, is recorded the first time anyone looks.
+    const current = await syncStage(db, row);
+    const stages = await loadStageHistory(db, row.id);
     return {
         ...base,
+        stage: buildStrip(current.stage, current.owner, stages),
+        stages,
         number: row.number,
         project_id: row.project_id,
         lane,
@@ -854,6 +866,7 @@ export async function assignRequest(
             after: member ? { id: member.user_id, name: member.name } : null,
         });
     }
+    await syncStage(db, { ...row, ...updated.data }, member ? "responsável definido" : "responsável retirado");
     if (member) {
         await queueNotifications(db, [
             {
@@ -1117,6 +1130,7 @@ export async function deliverRequest(
         delivery: { message, document_ids: documentIds, delivered_by: caller.userId },
     });
     if (!updated.ok) return updated;
+    await syncStage(db, updated.data, "devolutiva enviada");
     if (row.project_id) {
         await db
             .from("projects")

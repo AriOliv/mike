@@ -245,3 +245,17 @@ export async function applyAssignmentRules(db: Db, row: RequestRow): Promise<{ a
         return { assigned: false };
     }
 }
+
+/**
+ * The request as it stands after the rules ran: the rules write the owner and
+ * the status straight to the table, so whoever records the stage next must not
+ * work from the row it read before.
+ */
+export async function reloadAfterRules(db: Db, row: RequestRow): Promise<RequestRow> {
+    const { data } = await db
+        .from("legal_requests")
+        .select("status, assignee_id, assigned_at, assigned_by")
+        .eq("id", row.id)
+        .maybeSingle();
+    return data ? ({ ...row, ...(data as Partial<RequestRow>) } as RequestRow) : row;
+}

@@ -14,12 +14,14 @@ import {
     assignRequest,
     createRequest,
     getAssignmentRules,
+    getRequest,
     matchRule,
     parseAssignmentRules,
     parseMoney,
     setAssignmentRules,
     valueFromIntake,
     type AssignmentRule,
+    type RequestTeamView,
 } from "../requests.service";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -62,6 +64,7 @@ function world(rules: AssignmentRule[] = []) {
                 legal_request_notifications: () => ({ status: "pending", attempts: 0, created_at: new Date().toISOString() }),
                 legal_request_messages: () => ({ created_at: new Date().toISOString() }),
                 legal_request_participants: () => ({ revoked_at: null, created_at: new Date().toISOString() }),
+                legal_request_stages: () => ({ left_at: null }),
             },
             rpc: {
                 create_project_with_memory: (args, tables) => {
@@ -320,5 +323,54 @@ describe("when the database fails", () => {
         expect(await setAssignmentRules(failingWorld("legal_teams", { nthSelect: 1 }).db, HEAD, { rules: [] })).toMatchObject(internal);
         expect(await setAssignmentRules(failingWorld("user_profiles", { nthSelect: 1 }).db, HEAD, { rules: [] })).toMatchObject(internal);
         expect(await setAssignmentRules(failingWorld("legal_teams", { op: "update" }).db, HEAD, { rules: [] })).toMatchObject(internal);
+    });
+});
+
+describe("rules and the stage history together", () => {
+    const open = async (w: ReturnType<typeof world>) => {
+        const created = await createRequest(w.db, REQUESTER, { kind: "nda", counterparty: "Nuvem Fictícia S.A.", context: "NDA." });
+        if (!created.ok) throw new Error(JSON.stringify(created));
+        return created.data.request.id;
+    };
+    const team = async (w: ReturnType<typeof world>, id: string) => {
+        const view = await getRequest(w.db, HEAD, id);
+        if (!view.ok) throw new Error(JSON.stringify(view));
+        return view.data as RequestTeamView;
+    };
+
+    it("moves a request a rule assigned out of 'recebido', and keeps one open row", async () => {
+        const w = world([rule({ kind: "nda" }, DUDA.userId)]);
+        const id = await open(w);
+        const view = await team(w, id);
+        expect(view.assignee_id).toBe(DUDA.userId);
+        // the request was received, then a rule put it in the person's hands: the checklist is the requester's turn
+        expect(view.stages.map((s) => s.stage)).toEqual(["recebido", "checklist"]);
+        expect(view.stage).toMatchObject({ stage: "checklist", owner: { kind: "requester" } });
+        expect(view.stages.filter((s) => s.left_at === null)).toHaveLength(1);
+    });
+
+    it("hands the ball to the person the rule chose once the checklist is closed", async () => {
+        const w = world([rule({ kind: "nda" }, DUDA.userId)]);
+        const id = await open(w);
+        w.table("legal_requests").find((r) => r.id === id)!.intake_completed_at = "2026-10-22T12:00:00Z";
+        w.table("projects").find((p) => p.name === (w.table("legal_requests").find((r) => r.id === id) as { title: string }).title)!.lane = "revisao";
+        const view = await team(w, id);
+        expect(view.stage).toMatchObject({ stage: "analise", owner: { kind: "person", id: DUDA.userId, name: "Duda" } });
+        expect(view.stages.at(-1)).toMatchObject({ stage: "analise", owner_id: DUDA.userId, owner_name: "Duda" });
+    });
+
+    it("follows a rule that moves the owner when the checklist brings the value", async () => {
+        const w = world([rule({ value_min: 50_000 }, HEAD.userId), rule({ kind: "nda" }, DUDA.userId)]);
+        const id = await open(w);
+        const row = w.table("legal_requests").find((r) => r.id === id)!;
+        expect(row).toMatchObject({ assignee_id: DUDA.userId, assigned_by: "rule" });
+
+        row.intake = { valor_recorrencia: { value: "R$ 80.000,00 mensais", source: "requester", confirmed: true } };
+        row.intake_completed_at = "2026-10-22T12:00:00Z";
+        w.table("projects").find((p) => p.id === row.project_id)!.lane = "revisao";
+        expect((await applyAssignmentRules(w.db, { ...row } as never)).assigned).toBe(true);
+        const view = await team(w, id);
+        expect(view.assignee_id).toBe(HEAD.userId);
+        expect(view.stage).toMatchObject({ stage: "analise", owner: { id: HEAD.userId } });
     });
 });

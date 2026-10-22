@@ -19,7 +19,8 @@ import {
     startAgentRun,
 } from "../contracts/contracts.service";
 import { REQUEST_COLUMNS, type RequestRow } from "./requests.access";
-import { applyAssignmentRules } from "./requests.rules";
+import { applyAssignmentRules, reloadAfterRules } from "./requests.rules";
+import { syncStage } from "./requests.stages";
 import {
     KIND_LABELS,
     normalizeArea,
@@ -391,6 +392,7 @@ export async function handleRequestTriage(
     if (fillArea && !autoAssign) {
         await applyAssignmentRules(db, { ...row, requester_area: readArea, kind, assigned_by: row.assigned_by });
     }
+    await syncStage(db, await reloadAfterRules(db, { ...row, ...patch } as RequestRow), "triagem feita pelo agente");
 
     await finishAgentRun(db, runId, {
         status: "succeeded",
