@@ -391,4 +391,39 @@ describe("the intake agent", () => {
         expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ skipped: "closed" });
         expect(await handleIntakePrefill(w.db, { payload: { request_id: "nope" } })).toEqual({ skipped: "missing" });
     });
+
+    it("gives up at once when no model key is set, instead of retrying", async () => {
+        const w = world();
+        const id = await newRequest(w);
+        withDocument(w, id);
+        llm.completeText.mockRejectedValue(new Error("Anthropic API key is not configured. Set ANTHROPIC_API_KEY or add a user Anthropic key."));
+        await expect(handleIntakePrefill(w.db, { payload: { request_id: id } })).rejects.toBeInstanceOf(NonRetryableJobError);
+        llm.completeText.mockRejectedValue(new Error("socket hang up"));
+        await expect(handleIntakePrefill(w.db, { payload: { request_id: id } })).rejects.not.toBeInstanceOf(NonRetryableJobError);
+    });
+
+    it("tells the checklist whether it is reading, done or unable to", async () => {
+        const w = world();
+        const id = await newRequest(w);
+        const state = async () => {
+            const r = await getIntake(w.db, REQUESTER, id);
+            if (!r.ok) throw new Error("intake");
+            return r.data.prefill;
+        };
+        expect(await state()).toBeNull();
+        const job = (status: string, result: Record<string, unknown> | null, created_at: string) =>
+            w.table("db_jobs").push({ id: uuid(), kind: "request.intake_prefill", dedupe_key: `intake-prefill:${id}`, status, result, created_at });
+        job("running", null, "2026-10-22T10:00:00Z");
+        expect(await state()).toBe("lendo");
+        job("failed", null, "2026-10-22T10:01:00Z");
+        expect(await state()).toBe("falhou");
+        job("done", { skipped: "no_model" }, "2026-10-22T10:02:00Z");
+        expect(await state()).toBe("falhou");
+        job("done", { skipped: "no_document" }, "2026-10-22T10:03:00Z");
+        expect(await state()).toBeNull();
+        job("done", { filled: 2, dropped: 0 }, "2026-10-22T10:04:00Z");
+        expect(await state()).toBe("concluido");
+        const answered = await answerIntake(w.db, REQUESTER, id, { answers: { contraparte: "Nuvem" } });
+        expect(answered.ok && answered.data.prefill).toBe("concluido");
+    });
 });

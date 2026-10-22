@@ -50,9 +50,17 @@ async function enqueueAnalysis(db: Db, requestId: string): Promise<void> {
     }
 }
 
+/**
+ * Where the intake agent stands on this request: reading the contract,
+ * done, or unable to (no model, unreadable text). Null when it never ran
+ * or had nothing to do (no contract, nothing left to answer).
+ */
+export type PrefillState = "lendo" | "concluido" | "falhou" | null;
+
 export type RequestIntake = IntakeStatus & {
     request_id: string;
     completed_at: string | null;
+    prefill: PrefillState;
     /** The requester or the team may answer; a viewer or a stranger may not. */
     can_answer: boolean;
     /** The organization's own checklist, or the generic one. */
@@ -67,11 +75,38 @@ export async function loadTemplate(db: Db, orgId: string): Promise<{ items: Inta
     return own.ok && own.items.length ? { items: own.items, source: "org" } : { items: effectiveTemplate(null), source: "padrao" };
 }
 
-function view(row: RequestRow, template: { items: IntakeItem[]; source: "org" | "padrao" }, canAnswer: boolean): RequestIntake {
+/** Skips that mean the agent could not do its job, as opposed to having none. */
+const PREFILL_UNABLE = new Set(["no_model", "no_owner"]);
+
+/** The agent's state, from its newest job for this request. */
+export async function prefillState(db: Db, requestId: string): Promise<PrefillState> {
+    const { data, error } = await db
+        .from("db_jobs")
+        .select("status, result, created_at")
+        .eq("dedupe_key", `intake-prefill:${requestId}`)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    if (error || !data) return null;
+    const job = data as { status: string; result: { skipped?: unknown } | null };
+    if (job.status === "pending" || job.status === "running") return "lendo";
+    if (job.status === "failed") return "falhou";
+    const skipped = job.result?.skipped;
+    if (typeof skipped === "string") return PREFILL_UNABLE.has(skipped) ? "falhou" : null;
+    return "concluido";
+}
+
+function view(
+    row: RequestRow,
+    template: { items: IntakeItem[]; source: "org" | "padrao" },
+    canAnswer: boolean,
+    prefill: PrefillState,
+): RequestIntake {
     return {
         ...intakeStatus(template.items, readAnswers(row.intake)),
         request_id: row.id,
         completed_at: row.intake_completed_at,
+        prefill,
         can_answer: canAnswer,
         template_source: template.source,
     };
@@ -90,7 +125,7 @@ export async function getIntake(db: Db, caller: Caller, requestId: string): Prom
     if (loaded.audience.kind === "guest") return failure("forbidden", "O checklist do pedido é de quem pediu e do time do Legal.");
     try {
         const template = await loadTemplate(db, loaded.row.org_id);
-        return ok(view(loaded.row, template, mayAnswer(loaded.row, loaded)));
+        return ok(view(loaded.row, template, mayAnswer(loaded.row, loaded), await prefillState(db, loaded.row.id)));
     } catch (error) {
         return internalFailure(error);
     }
@@ -123,7 +158,8 @@ export async function answerIntake(
     const now = new Date().toISOString();
     const applied = applyAnswers(template.items, readAnswers(row.intake), body, now);
     if (!applied.ok) return failure("validation", applied.detail);
-    if (applied.changed.length === 0) return ok(view(row, template, true));
+    const prefill = await prefillState(db, row.id);
+    if (applied.changed.length === 0) return ok(view(row, template, true, prefill));
 
     const status = intakeStatus(template.items, applied.answers);
     const closing = status.complete && !row.intake_completed_at;
@@ -154,7 +190,7 @@ export async function answerIntake(
     }
     // The checklist just closed: the contract's analysis runs for the team.
     if (closing && row.project_id) await enqueueAnalysis(db, row.id);
-    return ok(view(updated, template, true));
+    return ok(view(updated, template, true, prefill));
 }
 
 /** Queue the intake agent for a request whose card has a contract. Never fails the caller. */
