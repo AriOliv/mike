@@ -4,11 +4,11 @@
 
 import { z } from "zod";
 import { ok } from "../../lib/serviceResult";
-import { defineTool, type AnyMcpTool } from "../mcp/mcp.service";
+import { defineTool, uuidId, type AnyMcpTool } from "../mcp/mcp.service";
 import { listCardEvents } from "./contracts.events";
 import { getContractText } from "./contracts.text";
 
-const projectId = z.string().uuid().describe("Id do contrato (project_id), como vem de mike_contratos_buscar.");
+const projectId = uuidId().describe("Id do contrato (project_id), como vem de mike_contratos_buscar.");
 
 /** Where the person opens the contract in the Mike. */
 export function contractLink(id: string): string {

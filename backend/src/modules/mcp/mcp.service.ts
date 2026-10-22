@@ -6,7 +6,7 @@
 // facades of the modules that publish tools, and they import defineTool from
 // here. Exporting it ahead of that cycle keeps it defined whichever side
 // loads first.
-export { DEFAULT_SCOPES, MCP_SCOPES, defineTool } from "./mcp.types";
+export { DEFAULT_SCOPES, MCP_SCOPES, defineTool, uuidId } from "./mcp.types";
 export type { AnyMcpTool, McpContext, McpRole, McpScope, McpTool, McpToolAnnotations } from "./mcp.types";
 
 import type { Db } from "../../lib/supabase";

@@ -5,7 +5,7 @@
 
 import { z } from "zod";
 import { ok } from "../../lib/serviceResult";
-import { defineTool, type AnyMcpTool } from "../mcp/mcp.service";
+import { defineTool, uuidId, type AnyMcpTool } from "../mcp/mcp.service";
 import { FICHA_FIELDS, type FichaPath } from "./contractReview.ficha";
 import { getFicha } from "./contractReview.fichaService";
 import { listContractPortfolio, type PortfolioRow } from "./contractReview.portfolio";
@@ -91,7 +91,7 @@ export const CONTRACT_REVIEW_TOOLS: AnyMcpTool[] = [
             "a confiança, se uma pessoa já verificou e as citações literais do contrato que sustentam o valor; e os " +
             "alertas de risco. Cite as citações ao responder; um campo não verificado é leitura da IA.",
         input: {
-            project_id: z.string().uuid().describe("Id do contrato (project_id), como vem de mike_contratos_buscar."),
+            project_id: uuidId().describe("Id do contrato (project_id), como vem de mike_contratos_buscar."),
             campos: z.array(z.string()).max(30).optional().describe("Só estes campos (ex.: vigencia.renovacao); padrão: todos."),
         },
         scope: "contratos:read",
