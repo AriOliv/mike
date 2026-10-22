@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
     PERSONAL_WORKSPACE: "personal",
-    PERSONAL_WORKSPACE_LABEL: "Personal",
+    PERSONAL_WORKSPACE_LABEL: "Pessoal",
     useWorkspace: () => ({
         workspaceId: state.workspaceId,
         organizations: state.organizations,
@@ -45,8 +45,8 @@ describe("useItemWorkspace", () => {
         expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
         expect(state.showToast).toHaveBeenCalledExactlyOnceWith({
             tone: "info",
-            title: "Switched to Elite Law LLP",
-            message: "What you opened belongs to this workspace.",
+            title: "Agora em Elite Law LLP",
+            message: "O que você abriu é deste espaço.",
             // Gone sooner than an ordinary notice.
             durationMs: 2500,
             dedupeKey: "workspace-switch",
@@ -59,7 +59,7 @@ describe("useItemWorkspace", () => {
 
         expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith("personal");
         expect(state.showToast).toHaveBeenCalledWith(
-            expect.objectContaining({ title: "Switched to Personal" }),
+            expect.objectContaining({ title: "Agora em Pessoal" }),
         );
     });
 

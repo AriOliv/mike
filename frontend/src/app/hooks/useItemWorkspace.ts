@@ -21,7 +21,7 @@ export const WORKSPACE_SWITCH_TOAST_MS = 2500;
 export function notifyWorkspaceSwitched(name: string, reason?: string): void {
     showToast({
         tone: "info",
-        title: `Switched to ${name}`,
+        title: `Agora em ${name}`,
         message: reason,
         durationMs: WORKSPACE_SWITCH_TOAST_MS,
         dedupeKey: WORKSPACE_SWITCH_TOAST_KEY,
@@ -80,7 +80,7 @@ export function useItemWorkspace(
         setWorkspace(target);
         notifyWorkspaceSwitched(
             name,
-            "What you opened belongs to this workspace.",
+            "O que você abriu é deste espaço.",
         );
     }, [itemId, orgId, workspaceId, organizations, setWorkspace]);
 }

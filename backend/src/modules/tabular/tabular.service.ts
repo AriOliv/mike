@@ -20,3 +20,5 @@ export { handleExtractionExtract, markExtractionJobFailed } from "./tabular.extr
 export { sweepStaleGeneratingCells } from "./tabular.maintenance";
 
 export { runExtractionJob, markExtractionFailed } from "./tabular.extraction";
+
+export { TABULAR_TOOLS } from "./tabular.mcp";

@@ -175,6 +175,44 @@ describe("notifyError", () => {
         );
     });
 
+    it("speaks Portuguese end to end when the screen asks for it", () => {
+        render(<ToastViewportUI />);
+        act(() => {
+            notifyError(
+                new MikeApiError({ status: 500, message: "internal", requestId: "req-9" }),
+                { action: "carregar os pedidos", onRetry: vi.fn(), lang: "pt" },
+            );
+        });
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent("Não consegui carregar os pedidos");
+        expect(alert).toHaveTextContent("Algo deu errado do nosso lado. Tente de novo.");
+        expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeVisible();
+        expect(screen.getByRole("link", { name: "Falar com o suporte" })).toBeVisible();
+    });
+
+    it("offers Entrar on an expired session in Portuguese", () => {
+        render(<ToastViewportUI />);
+        const original = window.location;
+        Object.defineProperty(window, "location", {
+            configurable: true,
+            writable: true,
+            value: { ...original, pathname: "/pedidos", search: "", assign: vi.fn() },
+        });
+        try {
+            act(() => {
+                notifyError(new MikeApiError({ status: 401, message: "no" }), { lang: "pt" });
+            });
+            expect(screen.getByRole("button", { name: "Entrar" })).toBeVisible();
+            expect(screen.getByRole("alert")).toHaveTextContent("Entre de novo");
+        } finally {
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: original,
+            });
+        }
+    });
+
     it("puts everything support needs in the email, on every route", () => {
         // The in-app form at /support has no backend route to post to, so
         // the email draft is the hand-off — and it has to carry enough to

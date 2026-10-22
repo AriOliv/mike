@@ -49,6 +49,7 @@ import type {
   ReasoningLevel,
   StreamChatParams,
   StreamChatResult,
+  TokenUsage,
   UserApiKeys,
 } from "./types";
 import { REASONING_LEVELS } from "./types";
@@ -71,6 +72,7 @@ type CompleteProviderParams = {
   maxTokens?: number;
   abortSignal?: AbortSignal;
   apiKeys?: UserApiKeys;
+  onUsage?: (usage: TokenUsage) => void;
 };
 
 type RouterProvider = Extract<

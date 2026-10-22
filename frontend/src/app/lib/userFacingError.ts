@@ -46,6 +46,7 @@ export function knownErrorCodeMessage(
 // user cannot fix, a "Contact support" link that opens a pre-filled email.
 
 import {
+    NOTICE_LABELS,
     UserVisibleError,
     buildSupportMailto,
     describeError as describeSharedError,
@@ -195,7 +196,7 @@ export const notifyError = createErrorNotifier<NotifyErrorOptions>({
                 described.kind === "unauthenticated" && signInHref
                     ? [
                           {
-                              label: "Sign in",
+                              label: NOTICE_LABELS[options.lang ?? "en"].signIn,
                               onClick: () => window.location.assign(signInHref),
                           },
                       ]

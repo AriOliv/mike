@@ -210,7 +210,7 @@ jobs:
             -e RUSTFS_CONSOLE_ENABLE=false \
             -e RUSTFS_ACCESS_KEY=rustfsadmin \
             -e RUSTFS_SECRET_KEY=rustfsadmin \
-            rustfs/rustfs:latest
+            "${RUSTFS_IMAGE:-rustfs/rustfs:latest}"
           for i in $(seq 1 30); do
             if AWS_ACCESS_KEY_ID=rustfsadmin \
                AWS_SECRET_ACCESS_KEY=rustfsadmin \
@@ -257,6 +257,13 @@ jobs:
           # Keep CI reproducible and avoid the GitHub API call needed to resolve
           # `latest`, which can fail when the shared runner hits its rate limit.
           version: 2.108.0
+      # Pull from this repo's GHCR mirror of the stack images when it is
+      # complete (ci-image-mirror.yml); otherwise keep the public registries.
+      - name: Use the CI image mirror
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/supabase-images.sh use
+
       - name: Init + start Supabase, load fresh schema
         run: |
           supabase init --force --with-vscode-settings=false || supabase init --force
@@ -267,9 +274,11 @@ jobs:
           # Supabase defaults overlap Linux's ephemeral port range. Dedicated
           # low ports avoid intermittent collisions with runner outbound traffic.
           sed -i 's/54320/21320/g; s/54321/21321/g; s/54322/21322/g' supabase/config.toml
-          # setup-cli pins GHCR, disabling the CLI's ECR/GHCR/Docker Hub fallback.
-          # Allow the pinned CLI to recover when one public registry is throttled.
-          env -u SUPABASE_INTERNAL_IMAGE_REGISTRY supabase start \
+          # With the mirror (step above) the CLI pulls everything from it. Without
+          # it, unset the GHCR pin setup-cli sets, so the CLI keeps its own
+          # ECR/GHCR/Docker Hub fallback when one public registry is throttled.
+          if [ -n "${CI_IMAGE_MIRROR:-}" ]; then export SUPABASE_INTERNAL_IMAGE_REGISTRY="$CI_IMAGE_MIRROR"; else unset SUPABASE_INTERNAL_IMAGE_REGISTRY; fi
+          supabase start \
             -x studio,imgproxy,mailpit,logflare,vector,realtime,storage-api,edge-runtime,postgres-meta,supavisor
           DB_URL=$(supabase status -o json | jq -r '.DB_URL')
           # A fresh database runs the current schema exactly once. Historical

@@ -119,11 +119,25 @@ export async function extractContractTerms(
     if (!selected.ok) return selected;
     try {
         const terms = await extractTerms(db, caller.userId, projectId, selected);
-        if (!terms) return failure("validation", "Could not read the contract", "contract_unreadable");
+        if (!terms) return failure("validation", "Não consegui ler este contrato.", "contract_unreadable");
         return ok(terms);
     } catch (error) {
         return internalFailure(error);
     }
+}
+
+/**
+ * Extraction for a background agent acting for the person who queued it. The
+ * job already decided who that is, so there is no caller check here; it
+ * returns null when the contract has no readable text.
+ */
+export function extractTermsForAgent(
+    db: Db,
+    userId: string,
+    projectId: string,
+    selected: Extract<Awaited<ReturnType<typeof analysisModel>>, { ok: true }>,
+): Promise<ContractTerms | null> {
+    return extractTerms(db, userId, projectId, selected);
 }
 
 async function extractTerms(

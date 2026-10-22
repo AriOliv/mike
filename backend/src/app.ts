@@ -9,6 +9,7 @@ import { chatRouter } from "./modules/chat/chat.routes";
 import { wordChatRouter } from "./modules/word-chat/wordChat.routes";
 import { projectsRouter } from "./modules/projects/projects.routes";
 import { orgsRouter } from "./modules/orgs/orgs.routes";
+import { chatLinksRouter, legalAgentRouter } from "./modules/legal-agent/legalAgent.routes";
 import { projectChatRouter } from "./modules/project-chat/projectChat.routes";
 import { documentsRouter } from "./modules/documents/documents.routes";
 import { libraryRouter } from "./modules/library/library.routes";
@@ -31,13 +32,21 @@ import {
   userMemoryRouter,
 } from "./modules/memory/memory.routes";
 import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
+import { contractPortfolioRouter, contractReviewRouter } from "./modules/contract-review/contractReview.routes";
 import {
   acervoRouter,
+  contractReviewsRouter,
+  homeRouter,
   integrationsRouter,
   obligationsRouter,
   pipelineRouter,
   projectContractRouter,
+  watchedFoldersRouter,
 } from "./modules/contracts/contracts.routes";
+import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
+import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
+import { mcpRouter, mcpTokensRouter } from "./modules/mcp/mcp.routes";
+import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
@@ -92,6 +101,10 @@ function makeLimiter(options: {
 // tool-deadline stall per call inside a held SSE stream.
 const TOOL_RESULT_PATH = "/word-chat/tool-result";
 
+// The MCP server agents call (doc 09). Mounted at the root, not under /api:
+// the preview's load balancer sends it straight to this process.
+const MCP_PATH = "/mcp";
+
 // Path prefix of the filesystem driver's signed blob PUT, used both to give it
 // its own rate-limit lane and to keep it out of the shared one.
 const BLOB_UPLOAD_PREFIX = "/download/signed/";
@@ -102,6 +115,8 @@ const generalLimiter = makeLimiter({
   // Upload status polling has its own authenticated per-user limiter. Keep it
   // and the dedicated Word tool-result lane out of the shared IP budget.
   skip: (req) =>
+    // Agents on /mcp are limited per access token inside the MCP module.
+    req.path === MCP_PATH ||
     req.path === TOOL_RESULT_PATH ||
     req.path === "/upload-sessions" ||
     req.path.startsWith("/upload-sessions/") ||
@@ -290,6 +305,10 @@ app.post("/tabular-review/:reviewId/generate", chatLimiter);
 // A playbook review is one large model call (or a tool loop when the playbook
 // has supplementary documents), so it shares the chat lane's budget.
 app.post("/playbooks/:playbookId/review", chatLimiter);
+app.post(
+  ["/projects/:projectId/contract-review/reviews", "/projects/:projectId/contract-review/ficha/extract"],
+  chatLimiter,
+);
 app.post("/chat/create", chatCreateLimiter);
 app.post("/workflow-addons/:addonId/import", workflowImportLimiter);
 app.post(
@@ -332,6 +351,10 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 // no body parser may consume it first — a .json upload otherwise would be.
 app.put("/download/signed/:token", blobUploadLimiter, blobUploadHandler);
 
+// Agents send JSON-RPC calls, never documents: 1 MB is plenty and keeps a
+// token-holder from posting 50 MB bodies. Parsed before the global parser.
+app.use(MCP_PATH, express.json({ limit: "1mb" }), mcpRouter);
+
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Body-aware account throttling complements the per-IP login limiter. The key
@@ -343,8 +366,12 @@ app.use("/chat", chatRouter);
 app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);
 app.use("/projects/:projectId/memory", projectMemoryRouter);
+app.use("/projects/:projectId/contract-review", contractReviewRouter);
 app.use("/projects/:projectId", projectContractRouter);
 app.use("/projects", projectsRouter);
+// Before /orgs so its own router answers these paths, not the org catch-alls.
+app.use("/orgs/:orgId/legal-agent", legalAgentRouter);
+app.use("/chat-links", chatLinksRouter);
 app.use("/orgs", orgsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
@@ -364,6 +391,14 @@ app.use("/pipeline", pipelineRouter);
 app.use("/obligations", obligationsRouter);
 app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
+app.use("/contracts", contractPortfolioRouter);
+app.use("/regulatory", regulatoryRouter);
+app.use("/dashboard", dashboardRouter);
+app.use("/mcp-tokens", mcpTokensRouter);
+app.use("/requests", requestsRouter);
+app.use("/home", homeRouter);
+app.use("/watched-folders", watchedFoldersRouter);
+app.use("/contract-reviews", contractReviewsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

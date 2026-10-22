@@ -1,5 +1,5 @@
 import { completeWithProvider, streamWithProvider } from "./providers";
-import type { StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
+import type { StreamChatParams, StreamChatResult, TokenUsage, UserApiKeys } from "./types";
 
 export * from "./types";
 export * from "./models";
@@ -17,6 +17,8 @@ export async function completeText(params: {
     maxTokens?: number;
     abortSignal?: AbortSignal;
     apiKeys?: UserApiKeys;
+    /** The provider's token counts, when it reports them. */
+    onUsage?: (usage: TokenUsage) => void;
 }): Promise<string> {
     return completeWithProvider(params);
 }

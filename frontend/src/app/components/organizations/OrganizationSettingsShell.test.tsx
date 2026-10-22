@@ -35,7 +35,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   PERSONAL_WORKSPACE: "personal",
-  PERSONAL_WORKSPACE_LABEL: "Personal",
+  PERSONAL_WORKSPACE_LABEL: "Pessoal",
   useWorkspace: () => ({
     workspaceId: mocks.workspaceId,
     organizations: mocks.organizations,
@@ -104,7 +104,8 @@ describe("the sections each role is offered", () => {
     expect(sections()).toEqual([
       "General",
       "Members",
-      "Audit log",
+      "Agente do Legal",
+      "Registro de auditoria",
       "Bring Your Own Keys",
       "Privacy & Data",
     ]);
@@ -114,20 +115,20 @@ describe("the sections each role is offered", () => {
     mocks.role = "admin";
     renderShell();
     await screen.findByText("section for Elite Law LLP");
-    expect(sections()).toEqual(["General", "Members", "Audit log", "Bring Your Own Keys"]);
+    expect(sections()).toEqual(["General", "Members", "Agente do Legal", "Registro de auditoria", "Bring Your Own Keys"]);
   });
 
   it("offers a member General and Members only", async () => {
     mocks.role = "member";
     renderShell();
     await screen.findByText("section for Elite Law LLP");
-    expect(sections()).toEqual(["General", "Members"]);
+    expect(sections()).toEqual(["General", "Members", "Agente do Legal"]);
   });
 
   it("does not offer Bring Your Own Keys before the caller's role is known", () => {
     mocks.getOrg.mockReturnValue(new Promise(() => {}));
     renderShell();
-    expect(sections()).toEqual(["General", "Members"]);
+    expect(sections()).toEqual(["General", "Members", "Agente do Legal"]);
   });
 
   it("drops Bring Your Own Keys as soon as a re-read shows the caller was demoted", async () => {
@@ -138,7 +139,7 @@ describe("the sections each role is offered", () => {
     mocks.role = "member";
     await act(() => latest.reload());
 
-    expect(sections()).toEqual(["General", "Members"]);
+    expect(sections()).toEqual(["General", "Members", "Agente do Legal"]);
   });
 });
 
@@ -304,7 +305,7 @@ describe("an organization's settings belong to its workspace", () => {
     // The switch is asked for, with a notice, and nothing is shown or read.
     expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
     expect(mocks.showToast).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ title: "Switched to Elite Law LLP" }),
+      expect.objectContaining({ title: "Agora em Elite Law LLP" }),
     );
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     expect(screen.queryByText(/section for/)).not.toBeInTheDocument();

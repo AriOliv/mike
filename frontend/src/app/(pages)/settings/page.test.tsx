@@ -93,9 +93,11 @@ describe("SettingsPage Google email changes", () => {
         render(<SettingsPage />);
         expect(screen.queryByLabelText("Organisation")).not.toBeInTheDocument();
         expect(screen.queryByDisplayValue("Example LLP")).not.toBeInTheDocument();
-        const name = screen.getByLabelText("Display Name");
-        const photo = screen.getByText("Profile photo");
+        const name = screen.getByLabelText("Nome de exibição");
+        const photo = screen.getByText("Foto de perfil");
         expect(name.compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        // The backend's default plan name is English; the screen shows it in PT.
+        expect(screen.getByText("Gratuito")).toBeInTheDocument();
         expect(state.updateOrganisation).not.toHaveBeenCalled();
     });
 
@@ -103,20 +105,20 @@ describe("SettingsPage Google email changes", () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
 
-        const email = screen.getByPlaceholderText("Enter your email");
+        const email = screen.getByPlaceholderText("Digite seu e-mail");
         expect(email).toBeDisabled();
         await user.click(
-            screen.getByRole("button", { name: "Update" }),
+            screen.getByRole("button", { name: "Alterar" }),
         );
 
-        const dialog = screen.getByRole("dialog", { name: "Change email" });
+        const dialog = screen.getByRole("dialog", { name: "Trocar e-mail" });
         expect(dialog).toHaveTextContent(
-            "Your account was created with Google. To change your email, first add a password in Settings > Security > Password.",
+            "Sua conta foi criada com o Google. Para trocar o e-mail, primeiro crie uma senha em Configurações > Segurança > Senha.",
         );
         expect(state.updateEmail).not.toHaveBeenCalled();
 
         await user.click(
-            screen.getByRole("button", { name: "Go to Security" }),
+            screen.getByRole("button", { name: "Ir para Segurança" }),
         );
         expect(state.push).toHaveBeenCalledWith("/settings/security");
     });
@@ -126,10 +128,10 @@ describe("SettingsPage Google email changes", () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
 
-        const email = screen.getByPlaceholderText("Enter your email");
+        const email = screen.getByPlaceholderText("Digite seu e-mail");
         await user.clear(email);
         await user.type(email, "new@example.com");
-        const emailSection = screen.getByRole("heading", { name: "Email" })
+        const emailSection = screen.getByRole("heading", { name: "E-mail" })
             .parentElement!;
         await user.click(
             emailSection.querySelector<HTMLButtonElement>("button")!,
@@ -139,7 +141,7 @@ describe("SettingsPage Google email changes", () => {
             expect(state.updateEmail).toHaveBeenCalledWith("new@example.com"),
         );
         expect(
-            screen.queryByRole("dialog", { name: "Change email" }),
+            screen.queryByRole("dialog", { name: "Trocar e-mail" }),
         ).not.toBeInTheDocument();
     });
 
@@ -147,7 +149,7 @@ describe("SettingsPage Google email changes", () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
 
-        const name = screen.getByPlaceholderText("Enter your name");
+        const name = screen.getByPlaceholderText("Digite seu nome");
         await user.clear(name);
         await user.type(name, "Alex Chen");
         await user.tab();
@@ -165,7 +167,7 @@ describe("SettingsPage Google email changes", () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
 
-        const name = screen.getByPlaceholderText("Enter your name");
+        const name = screen.getByPlaceholderText("Digite seu nome");
         await user.clear(name);
         await user.type(name, "Alex Chen");
         await user.tab();
@@ -189,15 +191,15 @@ describe("SettingsPage Google email changes", () => {
         render(<><SettingsPage /><ToastViewportUI /></>);
 
         await user.click(
-            screen.getByRole("button", { name: "Delete account" }),
+            screen.getByRole("button", { name: "Excluir conta" }),
         );
-        await user.click(screen.getByRole("button", { name: "Delete" }));
+        await user.click(screen.getByRole("button", { name: "Excluir" }));
 
         // The 409 detail names the blocking organization; a generic "Failed to
         // delete account" would leave the user with no way to unblock it.
         expect(await screen.findByText(detail)).toBeInTheDocument();
         expect(
-            screen.getByText("Couldn't delete your account"),
+            screen.getByText("Não consegui excluir sua conta"),
         ).toBeInTheDocument();
         expect(state.signOut).not.toHaveBeenCalled();
         expect(state.push).not.toHaveBeenCalled();
@@ -207,7 +209,7 @@ describe("SettingsPage Google email changes", () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
 
-        const name = screen.getByPlaceholderText("Enter your name");
+        const name = screen.getByPlaceholderText("Digite seu nome");
         await user.clear(name);
         await user.tab();
 
@@ -223,10 +225,10 @@ describe("SettingsPage Google email changes", () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
 
-        const email = screen.getByPlaceholderText("Enter your email");
+        const email = screen.getByPlaceholderText("Digite seu e-mail");
         await user.clear(email);
         await user.type(email, "new@example.com");
-        const emailSection = screen.getByRole("heading", { name: "Email" })
+        const emailSection = screen.getByRole("heading", { name: "E-mail" })
             .parentElement!;
         await user.click(
             emailSection.querySelector<HTMLButtonElement>("button")!,
@@ -243,7 +245,7 @@ describe("SettingsPage Google email changes", () => {
         );
 
         expect(
-            await screen.findByText("An account with this email already exists."),
+            await screen.findByText("Já existe uma conta com este e-mail."),
         ).toBeInTheDocument();
     });
 
@@ -252,7 +254,7 @@ describe("SettingsPage Google email changes", () => {
 
         expect(
             await screen.findByText(
-                "Mike couldn't reach the server. Check your connection and try again.",
+                "Não consegui falar com o servidor. Confira a conexão e tente de novo.",
             ),
         ).toBeInTheDocument();
     });
@@ -273,14 +275,14 @@ describe("SettingsPage Google email changes", () => {
         );
 
         await user.click(
-            screen.getByRole("button", { name: "Delete account" }),
+            screen.getByRole("button", { name: "Excluir conta" }),
         );
-        await user.click(screen.getByRole("button", { name: "Delete" }));
+        await user.click(screen.getByRole("button", { name: "Excluir" }));
 
         const toast = await screen.findByRole("alert");
-        expect(toast).toHaveTextContent("Couldn't delete your account");
+        expect(toast).toHaveTextContent("Não consegui excluir sua conta");
         expect(toast).toHaveTextContent(
-            "Something went wrong on our side. Try again.",
+            "Algo deu errado do nosso lado. Tente de novo.",
         );
         expect(alertSpy).not.toHaveBeenCalled();
         expect(state.push).not.toHaveBeenCalled();
@@ -302,18 +304,18 @@ describe("SettingsPage Google email changes", () => {
         );
 
         await user.click(
-            screen.getByRole("button", { name: "Delete account" }),
+            screen.getByRole("button", { name: "Excluir conta" }),
         );
-        await user.click(screen.getByRole("button", { name: "Delete" }));
+        await user.click(screen.getByRole("button", { name: "Excluir" }));
         expect(deleteAccount).toHaveBeenCalledTimes(1);
 
-        await user.click(await screen.findByRole("button", { name: "Retry" }));
+        await user.click(await screen.findByRole("button", { name: "Tentar de novo" }));
 
         // Retry re-opens the confirmation instead of deleting outright.
         expect(deleteAccount).toHaveBeenCalledTimes(1);
-        expect(await screen.findByText("Delete account?")).toBeInTheDocument();
+        expect(await screen.findByText("Excluir conta?")).toBeInTheDocument();
 
-        await user.click(screen.getByRole("button", { name: "Delete" }));
+        await user.click(screen.getByRole("button", { name: "Excluir" }));
         expect(deleteAccount).toHaveBeenCalledTimes(2);
         clearToasts();
     });

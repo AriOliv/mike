@@ -39,15 +39,15 @@ describe("SettingsLayout", () => {
             </SettingsLayout>,
         );
 
-        const memoryTab = screen.getByRole("button", { name: "Memory" });
+        const memoryTab = screen.getByRole("button", { name: "Memória" });
         expect(memoryTab).toHaveAttribute("aria-current", "page");
         expect(screen.getByText("Memory content")).toBeVisible();
 
-        await user.click(screen.getByRole("button", { name: "Features" }));
+        await user.click(screen.getByRole("button", { name: "Recursos" }));
         expect(push).toHaveBeenCalledWith("/settings/features");
     });
 
-    it("links to My Activity from Settings", async () => {
+    it("links to Minha atividade from Settings", async () => {
         const user = userEvent.setup();
         render(
             <SettingsLayout>
@@ -55,12 +55,12 @@ describe("SettingsLayout", () => {
             </SettingsLayout>,
         );
 
-        const activityTab = screen.getByRole("button", { name: "My Activity" });
+        const activityTab = screen.getByRole("button", { name: "Minha atividade" });
         await user.click(activityTab);
         expect(push).toHaveBeenCalledWith("/settings/my-activity");
     });
 
-    it("lets My Activity use a full table page outside the settings frame", () => {
+    it("lets Minha atividade use a full table page outside the settings frame", () => {
         pathname = "/settings/my-activity";
         render(
             <SettingsLayout>
@@ -70,9 +70,9 @@ describe("SettingsLayout", () => {
 
         expect(screen.getByText("Activity table")).toBeVisible();
         expect(
-            screen.queryByRole("navigation", { name: "Settings" }),
+            screen.queryByRole("navigation", { name: "Configurações" }),
         ).toBeNull();
-        expect(screen.queryByRole("heading", { name: "Settings" })).toBeNull();
+        expect(screen.queryByRole("heading", { name: "Configurações" })).toBeNull();
     });
 
     it("shows the pending invitation count beside Organizations and opens the page", async () => {
@@ -88,11 +88,11 @@ describe("SettingsLayout", () => {
         );
 
         const organizations = await screen.findByRole("button", {
-            name: /Organizations/,
+            name: /Organizações/,
         });
         await waitFor(() =>
             expect(organizations).toHaveAccessibleName(
-                "Organizations 2 pending invitations",
+                "Organizações 2 convites pendentes",
             ),
         );
         await user.click(organizations);
