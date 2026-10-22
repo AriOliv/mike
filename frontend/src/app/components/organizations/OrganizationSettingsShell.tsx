@@ -32,6 +32,8 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 //                    own rather than a section inside the frame
 //   Bring Your Own Keys  its owners and admins: the organization's model
 //                        provider keys, as in a person's own settings
+//   Agente do Legal  everyone in the organization sees it; its owners and
+//                    admins change it (the legal team's chat agent)
 //   Integrações      its owners and admins: the organization's own Notion board
 //
 // An organization's settings are part of its workspace: they open only while
@@ -78,7 +80,7 @@ export function organizationSettingsHref(
 }
 
 type OrganizationSettingsSection =
-  "general" | "members" | "audit" | "providers" | "privacy-data" | "integrations";
+  "general" | "members" | "audit" | "providers" | "privacy-data" | "legal-agent" | "integrations";
 
 export function OrganizationSettingsProvider({
   orgId,
@@ -203,6 +205,12 @@ export function OrganizationSettingsFrame({
         id: "members",
         label: "Members",
         href: organizationSettingsHref(orgId, "members"),
+      },
+      // Every member sees what the agent does; the page leaves editing to admins.
+      {
+        id: "legal-agent",
+        label: "Agente do Legal",
+        href: organizationSettingsHref(orgId, "legal-agent"),
       },
       // Not offered to a member, nor before the caller's role is known.
       ...(canManage

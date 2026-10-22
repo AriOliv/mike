@@ -51,6 +51,8 @@ import {
     type Urgency,
 } from "./requests.shared";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
+import { loadTemplate, queueIntakePrefill } from "./requests.checklist";
+import { applyAnswers, intakeStatus } from "./requests.intake";
 
 export const TRIAGE_JOB_KIND = "request.triage";
 
@@ -70,6 +72,8 @@ export type CreateRequestInput = {
     requester_area?: unknown;
     /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp", ...} */
     source?: unknown;
+    /** Checklist answers given with the request: {key: value | {value, detail}}. */
+    intake?: unknown;
     idempotency_key?: unknown;
 };
 
@@ -110,6 +114,10 @@ export type RequestTeamView = RequestPublicView & {
     participants: Participant[];
     source: Record<string, unknown>;
     can_decide: boolean;
+    /** The intake checklist closed (the contract analysis may run). */
+    intake_completed_at: string | null;
+    /** The analysis found a critical risk and the Head was alerted. */
+    critical_alert_at: string | null;
 };
 
 export type RequestMessage = {
@@ -410,6 +418,25 @@ export async function createRequest(
         console.error("[requests] triage enqueue failed", { requestId: row.id, error: safeError(error) });
     }
 
+    // Checklist answers given on the form count as the requester's; the
+    // intake agent then reads the attached contract for what is still open.
+    if (input.intake && typeof input.intake === "object") {
+        try {
+            const template = await loadTemplate(db, team.org_id);
+            const applied = applyAnswers(template.items, {}, { answers: input.intake }, new Date().toISOString());
+            if (applied.ok && applied.changed.length) {
+                const complete = intakeStatus(template.items, applied.answers).complete;
+                await db
+                    .from("legal_requests")
+                    .update({ intake: applied.answers, ...(complete ? { intake_completed_at: new Date().toISOString() } : {}) })
+                    .eq("id", row.id);
+            }
+        } catch (error) {
+            console.error("[requests] intake on create failed", { requestId: row.id, error: safeError(error) });
+        }
+    }
+    if (attached > 0) await queueIntakePrefill(db, row.id);
+
     const view = await getRequest(db, caller, row.id);
     if (!view.ok) return view;
     return ok({ request: view.data, deduplicated: false });
@@ -536,6 +563,8 @@ async function buildView(
         participants: (participants ?? []) as Participant[],
         source: row.source,
         can_decide: isHead(audience),
+        intake_completed_at: row.intake_completed_at,
+        critical_alert_at: row.critical_alert_at,
     };
 }
 

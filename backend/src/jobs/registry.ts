@@ -5,8 +5,17 @@ import { handleDocumentCleanup, handleDocumentExtractText, markDocumentTextFaile
 import { handleExtractionExtract, markExtractionJobFailed } from "../modules/tabular/tabular.service";
 import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../modules/memory/memory.service";
 import { handleRegulatoryScan } from "../modules/regulatory/regulatory.service";
-import { handleRequestNotify, handleRequestTriage } from "../modules/requests/requests.service";
+import {
+  ANALYSIS_START_JOB_KIND,
+  handleAnalysisReady,
+  handleIntakePrefill,
+  handleRequestAnalysisStart,
+  handleRequestNotify,
+  handleRequestTriage,
+  PREFILL_JOB_KIND,
+} from "../modules/requests/requests.service";
 import { AUTO_REVIEW_JOB, handleAutoReview, markAutoReviewFailed } from "../modules/contracts/contracts.service";
+import { ANALYSIS_READY_JOB, ANALYST_ANALYSIS_JOB, handleAnalystAnalysis, markAnalystAnalysisFailed } from "../modules/contract-review/contractReview.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
 import { type DbJobHandlers } from "../lib/dbq/types";
 import { type DbJobFailureHook } from "../lib/dbq/runner";
@@ -26,7 +35,11 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   "regulatory.scan": handleRegulatoryScan,
   "request.triage": handleRequestTriage,
   "request.notify": (db) => handleRequestNotify(db),
+  [PREFILL_JOB_KIND]: handleIntakePrefill,
+  [ANALYSIS_START_JOB_KIND]: handleRequestAnalysisStart,
+  [ANALYSIS_READY_JOB]: handleAnalysisReady,
   [AUTO_REVIEW_JOB]: handleAutoReview,
+  [ANALYST_ANALYSIS_JOB]: handleAnalystAnalysis,
 };
 export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {
   "conversion.convert": markConversionFailed,
@@ -34,6 +47,7 @@ export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {
   "extraction.extract": markExtractionJobFailed,
   "memory.consolidate": markMemoryConsolidationFailed,
   [AUTO_REVIEW_JOB]: markAutoReviewFailed,
+  [ANALYST_ANALYSIS_JOB]: markAnalystAnalysisFailed,
 };
 export {
   handleChatTurnAudit,

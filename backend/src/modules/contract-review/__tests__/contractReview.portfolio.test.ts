@@ -140,4 +140,20 @@ describe("listContractPortfolio", () => {
         const result = await listContractPortfolio(fakeDb({ projects: { error: { message: "relation missing" } } }).db, caller, {});
         expect(result).toMatchObject({ ok: false, kind: "error" });
     });
+
+    it("narrows to one workspace when asked, the cut the home screen counts in", async () => {
+        const projects = [
+            { ...PROJECTS[0], org_id: "org-a" },
+            { ...PROJECTS[1], org_id: null },
+            { ...PROJECTS[2], org_id: "org-b" },
+        ];
+        const ids = async (workspace: string | null) => {
+            const fake = fakeDb({ projects: { data: projects }, contract_fichas: { data: [] }, contract_terms: { data: [] } });
+            const r = await listContractPortfolio(fake.db, caller, {}, workspace);
+            return r.ok ? r.data.rows.map((row) => row.project_id) : r;
+        };
+        expect(await ids(null)).toEqual(["p1", "p3", "p2"]);
+        expect(await ids("org-a")).toEqual(["p2"]);
+        expect(await ids("personal")).toEqual(["p1"]);
+    });
 });

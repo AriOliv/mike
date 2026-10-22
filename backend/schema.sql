@@ -1212,6 +1212,87 @@ grant select, insert, update, delete
   on public.regulatory_scans, public.regulatory_changes
   to service_role;
 
+-- Access tokens for agents calling the Mike MCP server (/mcp), doc 09 §3.
+--
+-- A token always acts for a person. kind 'pessoal' acts as its owner
+-- (user_id). kind 'servico' (a bot such as Hermes, doc 09 §3.2) belongs to
+-- one org, is created by an owner/admin (user_id), and acts as the org member
+-- whose CONFIRMED chat identity link the call names, and only when can_act_as
+-- was granted explicitly. A personal token can never act as anyone else.
+-- org_id is the workspace the token reads: the same filter the home screen
+-- applies, null for the personal workspace.
+--
+-- Only the SHA-256 of the token is stored; the plain token is shown once at
+-- creation. Revoking stamps revoked_at and never deletes, so the audit trail
+-- keeps pointing at a row. Backend-owned like the other contract tables:
+-- browser roles get nothing, RLS is on with no policies. Idempotent.
+
+create table if not exists public.mcp_access_tokens (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null default 'pessoal',
+  name text not null,
+  token_hash text not null unique,
+  token_prefix text not null,
+  scopes text[] not null default '{}',
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  last_used_at timestamptz,
+  last_client text,
+  can_act_as boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint mcp_access_tokens_kind_check check (kind in ('pessoal', 'servico')),
+  constraint mcp_access_tokens_act_as_check
+    check (not can_act_as or (kind = 'servico' and org_id is not null)),
+  constraint mcp_access_tokens_servico_org_check
+    check (kind <> 'servico' or org_id is not null),
+  constraint mcp_access_tokens_name_check check (char_length(name) between 1 and 80)
+);
+
+create index if not exists idx_mcp_access_tokens_user
+  on public.mcp_access_tokens(user_id, created_at desc);
+
+alter table public.mcp_access_tokens enable row level security;
+revoke all on public.mcp_access_tokens from anon, authenticated;
+-- delete too: schema.sql's blanket service_role grant (which runs after this
+-- table) gives it, and fresh and upgraded installs must match. The backend
+-- never deletes a token; revoking stamps revoked_at.
+grant select, insert, update, delete on public.mcp_access_tokens to service_role;
+
+-- Two-step confirmation of the MCP server's writes (doc 09 §6). The first
+-- call of a write tool changes nothing and returns a confirm_token; only the
+-- same call with that token runs. A row binds the token to who asked
+-- (person + access token + chat identity link), which tool, and the exact
+-- arguments (hash of their canonical JSON): a different argument, another
+-- tool or another person cannot use it. Single use, ten minutes.
+--
+-- Only the SHA-256 of the token is kept. Backend-owned: browser roles get
+-- nothing, RLS on with no policies. Idempotent.
+
+create table if not exists public.mcp_confirmations (
+  id uuid primary key default gen_random_uuid(),
+  token_hash text not null unique,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  access_token_id uuid not null references public.mcp_access_tokens(id) on delete cascade,
+  link_id uuid,
+  tool text not null,
+  args_hash text not null,
+  summary text not null,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_mcp_confirmations_expires
+  on public.mcp_confirmations(expires_at);
+
+alter table public.mcp_confirmations enable row level security;
+revoke all on public.mcp_confirmations from anon, authenticated;
+-- delete too: schema.sql's blanket service_role grant gives it, and fresh
+-- and upgraded installs must match.
+grant select, insert, update, delete on public.mcp_confirmations to service_role;
+
 create index if not exists idx_projects_user
   on public.projects(user_id);
 
@@ -11149,12 +11230,19 @@ create index if not exists idx_card_events_at
 
 -- Append-only. The backend connects as service_role, which RLS does not
 -- restrict, so the trigger is the real guard. A retention purge will be a
--- dedicated security-definer function, never an ad hoc delete.
+-- dedicated security-definer function, never an ad hoc delete. The one
+-- DELETE let through is the cascade from deleting the card: by then the
+-- project row is gone (20261022_97).
 create or replace function public.card_events_append_only() returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
+  if tg_op = 'DELETE' and not exists (
+    select 1 from public.projects p where p.id = old.project_id
+  ) then
+    return old;
+  end if;
   raise exception 'card_events is append-only';
 end
 $$;
@@ -11465,6 +11553,45 @@ alter table public.legal_requester_areas enable row level security;
 revoke all on public.legal_requester_areas from anon, authenticated;
 grant select, insert, update, delete on public.legal_requester_areas to service_role;
 
+-- Migration date: 2026-10-22 (20261022_91_request_intake.sql)
+--
+-- The intake checklist of a request to the legal team: what the team needs
+-- to know before it analyses a contract (who approved it, the counterparty,
+-- value and recurrence, confidential information, personal data...).
+--
+-- legal_teams.intake_template is the organization's own checklist, a list of
+-- {key, label, kind, required, hint?}; empty means the generic one in the
+-- code. legal_requests.intake holds the answers by key: {value, source:
+-- requester | inferred, confirmed, quote?}. An inferred answer was read from
+-- the attached contract by the agent and waits for the requester to confirm.
+--
+-- legal_requests.critical_alert_at marks the one alert per request the
+-- Head gets when the contract's analysis finds a critical risk.
+
+alter table public.legal_teams
+  add column if not exists intake_template jsonb not null default '[]'::jsonb;
+
+alter table public.legal_teams
+  drop constraint if exists legal_teams_intake_template_check;
+alter table public.legal_teams
+  add constraint legal_teams_intake_template_check
+    check (jsonb_typeof(intake_template) = 'array');
+
+alter table public.legal_requests
+  add column if not exists intake jsonb not null default '{}'::jsonb,
+  add column if not exists intake_completed_at timestamptz,
+  add column if not exists critical_alert_at timestamptz;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_intake_check;
+alter table public.legal_requests
+  add constraint legal_requests_intake_check
+    check (jsonb_typeof(intake) = 'object');
+
+create index if not exists idx_legal_requests_org_alert
+  on public.legal_requests(org_id, critical_alert_at desc)
+  where critical_alert_at is not null;
+
 -- Migration date: 2026-10-20 (20261020_94_watched_folders.sql)
 --
 -- Automatic review of watched folders: the home screen's queue.
@@ -11568,6 +11695,215 @@ revoke all on public.home_visits from anon, authenticated;
 
 grant select, insert, update, delete
   on public.watched_folders, public.contract_reviews, public.home_visits
+  to service_role;
+
+-- Migration date: 2026-10-21 (20261021_90_legal_agent.sql)
+--
+-- The legal team's chat agent ("Agente do Legal"): how it behaves in an
+-- organization, and the chat channels it is set up for.
+--
+-- The channel (Slack, WhatsApp, Telegram) only talks; the work and the record
+-- stay in Mike, reached through its MCP server. These rows are what the bot
+-- reads to know who it is, when it answers, who may ask for what and when a
+-- person of the legal team must decide.
+--
+-- No secret lives here. Bot tokens, signing secrets and verify tokens stay in
+-- the deployment's secret store; a channel row keeps only what is safe to
+-- show on a settings page (a workspace name, a bot's @username, the last
+-- digits of a phone number) and its setup status.
+
+create table if not exists public.legal_agent_settings (
+  org_id uuid primary key references public.organizations(id) on delete cascade,
+  -- Off until an owner or admin turns it on: a bot reading this row stays silent.
+  enabled boolean not null default false,
+  display_name text not null default 'Assistente do Legal',
+  -- Who it is and how it works, in the team's words; becomes the bot's persona.
+  persona text not null default '',
+  tone text not null default 'cordial'
+    constraint legal_agent_settings_tone_check check (tone in ('formal', 'cordial', 'direto')),
+  -- {timezone, days: [1..7], start: "HH:MM", end: "HH:MM", outside: "avisa_e_registra" | "so_registra"}
+  hours jsonb not null default '{}'::jsonb,
+  -- [{area, kinds: [request kind]}]: who may ask for what. Empty = anyone, anything.
+  permissions jsonb not null default '[]'::jsonb,
+  -- {risk_levels: [...], kinds: [...], low_confidence: bool, escalate_to_email}
+  -- On top of the fixed rule: signing, sending out and accepting risk always go to a person.
+  escalation jsonb not null default '{}'::jsonb,
+  -- {deadline_days: [30, 7, 1], renewals: bool, radar: bool, digest_time: "HH:MM"}
+  proactive jsonb not null default '{}'::jsonb,
+  updated_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.legal_agent_channels (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  kind text not null
+    constraint legal_agent_channels_kind_check check (kind in ('slack', 'whatsapp', 'telegram')),
+  -- rascunho: being set up; configurado: the setup files were generated and
+  -- someone marked it installed. Nothing here connects a bot by itself.
+  status text not null default 'rascunho'
+    constraint legal_agent_channels_status_check check (status in ('rascunho', 'configurado', 'pausado')),
+  name text not null,
+  -- Non-secret details only (see the note at the top).
+  config jsonb not null default '{}'::jsonb,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_legal_agent_channels_org
+  on public.legal_agent_channels(org_id);
+
+alter table public.legal_agent_settings enable row level security;
+alter table public.legal_agent_channels enable row level security;
+revoke all on public.legal_agent_settings from anon, authenticated;
+revoke all on public.legal_agent_channels from anon, authenticated;
+grant select, insert, update, delete on public.legal_agent_settings to service_role;
+grant select, insert, update, delete on public.legal_agent_channels to service_role;
+
+-- Migration date: 2026-10-22 (20261022_90_chat_identity_links.sql)
+--
+-- Who is talking on a chat channel, for the legal team's agent (doc 10 §6.2).
+--
+-- The chat bot (Hermes) calls Mike with a service token of one organization
+-- and names the person only by their chat identity: <platform>:<team>:<user>.
+-- Mike acts as someone only through a link that person confirmed once, while
+-- logged in to Mike; the e-mail a chat platform reports is never the proof.
+--
+--   chat_identity_links    a confirmed link: (org, platform, team, user) → user_id,
+--                          180 days, revocable
+--   chat_link_challenges   the one-time link the bot hands out when there is no
+--                          link yet: only the SHA-256 of its token is stored, it
+--                          is bound to (org, platform, team, user), lasts 15 min
+--                          and works once. The link is made for whoever confirms
+--                          it (their session), so opening someone else's link
+--                          only links yourself.
+--
+-- A link is only honoured for a workspace the organization registered on one
+-- of its agent channels (legal_agent_channels.platform_team_id), so a link
+-- made in another company's Slack cannot be used here.
+
+alter table public.legal_agent_channels
+  add column if not exists platform_team_id text;
+
+create unique index if not exists idx_legal_agent_channels_team
+  on public.legal_agent_channels(org_id, kind, platform_team_id)
+  where platform_team_id is not null;
+
+create table if not exists public.chat_identity_links (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  platform text not null
+    constraint chat_identity_links_platform_check check (platform in ('slack', 'whatsapp', 'telegram')),
+  platform_team_id text not null,
+  platform_user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  confirmed_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '180 days'),
+  revoked_at timestamptz,
+  -- The service token whose call led to this link, for the admin's list.
+  created_via_token_id uuid,
+  created_at timestamptz not null default now()
+);
+
+-- One live link per chat identity in an organization.
+create unique index if not exists idx_chat_identity_links_active
+  on public.chat_identity_links(org_id, platform, platform_team_id, platform_user_id)
+  where revoked_at is null;
+
+create index if not exists idx_chat_identity_links_user
+  on public.chat_identity_links(user_id, created_at desc);
+
+create table if not exists public.chat_link_challenges (
+  id uuid primary key default gen_random_uuid(),
+  token_hash text not null unique,
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  platform text not null
+    constraint chat_link_challenges_platform_check check (platform in ('slack', 'whatsapp', 'telegram')),
+  platform_team_id text not null,
+  platform_user_id text not null,
+  created_via_token_id uuid,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_chat_link_challenges_expiry
+  on public.chat_link_challenges(expires_at) where used_at is null;
+
+alter table public.chat_identity_links enable row level security;
+alter table public.chat_link_challenges enable row level security;
+revoke all on public.chat_identity_links from anon, authenticated;
+revoke all on public.chat_link_challenges from anon, authenticated;
+grant select, insert, update, delete on public.chat_identity_links to service_role;
+grant select, insert, update, delete on public.chat_link_challenges to service_role;
+
+-- ── Fork: analyst's analysis of a contract (20261022_92) ──
+-- The analyst's analysis of a contract: the reading a legal analyst writes
+-- before the team decides (executive summary, critical risks, points of
+-- attention, favourable points, redline suggestions, compliance, open
+-- points). One row per analysis of a document version, so a new version gets
+-- a new analysis and the old one stays as it was. The result is a draft for
+-- the legal team, never shown to the requester. Fork-only table (slot _92).
+
+create table if not exists public.contract_analyses (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  -- The request whose intake answers framed the analysis, if any.
+  request_id uuid references public.legal_requests(id) on delete set null,
+  document_id uuid references public.documents(id) on delete set null,
+  version_id uuid references public.document_versions(id) on delete set null,
+  -- The playbook used as the yardstick (the organization's for the contract's
+  -- type), and its run, whose findings set the traffic light.
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  playbook_run_id uuid references public.playbook_runs(id) on delete set null,
+  -- The intake answers the analysis considered: [{key, label, value, source}].
+  intake jsonb not null default '[]'::jsonb,
+  model text,
+  status text not null default 'queued',
+  result jsonb,
+  -- Quotes the verifier could not find in the document, with the reason.
+  dropped_citations jsonb not null default '[]'::jsonb,
+  -- {model, calls, input_tokens, output_tokens, estimated_cost_usd}.
+  usage jsonb,
+  error text,
+  requested_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+alter table public.contract_analyses drop constraint if exists contract_analyses_status_check;
+alter table public.contract_analyses add constraint contract_analyses_status_check
+  check (status in ('queued', 'running', 'done', 'failed'));
+create index if not exists idx_contract_analyses_project
+  on public.contract_analyses(project_id, created_at desc);
+-- One live analysis per document version: asking again returns it.
+create unique index if not exists uq_contract_analyses_version
+  on public.contract_analyses(version_id) where version_id is not null;
+
+-- One decision per redline suggestion: accepted (applied as a tracked change),
+-- edited (applied with the person's wording) or rejected.
+create table if not exists public.contract_analysis_decisions (
+  analysis_id uuid not null references public.contract_analyses(id) on delete cascade,
+  redline_id text not null,
+  decision text not null,
+  edited_text text,
+  edit jsonb,
+  reason text,
+  decided_by text not null,
+  decided_at timestamptz not null default now(),
+  primary key (analysis_id, redline_id)
+);
+alter table public.contract_analysis_decisions drop constraint if exists contract_analysis_decisions_decision_check;
+alter table public.contract_analysis_decisions add constraint contract_analysis_decisions_decision_check
+  check (decision in ('aceito', 'editado', 'rejeitado'));
+
+alter table public.contract_analyses enable row level security;
+alter table public.contract_analysis_decisions enable row level security;
+revoke all on public.contract_analyses, public.contract_analysis_decisions from anon, authenticated;
+grant select, insert, update, delete on public.contract_analyses, public.contract_analysis_decisions
   to service_role;
 
 -- Migration date: 2026-10-22 (20261022_93_notion_connections.sql)
@@ -11804,5 +12140,12 @@ insert into public.schema_migrations (filename) values
   ('20261020_99_requester_area.sql'),
   ('20261021_01_chat_subagent_runs.sql'),
   ('20261021_02_user_subagent_defaults.sql'),
-  ('20261022_93_notion_connections.sql')
+  ('20261021_90_legal_agent.sql'),
+  ('20261021_91_mcp_access_tokens.sql'),
+  ('20261022_90_chat_identity_links.sql'),
+  ('20261022_91_request_intake.sql'),
+  ('20261022_92_contract_analyses.sql'),
+  ('20261022_93_notion_connections.sql'),
+  ('20261022_95_mcp_confirmations.sql'),
+  ('20261022_97_card_events_cascade.sql')
 on conflict (filename) do nothing;

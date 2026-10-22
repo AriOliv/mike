@@ -4653,6 +4653,10 @@ export interface LegalRequest {
     participants?: RequestParticipant[];
     source?: { channel?: string; permalink?: string };
     can_decide?: boolean;
+    /** Team view: the intake checklist closed. */
+    intake_completed_at?: string | null;
+    /** Team view: the analysis found a critical risk and the Head was alerted. */
+    critical_alert_at?: string | null;
 }
 
 export interface RequestListItem {
@@ -4772,6 +4776,79 @@ export async function inviteRequestParticipant(
     body: { email: string; role?: "external" | "viewer"; label?: string; days?: number },
 ): Promise<LegalRequest> {
     return apiRequest(`/requests/${id}/participants`, jsonPost(body));
+}
+
+export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money";
+
+export interface IntakeItem {
+    key: string;
+    label: string;
+    kind: IntakeKind;
+    required: boolean;
+    hint?: string;
+    detail_label?: string;
+}
+
+export interface IntakeAnswer {
+    value: string;
+    choice?: "sim" | "nao";
+    detail?: string;
+    source: "requester" | "inferred";
+    confirmed: boolean;
+    /** For an inferred answer: the contract's words it came from. */
+    quote?: string;
+    updated_at: string;
+}
+
+/** A request's intake checklist and where it stands. */
+export interface RequestIntake {
+    request_id: string;
+    items: (IntakeItem & { answer: IntakeAnswer | null; state: "confirmado" | "inferido" | "pendente" })[];
+    pending: string[];
+    to_confirm: string[];
+    complete: boolean;
+    answered: number;
+    total: number;
+    completed_at: string | null;
+    /** The intake agent reading the contract: null when it never ran or had nothing to do. */
+    prefill: "lendo" | "concluido" | "falhou" | null;
+    can_answer: boolean;
+    template_source: "org" | "padrao";
+}
+
+export type IntakeAnswerInput = string | boolean | { value: string | boolean; detail?: string };
+
+export async function getRequestIntake(id: string): Promise<RequestIntake> {
+    return apiRequest(`/requests/${id}/intake`);
+}
+
+/** Answer items and/or confirm inferred ones as they stand. */
+export async function answerRequestIntake(
+    id: string,
+    body: { answers?: Record<string, IntakeAnswerInput>; confirm?: string[] },
+): Promise<RequestIntake> {
+    return apiRequest(`/requests/${id}/intake`, jsonPost(body));
+}
+
+/** A request whose contract analysis found a critical risk, for the Head. */
+export interface CriticalAlert {
+    request_id: string;
+    code: string;
+    title: string;
+    project_id: string | null;
+    alerted_at: string;
+    critical: number;
+    assignee_name: string | null;
+}
+
+/** Open critical alerts (the Head's; anyone else gets an empty list). */
+export async function listCriticalAlerts(): Promise<{ alerts: CriticalAlert[] }> {
+    return apiRequest("/requests/alerts");
+}
+
+/** The team asks for the analysis of the request's contract; 409 lists what the checklist still lacks. */
+export async function requestContractAnalysis(id: string): Promise<{ analysis_id: string; queued: boolean }> {
+    return apiRequest(`/requests/${id}/analysis`, { method: "POST" });
 }
 
 export async function revokeRequestParticipant(id: string, participantId: string): Promise<LegalRequest> {
@@ -5291,6 +5368,104 @@ export async function decideFichaField(
     });
 }
 
+// ── The analyst's analysis (/projects/:id/contract-review/analysis) ────────
+export type AnalysisLight = "red" | "yellow" | "green";
+export interface AnalysisItem {
+    id: string;
+    title: string;
+    quote: string;
+    clause: string | null;
+    rationale: string;
+    suggestion: string | null;
+    light: AnalysisLight;
+    rule_id: string | null;
+    span: { start: number; end: number } | null;
+}
+export interface AnalysisRedline {
+    id: string;
+    clause: string | null;
+    from: string;
+    to: string;
+    why: string;
+    item_id: string | null;
+    span: { start: number; end: number } | null;
+}
+export interface AnalysisResult {
+    notice: string;
+    executive_summary: { text: string; object: string | null; parties: string[]; value: string | null };
+    critical: AnalysisItem[];
+    attention: AnalysisItem[];
+    favorable: AnalysisItem[];
+    redlines: AnalysisRedline[];
+    compliance: {
+        data_protection: string;
+        confidentiality: string;
+        governing_law_forum: string;
+        term_termination_penalties: string;
+    };
+    open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro" }[];
+}
+export interface AnalystAnalysis {
+    id: string;
+    project_id: string;
+    request_id: string | null;
+    document_id: string | null;
+    version_id: string | null;
+    playbook_id: string | null;
+    playbook_run_id: string | null;
+    intake: { key: string; label: string; value: string; source?: string | null }[];
+    model: string | null;
+    status: "queued" | "running" | "done" | "failed";
+    result: AnalysisResult | null;
+    dropped_citations: { section: string; title: string; quote: string; reason: string }[];
+    usage: { model: string; calls: number; input_tokens: number; output_tokens: number; estimated_cost_usd: number | null } | null;
+    error: string | null;
+    created_at: string;
+    finished_at: string | null;
+}
+export interface AnalysisRedlineDecision extends ReviewDecision {
+    redline_id: string;
+}
+
+export async function getLatestAnalysis(projectId: string): Promise<AnalystAnalysis | null> {
+    return apiRequest(contractReviewPath(projectId, "/analysis"));
+}
+
+export async function startAnalystAnalysis(
+    projectId: string,
+    input: { request_id?: string | null; intake?: { key: string; label: string; value: string; source?: string }[] } = {},
+): Promise<{ analysis_id: string; queued: boolean }> {
+    return apiRequest(contractReviewPath(projectId, "/analysis"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export async function listAnalysisDecisions(projectId: string, analysisId: string): Promise<AnalysisRedlineDecision[]> {
+    return apiRequest(contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/decisions`));
+}
+
+export async function decideAnalysisRedline(
+    projectId: string,
+    analysisId: string,
+    redlineId: string,
+    input: { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string },
+): Promise<AnalysisRedlineDecision> {
+    return apiRequest(
+        contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/redlines/${encodeURIComponent(redlineId)}/decision`),
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+    );
+}
+
+export async function exportAnalysis(
+    projectId: string,
+    analysisId: string,
+    format: "md" | "docx",
+): Promise<{ blob: Blob; filename: string | null }> {
+    return apiBlobRequest(contractReviewPath(projectId, `/analysis/${encodeURIComponent(analysisId)}/export?format=${format}`));
+}
+
 // ── Contract portfolio (/contracts/fichas) ─────────────────────────────────
 export interface ContractPortfolioRow {
     project_id: string;
@@ -5646,6 +5821,58 @@ export interface NotionBoardSchema {
 
 const notionPath = (orgId: string, rest = "") => `/orgs/${encodeURIComponent(orgId)}/integrations/notion${rest}`;
 const notionJson = (method: string, body: unknown): RequestInit => ({
+
+// ── Agente do Legal (org settings) ──────────────────────────────────────────
+
+export type LegalAgentTone = "formal" | "cordial" | "direto";
+export type LegalAgentChannelKind = "slack" | "whatsapp" | "telegram";
+
+export interface LegalAgentSettings {
+    enabled: boolean;
+    display_name: string;
+    persona: string;
+    tone: LegalAgentTone;
+    hours: { timezone: string; days: number[]; start: string; end: string; outside: "avisa_e_registra" | "so_registra" };
+    permissions: { area: string; kinds: string[] }[];
+    escalation: { risk_levels: string[]; kinds: string[]; low_confidence: boolean; escalate_to_email: string };
+    proactive: { deadline_days: number[]; renewals: boolean; radar: boolean; digest_time: string };
+    updated_at: string | null;
+}
+
+export interface LegalAgentChannel {
+    id: string;
+    kind: LegalAgentChannelKind;
+    status: "rascunho" | "configurado" | "pausado";
+    name: string;
+    /** The workspace id people's chat links count on (Slack team id, …). */
+    platform_team_id: string | null;
+    config: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface LegalAgentChannelSetup {
+    kind: LegalAgentChannelKind;
+    steps: { title: string; detail: string }[];
+    files: { name: string; language: "yaml" | "http" | "text" | "env"; content: string }[];
+    warnings: string[];
+}
+
+export interface LegalAgentView {
+    settings: LegalAgentSettings;
+    channels: LegalAgentChannel[];
+    can_manage: boolean;
+    options: {
+        tones: string[];
+        kinds: string[];
+        risk_levels: string[];
+        fixed_escalations: string[];
+        disclaimer: string;
+    };
+}
+
+const legalAgentPath = (orgId: string, rest = "") => `/orgs/${encodeURIComponent(orgId)}/legal-agent${rest}`;
+const jsonInit = (method: string, body: unknown): RequestInit => ({
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -5676,4 +5903,129 @@ export async function saveNotionMapping(
     mapping: { database_id: string; field_map: Record<string, string>; stage_map: Record<string, NotionStageTarget>; poll_minutes: number },
 ): Promise<NotionConnection> {
     return apiRequest(notionPath(orgId, "/mapping"), notionJson("PUT", mapping));
+}
+
+export async function getLegalAgent(orgId: string): Promise<LegalAgentView> {
+    return apiRequest(legalAgentPath(orgId));
+}
+
+export async function saveLegalAgentSettings(
+    orgId: string,
+    settings: Omit<LegalAgentSettings, "updated_at">,
+): Promise<LegalAgentSettings> {
+    return apiRequest(legalAgentPath(orgId), jsonInit("PUT", settings));
+}
+
+export async function saveLegalAgentChannel(
+    orgId: string,
+    channel: {
+        id?: string;
+        kind: LegalAgentChannelKind;
+        name: string;
+        config: Record<string, unknown>;
+        platform_team_id?: string;
+    },
+): Promise<{ channel: LegalAgentChannel; setup: LegalAgentChannelSetup }> {
+    const { id, ...body } = channel;
+    return id
+        ? apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(id)}`), jsonInit("PUT", body))
+        : apiRequest(legalAgentPath(orgId, "/channels"), jsonInit("POST", body));
+}
+
+export async function getLegalAgentChannelSetup(orgId: string, channelId: string): Promise<LegalAgentChannelSetup> {
+    return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}/setup`));
+}
+
+export async function setLegalAgentChannelStatus(
+    orgId: string,
+    channelId: string,
+    status: LegalAgentChannel["status"],
+): Promise<LegalAgentChannel> {
+    return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}`), jsonInit("PATCH", { status }));
+}
+
+export async function deleteLegalAgentChannel(orgId: string, channelId: string): Promise<{ deleted: true }> {
+    return apiRequest(legalAgentPath(orgId, `/channels/${encodeURIComponent(channelId)}`), { method: "DELETE" });
+}
+
+export interface ChatLink {
+    id: string;
+    platform: LegalAgentChannelKind;
+    platform_team_id: string;
+    platform_user_id: string;
+    confirmed_at: string;
+    expires_at: string;
+    revoked_at: string | null;
+}
+
+export async function listMyChatLinks(orgId: string): Promise<ChatLink[]> {
+    return apiRequest(legalAgentPath(orgId, "/links"));
+}
+
+export async function revokeMyChatLink(orgId: string, linkId: string): Promise<{ revoked: true }> {
+    return apiRequest(legalAgentPath(orgId, `/links/${encodeURIComponent(linkId)}`), { method: "DELETE" });
+}
+
+export async function previewChatLink(token: string): Promise<{ platform: LegalAgentChannelKind; org_name: string; email: string | null }> {
+    return apiRequest(`/chat-links/preview?t=${encodeURIComponent(token)}`);
+}
+
+export async function confirmChatLink(token: string): Promise<{ link: ChatLink }> {
+    return apiRequest("/chat-links/confirm", jsonInit("POST", { t: token }));
+}
+
+// ── Tokens de acesso para agentes (MCP, doc 09 §3.1) ────────────────────────
+
+/** What a token may do; the backend's MCP_SCOPES. */
+export type McpScope =
+    | "contratos:read"
+    | "prazos:read"
+    | "base:ask"
+    | "revisao:read"
+    | "revisao:run"
+    | "controle:read"
+    | "controle:run"
+    | "radar:read"
+    | "painel:read"
+    | "pedidos:read"
+    | "pedidos:write"
+    | "agente:config";
+
+export interface McpAccessToken {
+    id: string;
+    name: string;
+    kind: "pessoal" | "servico";
+    /** "personal" or an organization id. */
+    workspace: string;
+    /** The first characters, to recognise a token without showing it. */
+    prefix: string;
+    scopes: McpScope[];
+    expires_at: string;
+    revoked_at: string | null;
+    last_used_at: string | null;
+    last_client: string | null;
+    created_at: string;
+}
+
+export async function listMcpTokens(): Promise<McpAccessToken[]> {
+    const data = await apiRequest<{ tokens: McpAccessToken[] }>("/mcp-tokens");
+    return data.tokens;
+}
+
+/** The plain token comes back here, once, and is never readable again. */
+export async function createMcpToken(body: {
+    name: string;
+    workspace: string;
+    scopes: McpScope[];
+    expires_in_days: number;
+}): Promise<{ token: string; access_token: McpAccessToken }> {
+    return apiRequest("/mcp-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export async function revokeMcpToken(id: string): Promise<McpAccessToken> {
+    return apiRequest(`/mcp-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

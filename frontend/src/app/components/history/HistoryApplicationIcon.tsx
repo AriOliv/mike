@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { UserRound } from "lucide-react";
+import { Bot, UserRound } from "lucide-react";
 import {
   ChatSkeuoIcon,
   OrganizationSkeuoIcon,
@@ -23,6 +23,7 @@ export const HISTORY_APPLICATION_ICONS: Partial<
     <UserRound aria-hidden="true" className={className} />
   ),
   organization: OrganizationSkeuoIcon,
+  mcp: ({ className }) => <Bot aria-hidden="true" className={className} />,
 };
 
 export function HistoryApplicationIcon({ surface }: { surface: string }) {
