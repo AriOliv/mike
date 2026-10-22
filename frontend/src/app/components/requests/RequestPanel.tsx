@@ -30,6 +30,7 @@ import {
 import { notifyError } from "@/app/lib/userFacingError";
 import { showToast } from "@/app/components/ui/toast";
 import { RequestConversation } from "./RequestConversation";
+import { RequestIntakeSection } from "./IntakeChecklist";
 import { ExternalChip } from "./ExternalChip";
 import { TriageSuggestion, type TriageDecision } from "./TriageSuggestion";
 
@@ -265,6 +266,18 @@ export function RequestPanel({
                         steps={requestPlan(r)}
                         onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
                     />
+
+                    <Section title="Checklist do pedido">
+                        <RequestIntakeSection
+                            requestId={r.id}
+                            audience="team"
+                            reloadKey={reloadKey}
+                            onChanged={() => {
+                                if (r.project_id) getCardActivity(r.project_id, 30).then(setEvents, () => undefined);
+                                onChanged();
+                            }}
+                        />
+                    </Section>
 
                     <Section title="Conversa com o solicitante">
                         <RequestConversation

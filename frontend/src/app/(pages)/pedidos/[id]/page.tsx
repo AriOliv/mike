@@ -9,6 +9,7 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { RequestConversation } from "@/app/components/requests/RequestConversation";
 import { RequestSteps } from "@/app/components/requests/RequestSteps";
+import { RequestIntakeSection } from "@/app/components/requests/IntakeChecklist";
 import { getRequest, MikeApiError, postRequestMessage, type LegalRequest } from "@/app/lib/mikeApi";
 import { formatDate, slaText } from "@/app/lib/requests";
 import { notifyError } from "@/app/lib/userFacingError";
@@ -164,6 +165,13 @@ export default function PedidoPage({ params }: Props) {
                         <section className="mt-6">
                             <h2 className="mb-1 text-xs font-medium text-gray-500">Como o Legal entendeu o pedido</h2>
                             <p className="text-sm text-gray-800">{r.summary}</p>
+                        </section>
+                    ) : null}
+
+                    {r.audience === "requester" ? (
+                        <section className="mt-6">
+                            <h2 className="mb-2 text-xs font-medium text-gray-500">O que o Legal precisa saber</h2>
+                            <RequestIntakeSection requestId={r.id} audience="requester" />
                         </section>
                     ) : null}
 
