@@ -4829,6 +4829,11 @@ export interface HomeDeadline {
 }
 
 export interface HomeSummary {
+    /**
+     * Who the screen is for. A requester (outside the legal team) gets an empty
+     * portfolio and is sent to their requests instead.
+     */
+    audience?: "team" | "requester";
     /** When the caller last opened the home screen; null on a first visit. */
     since: string | null;
     greeting: { reviewed: number; reviewed_90d: number; failed: number; notices_closing: number; ready: number };
