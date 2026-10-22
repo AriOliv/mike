@@ -4653,6 +4653,10 @@ export interface LegalRequest {
     participants?: RequestParticipant[];
     source?: { channel?: string; permalink?: string };
     can_decide?: boolean;
+    /** Team view: the intake checklist closed. */
+    intake_completed_at?: string | null;
+    /** Team view: the analysis found a critical risk and the Head was alerted. */
+    critical_alert_at?: string | null;
 }
 
 export interface RequestListItem {
@@ -4822,6 +4826,27 @@ export async function answerRequestIntake(
     body: { answers?: Record<string, IntakeAnswerInput>; confirm?: string[] },
 ): Promise<RequestIntake> {
     return apiRequest(`/requests/${id}/intake`, jsonPost(body));
+}
+
+/** A request whose contract analysis found a critical risk, for the Head. */
+export interface CriticalAlert {
+    request_id: string;
+    code: string;
+    title: string;
+    project_id: string | null;
+    alerted_at: string;
+    critical: number;
+    assignee_name: string | null;
+}
+
+/** Open critical alerts (the Head's; anyone else gets an empty list). */
+export async function listCriticalAlerts(): Promise<{ alerts: CriticalAlert[] }> {
+    return apiRequest("/requests/alerts");
+}
+
+/** The team asks for the analysis of the request's contract; 409 lists what the checklist still lacks. */
+export async function requestContractAnalysis(id: string): Promise<{ analysis_id: string; queued: boolean }> {
+    return apiRequest(`/requests/${id}/analysis`, { method: "POST" });
 }
 
 export async function revokeRequestParticipant(id: string, participantId: string): Promise<LegalRequest> {
