@@ -5613,3 +5613,67 @@ export async function getLegalDashboard(params?: {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return apiRequest(`/dashboard${suffix}`);
 }
+
+// ── Notion por org (Configurações → Integrações) ───────────────────────────
+
+export type NotionLane = "entrada" | "triagem" | "revisao" | "negociacao" | "assinatura" | "arquivado";
+export type NotionStageTarget = { lane: NotionLane; tag: string | null };
+
+export interface NotionConnection {
+    connected: boolean;
+    token_last4: string | null;
+    database_id: string | null;
+    data_source_id: string | null;
+    database_title: string | null;
+    field_map: Record<string, string>;
+    stage_map: Record<string, NotionStageTarget>;
+    sync_enabled: boolean;
+    poll_minutes: number;
+    last_sync_at: string | null;
+    last_sync_error: string | null;
+    can_manage: boolean;
+    fields: { field: string; label: string; types: string[]; owner: "legal" | "mike" | "key" }[];
+}
+
+export interface NotionBoardSchema {
+    database_id: string;
+    title: string;
+    properties: { name: string; type: string; options?: string[] }[];
+    stage_options: string[];
+    suggested_field_map: Record<string, string>;
+    suggested_stage_map: Record<string, NotionStageTarget>;
+}
+
+const notionPath = (orgId: string, rest = "") => `/orgs/${encodeURIComponent(orgId)}/integrations/notion${rest}`;
+const notionJson = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+});
+
+export async function getNotionConnection(orgId: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId));
+}
+
+export async function connectNotion(orgId: string, token: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/token"), notionJson("PUT", { token }));
+}
+
+export async function disconnectNotion(orgId: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/token"), { method: "DELETE" });
+}
+
+export async function listNotionDatabases(orgId: string): Promise<{ id: string; data_source_id: string; title: string }[]> {
+    return apiRequest(notionPath(orgId, "/databases"));
+}
+
+export async function describeNotionBoard(orgId: string, databaseId: string): Promise<NotionBoardSchema> {
+    return apiRequest(notionPath(orgId, `/board?database_id=${encodeURIComponent(databaseId)}`));
+}
+
+export async function saveNotionMapping(
+    orgId: string,
+    mapping: { database_id: string; field_map: Record<string, string>; stage_map: Record<string, NotionStageTarget>; poll_minutes: number },
+): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/mapping"), notionJson("PUT", mapping));
+}
