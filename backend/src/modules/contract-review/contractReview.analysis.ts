@@ -13,7 +13,12 @@
 // playbook for the contract's type, its run is the yardstick: an item on a
 // rule takes the light the playbook gave that rule.
 
+import { z } from "zod";
 import { locateQuote } from "./contractReview.ficha";
+import { parseModelJson } from "./contractReview.shared";
+// jsonrepair declares "type": "module" but ships a CommonJS build; importing
+// it normally trips TS1479 under this package's Node16 CJS resolution.
+const { jsonrepair } = require("jsonrepair") as { jsonrepair: (text: string) => string };
 
 /** Shown on every analysis: it is a draft for the legal team. */
 export const ANALYSIS_NOTICE = "Rascunho gerado por IA para o time jurídico. Não é parecer jurídico.";
@@ -127,6 +132,50 @@ Responda só JSON:
 
 CONTRATO (${args.documentName}):
 ${args.documentText.slice(0, 180_000)}`;
+}
+
+/**
+ * The answer's shape. Every section must be there: a cut-off answer loses the
+ * last ones, and a "repaired" half answer must not pass for a whole analysis.
+ * The items themselves are checked by normalizeAnalysis.
+ */
+const answerSchema = z
+    .object({
+        executive_summary: z.object({ text: z.string() }).passthrough(),
+        critical: z.array(z.unknown()),
+        attention: z.array(z.unknown()),
+        favorable: z.array(z.unknown()),
+        redlines: z.array(z.unknown()),
+        compliance: z.record(z.string(), z.unknown()),
+        open_points: z.array(z.unknown()),
+    })
+    .passthrough();
+
+export type ParsedAnswer = { ok: true; value: Record<string, unknown> } | { ok: false; reason: "invalid_json" | "incomplete_answer" };
+
+/** The model's answer as JSON, mending small syntax slips; null reason when it is not the analysis. */
+export function parseAnalysisAnswer(raw: string): ParsedAnswer {
+    let value: unknown;
+    try {
+        value = parseModelJson(raw);
+    } catch {
+        const start = raw.indexOf("{");
+        if (start === -1) return { ok: false, reason: "invalid_json" };
+        try {
+            value = JSON.parse(jsonrepair(raw.slice(start)));
+        } catch {
+            return { ok: false, reason: "invalid_json" };
+        }
+    }
+    const checked = answerSchema.safeParse(value);
+    return checked.success ? { ok: true, value: checked.data } : { ok: false, reason: "incomplete_answer" };
+}
+
+/** The second and last try after an answer that was not the analysis: the same task, shorter. */
+export function analysisRetryPrompt(prompt: string): string {
+    return `${prompt}
+
+ATENÇÃO: a resposta anterior veio cortada ou com JSON inválido. Responda de novo, só com o JSON completo e válido no formato acima, com todas as seções, no máximo 8 itens por seção e trechos citados curtos.`;
 }
 
 const text = (value: unknown, max: number): string =>
