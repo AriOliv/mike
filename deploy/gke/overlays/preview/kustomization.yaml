@@ -12,6 +12,8 @@ resources:
 components:
   - ../../seed
   - ../../seed/integration
+  # /mcp outside IAP (fictitious data only; never on staging)
+  - ../../preview-mcp
 configMapGenerator:
   - name: mike-env
     literals:
