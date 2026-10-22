@@ -45,6 +45,7 @@ import {
 } from "./modules/contracts/contracts.routes";
 import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
+import { mcpRouter, mcpTokensRouter } from "./modules/mcp/mcp.routes";
 import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
@@ -100,6 +101,10 @@ function makeLimiter(options: {
 // tool-deadline stall per call inside a held SSE stream.
 const TOOL_RESULT_PATH = "/word-chat/tool-result";
 
+// The MCP server agents call (doc 09). Mounted at the root, not under /api:
+// the preview's load balancer sends it straight to this process.
+const MCP_PATH = "/mcp";
+
 // Path prefix of the filesystem driver's signed blob PUT, used both to give it
 // its own rate-limit lane and to keep it out of the shared one.
 const BLOB_UPLOAD_PREFIX = "/download/signed/";
@@ -110,6 +115,8 @@ const generalLimiter = makeLimiter({
   // Upload status polling has its own authenticated per-user limiter. Keep it
   // and the dedicated Word tool-result lane out of the shared IP budget.
   skip: (req) =>
+    // Agents on /mcp are limited per access token inside the MCP module.
+    req.path === MCP_PATH ||
     req.path === TOOL_RESULT_PATH ||
     req.path === "/upload-sessions" ||
     req.path.startsWith("/upload-sessions/") ||
@@ -344,6 +351,10 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 // no body parser may consume it first — a .json upload otherwise would be.
 app.put("/download/signed/:token", blobUploadLimiter, blobUploadHandler);
 
+// Agents send JSON-RPC calls, never documents: 1 MB is plenty and keeps a
+// token-holder from posting 50 MB bodies. Parsed before the global parser.
+app.use(MCP_PATH, express.json({ limit: "1mb" }), mcpRouter);
+
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Body-aware account throttling complements the per-IP login limiter. The key
@@ -382,6 +393,7 @@ app.use("/acervo", acervoRouter);
 app.use("/contracts", contractPortfolioRouter);
 app.use("/regulatory", regulatoryRouter);
 app.use("/dashboard", dashboardRouter);
+app.use("/mcp-tokens", mcpTokensRouter);
 app.use("/requests", requestsRouter);
 app.use("/home", homeRouter);
 app.use("/watched-folders", watchedFoldersRouter);
