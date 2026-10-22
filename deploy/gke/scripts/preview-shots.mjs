@@ -12,8 +12,8 @@
 //                  "widths": [1440, 390], "themes": ["light", "dark"],
 //                  "steps": [ { "click": "text=LEG-0001" }, { "wait": 800 } ] } ] }
 //
-// Steps: click, press, fill {selector, value}, goto, waitFor, wait (ms), and
-// mock {method, path, status, json} to answer one call in the browser.
+// Steps: click, press, fill {selector, value}, goto, waitFor, scrollTo, wait
+// (ms), and mock {method, path, status, json} to answer one call in the browser.
 //
 // Accounts: "legal" (legal.demo@avenia.io) and "solicitante"
 // (solicitante.demo@avenia.io); override with DEMO_LEGAL_EMAIL /
@@ -77,6 +77,9 @@ async function run(page, step) {
     else if (step.fill) await page.locator(step.fill.selector).first().fill(step.fill.value);
     else if (step.goto) await page.goto(`${BASE}${step.goto}`, { waitUntil: "networkidle" });
     else if (step.waitFor) await page.locator(step.waitFor).first().waitFor({ timeout: 15000 });
+    // scroll every scrolling ancestor until that element is in view (e.g. the
+    // end of a menu on a phone)
+    else if (step.scrollTo) await page.locator(step.scrollTo).first().evaluate((el) => el.scrollIntoView({ block: "end" }));
     // {"mock": {"method": "POST", "path": "/api/x", "status": 201, "json": {...}}}:
     // answer that one call in this browser only, e.g. to show a screen whose
     // real response would carry a secret (a token shown once). Never reaches
