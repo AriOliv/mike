@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALERT_DAY_CHOICES, alertLabel, KIND_LABEL, sortAlerts, STATUS_LABEL, daysUntil, dueLabel, ownerLabel, parseAlertDays } from "./obligations";
+import { ALERT_DAY_CHOICES, alertLabel, amendmentLine, KIND_LABEL, sortAlerts, STATUS_LABEL, daysUntil, dueLabel, ownerLabel, parseAlertDays } from "./obligations";
 
 describe("obligation helpers", () => {
     it("counts days from today, midnight to midnight", () => {
@@ -61,5 +61,18 @@ describe("obligation helpers", () => {
         const copy = [...input];
         expect(sortAlerts([...input]).map((x) => x.id)).toEqual(["d", "b", "c", "a"]);
         expect([...input]).toEqual(copy);
+    });
+});
+
+describe("amendmentLine", () => {
+    it("says where the amendment stands, with the delivery date once delivered", () => {
+        expect(amendmentLine({ status: "em_andamento", delivered_at: null, term_end: null })).toBe("Em análise");
+        expect(amendmentLine({ status: "entregue", delivered_at: "2026-11-03T12:00:00Z", term_end: null })).toBe("Entregue em 03/11/2026");
+        expect(amendmentLine({ status: "entregue", delivered_at: null, term_end: null })).toBe("Entregue");
+    });
+
+    it("adds the term the amendment sets, and keeps an unknown status readable", () => {
+        expect(amendmentLine({ status: "novo", delivered_at: null, term_end: "2028-01-05" })).toBe("Novo · define o fim da vigência em 05/01/2028");
+        expect(amendmentLine({ status: "arquivado_x", delivered_at: null, term_end: null })).toBe("arquivado_x");
     });
 });

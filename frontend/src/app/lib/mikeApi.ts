@@ -5263,6 +5263,21 @@ export async function getContractAlerts(projectId: string): Promise<ContractAler
     return apiRequest(`/projects/${encodeURIComponent(projectId)}/alerts`);
 }
 
+/** An amendment tied to a contract ("contrato original" of a request). */
+export interface LinkedAmendment {
+    id: string;
+    code: string;
+    title: string;
+    status: string;
+    delivered_at: string | null;
+    /** The term this amendment sets, when it states both start and months. */
+    term_end: string | null;
+}
+
+export async function getContractAmendments(projectId: string): Promise<LinkedAmendment[]> {
+    return apiRequest(`/projects/${encodeURIComponent(projectId)}/amendments`);
+}
+
 /** One deadline as a calendar file, for "criar evento". */
 export async function downloadObligationIcs(id: string): Promise<{ blob: Blob; filename: string }> {
     const file = await apiBlobRequest(`/obligations/${encodeURIComponent(id)}/ics`);

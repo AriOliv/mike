@@ -41,6 +41,8 @@ export {
     getContractTerms,
     extractContractTerms,
     extractMissingContractTerms,
+    applyAmendedTerm,
+    type AmendedTerm,
     type ContractTerms,
     type TermsSyncSummary,
 } from "./contracts.terms";

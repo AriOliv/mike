@@ -15,7 +15,7 @@ import {
     ok,
     type ServiceResult,
 } from "../../lib/serviceResult";
-import { recordCardEvent } from "../contracts/contracts.service";
+import { applyAmendedTerm, recordCardEvent } from "../contracts/contracts.service";
 import {
     HEAD_ONLY,
     isHead,
@@ -1140,6 +1140,31 @@ export async function postMessage(
  * the card's documents. The requester is mailed; the card's progress is
  * marked done (the lane stays the team's call).
  */
+/**
+ * A delivered amendment changes the term of the contract it amends: the end
+ * of the term and the notice deadline are recomputed from the start and the
+ * months the requester confirmed (never from the model's "confirme" reading).
+ * Only an amendment tied to a contract of the team's organization, with both
+ * values; anything else leaves the contract alone. The delivery is already
+ * done, so a failure here is logged, never returned.
+ */
+async function applyAmendmentToParent(db: Db, caller: Caller, row: RequestRow): Promise<void> {
+    if (row.kind !== "aditivo" || !row.parent_project_id) return;
+    const end = termEnd(row.term_start, row.term_months);
+    if (!end) return;
+    try {
+        await applyAmendedTerm(db, {
+            projectId: row.parent_project_id,
+            orgId: row.org_id,
+            termEnd: end,
+            source: `Aditivo ${requestCode(row.number)}`,
+            actor: { userId: caller.userId, name: await teamCallerName(db, caller) },
+        });
+    } catch (error) {
+        console.error("[requests] amended term not applied", { requestId: row.id, error: safeError(error) });
+    }
+}
+
 export async function deliverRequest(
     db: Db,
     caller: Caller,
@@ -1177,6 +1202,7 @@ export async function deliverRequest(
     });
     if (!updated.ok) return updated;
     await syncStage(db, updated.data, "devolutiva enviada");
+    await applyAmendmentToParent(db, caller, row);
     if (row.project_id) {
         await db
             .from("projects")
