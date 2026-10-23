@@ -6,6 +6,7 @@ import { ExternalLink, Send, UserPlus, X } from "lucide-react";
 import { DetailPanel } from "@/app/components/shared/DetailPanel";
 import { ActivityFeed } from "@/app/components/shared/ActivityFeed";
 import { AgentPlan } from "@/app/components/shared/AgentPlan";
+import { StageStrip } from "./StageStrip";
 import { StatusChip } from "@/app/components/ui/status-chip";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
@@ -312,12 +313,16 @@ export function RequestPanel({
                     ) : (
                         <StatusChip status="rodando" label="Fazendo a triagem…" />
                     )}
-                    <AgentPlan
-                        className="mt-5"
-                        title="Plano"
-                        steps={requestPlan(r)}
-                        onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
-                    />
+                    {r.stage ? (
+                        <StageStrip className="mt-5" stage={r.stage} stages={r.stages} />
+                    ) : (
+                        <AgentPlan
+                            className="mt-5"
+                            title="Plano"
+                            steps={requestPlan(r)}
+                            onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
+                        />
+                    )}
 
                     <Section title="Checklist do pedido">
                         <RequestIntakeSection
