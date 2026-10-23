@@ -157,18 +157,22 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
     requestId: string | null;
+    /** The form field a 422 points at, when the server names one. */
+    field: string | null;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
         requestId?: string | null;
+        field?: string | null;
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
         this.requestId = args.requestId ?? null;
+        this.field = args.field ?? null;
     }
 }
 
@@ -308,6 +312,7 @@ async function toApiError(
             detail?: unknown;
             code?: unknown;
             request_id?: unknown;
+            field?: unknown;
         };
         const requestId =
             typeof parsed.request_id === "string"
@@ -342,6 +347,7 @@ async function toApiError(
             status: response.status,
             code,
             requestId,
+            field: typeof parsed.field === "string" ? parsed.field : null,
             // A 4xx whose body carries no usable `detail` is a malformed
             // error response, and it is treated as one. `API error: 409` used
             // to be produced here instead — and because a 4xx message is the
@@ -4748,6 +4754,10 @@ export interface NewRequest {
     needed_by?: string | null;
     document_ids?: string[];
     requester_area?: string;
+    /** Part 2, all optional: the other party's e-mail (kept, never sent to), the start and the term. */
+    counterparty_email?: string;
+    term_start?: string;
+    term_months?: number;
 }
 
 const jsonPost = (body: unknown): RequestInit => ({
