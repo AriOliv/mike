@@ -81,6 +81,22 @@ describe("RequestTermsSection", () => {
         expect(screen.queryByText("IA")).not.toBeInTheDocument();
     });
 
+    it("shows the typed value and the suggestion when both arrive, and Confirmar swaps the value for what was read", async () => {
+        // A rare race on the server: the person typed while the agent was still reading.
+        api.getRequestTerms.mockResolvedValue(
+            terms({ term_months: 12, term_end: null, inferred: { term_months: { value: "24", quote: "pelo prazo de 24 meses" } } }),
+        );
+        api.saveRequestTerms.mockResolvedValue(terms({ term_months: 24 }));
+        render(<RequestTermsSection requestId="r1" />);
+        // The typed value stands, and the suggestion is offered next to it, not over it.
+        expect(await screen.findByText("12 meses", { selector: "p.text-gray-900" })).toBeInTheDocument();
+        expect(screen.getByText(/Li no contrato:/)).toHaveTextContent("24 meses");
+        fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+        await waitFor(() => expect(api.saveRequestTerms).toHaveBeenCalledWith("r1", { confirm: ["term_months"] }));
+        expect(await screen.findByText("24 meses", { selector: "p.text-gray-900" })).toBeInTheDocument();
+        expect(screen.queryByText(/Li no contrato:/)).not.toBeInTheDocument();
+    });
+
     it("corrects a suggestion by typing the real value", async () => {
         api.getRequestTerms.mockResolvedValue(terms({ inferred: { counterparty: { value: "Polaris S.A.", quote: "Polaris S.A., CNPJ…" } } }));
         api.saveRequestTerms.mockResolvedValue(terms({ counterparty: "Polaris Tecnologia" }));
