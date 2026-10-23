@@ -11,9 +11,11 @@ import {
   handleAnalysisReady,
   handleIntakePrefill,
   handleRequestAnalysisStart,
+  handleRenewalSweep,
   handleRequestNotify,
   handleRequestTriage,
   PREFILL_JOB_KIND,
+  RENEWAL_JOB_KIND,
 } from "../modules/requests/requests.service";
 import { AUTO_REVIEW_JOB, handleAutoReview, markAutoReviewFailed } from "../modules/contracts/contracts.service";
 import { ANALYSIS_READY_JOB, ANALYST_ANALYSIS_JOB, handleAnalystAnalysis, markAnalystAnalysisFailed } from "../modules/contract-review/contractReview.service";
@@ -37,6 +39,7 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   [FEEDBACK_JOB]: (db, job) => handleFeedbackIssue(db, job),
   "request.triage": handleRequestTriage,
   "request.notify": (db) => handleRequestNotify(db),
+  [RENEWAL_JOB_KIND]: (db) => handleRenewalSweep(db),
   [PREFILL_JOB_KIND]: handleIntakePrefill,
   [ANALYSIS_START_JOB_KIND]: handleRequestAnalysisStart,
   [ANALYSIS_READY_JOB]: handleAnalysisReady,
