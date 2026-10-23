@@ -202,8 +202,9 @@ describe("HomeView", () => {
             api.getHomeSummary.mockResolvedValue(summary(many(25)));
             render(<HomeView />);
             await screen.findByText("Contrato 01.pdf");
-            const table = screen.getByRole("region", { name: "Revisões" });
-            const deadlines = screen.getByRole("region", { name: "Prazos de aviso" });
+            // The deadlines section is drawn by the same load; wait for it instead of assuming it.
+            const table = await screen.findByRole("region", { name: "Revisões" });
+            const deadlines = await screen.findByRole("region", { name: "Prazos de aviso" });
             // Both sections are in normal flow: nothing is absolutely placed or sticky, and the
             // table's box has a ceiling and clips what is inside it.
             expect(table.compareDocumentPosition(deadlines) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -227,12 +228,14 @@ describe("HomeView", () => {
         it("counts the whole queue in the tabs and keeps j/k and the search on all of it", async () => {
             api.getHomeSummary.mockResolvedValue(summary(many(21)));
             render(<HomeView />);
+            // The tab count and the first row come from the same load; wait for both, not one.
+            const all = await screen.findByRole("button", { name: "Todas (21)" });
             await screen.findByText("Contrato 01.pdf");
-            expect(screen.getByRole("button", { name: "Todas (21)" })).toBeInTheDocument();
-            fireEvent.click(screen.getByRole("button", { name: "Todas (21)" }));
-            fireEvent.change(screen.getByLabelText("Buscar revisões"), { target: { value: "Contrato 20" } });
+            fireEvent.click(all);
+            fireEvent.change(await screen.findByLabelText("Buscar revisões"), { target: { value: "Contrato 20" } });
             expect(await screen.findByText("Contrato 20.pdf")).toBeInTheDocument();
-            expect(screen.queryByText(/Mostrando/)).not.toBeInTheDocument();
+            // The search narrows the queue to what fits, so the "Mostrando" line goes away.
+            await waitFor(() => expect(screen.queryByText(/Mostrando/)).not.toBeInTheDocument());
         });
     });
 
