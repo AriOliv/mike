@@ -189,12 +189,13 @@ describe("HomeView", () => {
         it("draws only the first rows and says how many there are, with the way to the rest", async () => {
             api.getHomeSummary.mockResolvedValue(summary(many(21)));
             render(<HomeView />);
-            await screen.findByText("Contrato 01.pdf");
+            // Wait for the settled state, not just the first row: the tab, the count and
+            // the link all follow the same load, and under CI load they land a tick apart.
+            expect(await screen.findByText(/Mostrando 8 de 21\./)).toBeInTheDocument();
             const list = screen.getByRole("list", { name: "Revisões" });
-            expect(within(list).getAllByRole("listitem")).toHaveLength(8);
+            await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(8));
             expect(screen.queryByText("Contrato 09.pdf")).not.toBeInTheDocument();
-            expect(screen.getByText(/Mostrando 8 de 21\./)).toBeInTheDocument();
-            expect(screen.getByRole("link", { name: "Ver todos os contratos (21)" })).toHaveAttribute("href", "/contratos");
+            expect(await screen.findByRole("link", { name: "Ver todos os contratos (21)" })).toHaveAttribute("href", "/contratos");
         });
 
         it("keeps the notice deadlines and the activity after the table in the page, not over it", async () => {

@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/mikeApi";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { RadarCalendar } from "@/app/components/radar/RadarCalendar";
+import { brDate } from "@/app/lib/contractsPortfolio";
 
 const MARK_STYLES: Record<ObligationMark, string> = {
     critico: "bg-red-100 text-red-700",
@@ -202,7 +203,7 @@ export default function RadarPage() {
 
                                         <div className="shrink-0 text-right">
                                             <div className="text-sm tabular-nums text-gray-700">
-                                                {item.due_date}
+                                                {brDate(item.due_date)}
                                             </div>
                                             <div
                                                 className={`text-[11px] ${

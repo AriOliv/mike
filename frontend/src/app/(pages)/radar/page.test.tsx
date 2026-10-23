@@ -61,6 +61,11 @@ describe("RadarPage (Prazos)", () => {
         expect(screen.getByText(/^31 a 90 dias · 1$/)).toBeInTheDocument();
         expect(screen.getByText(/^Mais adiante · 1$/)).toBeInTheDocument();
         expect(screen.getByText("venceu há 2 d")).toBeInTheDocument();
+        // The date reads dd/mm/aaaa like the rest of the app, not the stored ISO.
+        const iso = dayOffset(-2);
+        const [y, m, d] = iso.split("-");
+        expect(screen.getByText(`${d}/${m}/${y}`)).toBeInTheDocument();
+        expect(screen.queryByText(iso)).not.toBeInTheDocument();
         expect(screen.getByText("vence hoje")).toBeInTheDocument();
         expect(screen.getByText("em 7 d")).toBeInTheDocument();
         expect(screen.getAllByText("crítico").length).toBeGreaterThan(0);

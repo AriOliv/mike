@@ -208,17 +208,17 @@ export function RequestPanel({
                     <div
                         role="region"
                         aria-label="Sua tarefa"
-                        className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
+                        className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 ${
                             next.tone === "wait"
                                 ? "border-amber-200 bg-amber-50"
                                 : "border-blue-200 bg-blue-50"
                         }`}
                     >
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1 basis-40">
                             <p className="text-[11px] text-gray-500">
                                 {next.tone === "mine" ? "Sua tarefa" : next.tone === "head" ? "Falta decidir" : "Na vez de quem pediu"}
                             </p>
-                            <p className="truncate text-sm font-medium text-gray-900">{next.title}</p>
+                            <p className="text-sm font-medium text-gray-900">{next.title}</p>
                             <p className="text-xs text-gray-600">{next.detail}</p>
                         </div>
                         {next.action === "review" && r.project_id ? (
