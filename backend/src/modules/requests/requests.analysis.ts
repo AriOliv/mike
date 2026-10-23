@@ -31,7 +31,7 @@ import {
     type Caller,
     type RequestRow,
 } from "./requests.access";
-import { ANALYSIS_START_JOB, loadTemplate } from "./requests.checklist";
+import { ANALYSIS_START_JOB, forKind, loadTemplate } from "./requests.checklist";
 import { intakeForAnalysis, intakeStatus, readAnswers } from "./requests.intake";
 import { requestCode } from "./requests.shared";
 import { teamOwner } from "./requests.triage";
@@ -45,14 +45,14 @@ async function analysisInput(
     db: Db,
     row: RequestRow,
 ): Promise<{ ok: true; intake: ReturnType<typeof intakeForAnalysis> } | { ok: false; pending: string[] }> {
-    const template = await loadTemplate(db, row.org_id);
+    const items = forKind(await loadTemplate(db, row.org_id), row.kind);
     const answers = readAnswers(row.intake);
-    const status = intakeStatus(template.items, answers);
+    const status = intakeStatus(items, answers);
     if (!status.complete) {
-        const labels = new Map(template.items.map((i) => [i.key, i.label]));
+        const labels = new Map(items.map((i) => [i.key, i.label]));
         return { ok: false, pending: status.pending.map((k) => labels.get(k) ?? k) };
     }
-    return { ok: true, intake: intakeForAnalysis(template.items, answers) };
+    return { ok: true, intake: intakeForAnalysis(items, answers) };
 }
 
 /** request.analysis_start: start the analyst's analysis as the team's owner. */

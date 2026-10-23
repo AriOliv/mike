@@ -41,6 +41,8 @@ import {
     watchProject,
     getDossier,
     getIntegrationStatus,
+    downloadObligationIcs,
+    getContractAlerts,
     getObligationAlerts,
     getObligationOwners,
     getObligations,
@@ -228,6 +230,30 @@ describe("radar", () => {
         fetchMock.mockImplementation(async () => jsonResponse([{ id: "o1", days_left: -2 }]));
         expect(await getObligationAlerts()).toEqual([{ id: "o1", days_left: -2 }]);
         expect(lastFetchCall().url).toMatch(/\/obligations\/alerts$/);
+    });
+
+    it("lists a contract's alerts, the id encoded in the path", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ id: "o1", days_left: 4 }]));
+        expect(await getContractAlerts("p/1")).toEqual([{ id: "o1", days_left: 4 }]);
+        expect(lastFetchCall().url).toMatch(/\/projects\/p%2F1\/alerts$/);
+    });
+
+    it("downloads a deadline as a calendar file, named by the server or by default", async () => {
+        fetchMock.mockImplementation(async () =>
+            new Response("BEGIN:VCALENDAR", { status: 200, headers: { "content-disposition": 'attachment; filename="prazo-2026-12-31.ics"' } }),
+        );
+        const file = await downloadObligationIcs("o 1");
+        expect(lastFetchCall().url).toMatch(/\/obligations\/o%201\/ics$/);
+        expect(file.filename).toBe("prazo-2026-12-31.ics");
+        expect(await file.blob.text()).toBe("BEGIN:VCALENDAR");
+        fetchMock.mockImplementation(async () => new Response("x", { status: 200 }));
+        expect((await downloadObligationIcs("o1")).filename).toBe("prazo.ics");
+    });
+
+    it("sends a status when closing or reopening a deadline", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ id: "o1" }));
+        await updateObligation("o1", { status: "dispensado" });
+        expect(jsonBody()).toEqual({ status: "dispensado" });
     });
 
     it("lists the people who can own a deadline", async () => {

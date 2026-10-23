@@ -79,10 +79,68 @@ describe("RequestPanel: sua tarefa", () => {
         expect(screen.getByRole("button", { name: "Escolher responsável" })).toBeInTheDocument();
     });
 
+    it("never cuts the task title: it wraps, so a long one still reads whole", async () => {
+        state.getRequest.mockResolvedValue(request({ assignee_id: null, assignee_name: null }));
+        render(<RequestPanel requestId="r1" team={team} userId="u9" onClose={() => {}} onChanged={() => {}} />);
+        const title = await screen.findByText("Escolher quem pega este pedido");
+        expect(title.className).not.toMatch(/truncate/);
+    });
+
     it("shows nothing when the task belongs to someone else", async () => {
         state.getRequest.mockResolvedValue(request());
         render(<RequestPanel requestId="r1" team={team} userId="u2" onClose={() => {}} onChanged={() => {}} />);
         await screen.findByText("Revisar minuta");
         expect(screen.queryByRole("region", { name: "Sua tarefa" })).not.toBeInTheDocument();
+    });
+
+    describe("with the stage of the server", () => {
+        const stageOf = (stage: string, owner: object) => ({
+            stage,
+            label: stage[0].toUpperCase() + stage.slice(1),
+            position: { index: 2, of: 5 },
+            owner,
+            since: "2026-10-20T09:00:00Z",
+            strip: [
+                { stage: "recebido", label: "Recebido", state: "concluida", owner: null, since: null },
+                { stage, label: stage[0].toUpperCase() + stage.slice(1), state: "atual", owner, since: null },
+                { stage: "concluido", label: "Concluído", state: "pendente", owner: null, since: null },
+            ],
+        });
+
+        it("puts the stage strip at the top, right after the task card and before the fields", async () => {
+            state.getRequest.mockResolvedValue(
+                request({ stage: stageOf("analise", { kind: "person", id: "u1", name: "Téo" }), stages: [] }),
+            );
+            render(<RequestPanel requestId="r1" team={team} userId="u1" onClose={() => {}} onChanged={() => {}} />);
+            const card = await screen.findByRole("region", { name: "Sua tarefa" });
+            const strip = screen.getByRole("region", { name: "Etapa do pedido" });
+            const status = screen.getByText("Status");
+            expect(card.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            expect(strip.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            // The old plan is gone when the spine is there.
+            expect(screen.queryByText("Plano")).not.toBeInTheDocument();
+        });
+
+        it("agrees with the strip when the checklist is open: the requester's turn, with a way to fill it in for them", async () => {
+            state.getRequest.mockResolvedValue(
+                request({
+                    status: "em_andamento",
+                    stage: stageOf("checklist", { kind: "requester", id: null, name: "Ana" }),
+                    stages: [],
+                }),
+            );
+            render(<RequestPanel requestId="r1" team={team} userId="u1" onClose={() => {}} onChanged={() => {}} />);
+            const card = await screen.findByRole("region", { name: "Sua tarefa" });
+            expect(card).toHaveTextContent("Aguardando Ana");
+            expect(card).not.toHaveTextContent("Analisar e decidir");
+            expect(screen.getByRole("link", { name: "Preencher no lugar" })).toHaveAttribute("href", "#checklist-do-pedido");
+        });
+
+        it("keeps the old plan when the request has no stage yet", async () => {
+            state.getRequest.mockResolvedValue(request({ stage: undefined }));
+            render(<RequestPanel requestId="r1" team={team} userId="u1" onClose={() => {}} onChanged={() => {}} />);
+            await screen.findByText("Plano");
+            expect(screen.queryByRole("region", { name: "Etapa do pedido" })).not.toBeInTheDocument();
+        });
     });
 });

@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ContractsPortfolioView } from "./ContractsPortfolioView";
+import { downloadBlob } from "@/app/lib/downloadDocument";
 import type { PortfolioLoad, PortfolioRow } from "@/app/lib/contractsPortfolio";
 
 vi.mock("@/app/components/shared/PageHeader", () => ({
     PageHeader: ({ children }: { children: React.ReactNode }) => <h1>{children}</h1>,
 }));
+
+vi.mock("@/app/lib/downloadDocument", () => ({ downloadBlob: vi.fn() }));
 
 const row = (over: Partial<PortfolioRow>): PortfolioRow => ({
     project_id: "p",
@@ -21,6 +24,7 @@ const row = (over: Partial<PortfolioRow>): PortfolioRow => ({
     verified: 0,
     total: 24,
     risk: null,
+    assignee: null,
     ...over,
 });
 
@@ -117,5 +121,73 @@ describe("ContractsPortfolioView", () => {
         expect(await screen.findByText("Não consegui carregar os contratos")).toBeVisible();
         await user.click(screen.getByRole("button", { name: "Tentar de novo" }));
         expect(await screen.findByText("Alfa")).toBeVisible();
+    });
+
+    describe("tabs, filters and export", () => {
+        const load = async (): Promise<PortfolioLoad> => ({
+            status: "ok",
+            rows: [
+                row({ project_id: "a", name: "Vigente Alfa", lane: "arquivado", term_end: "2027-01-01", assignee: "Duda", notice_deadline: "2026-12-01" }),
+                row({ project_id: "b", name: "Vencido Beta", lane: "arquivado", term_end: "2026-01-01", assignee: "Bia" }),
+                row({ project_id: "c", name: "Assinando Gama", lane: "assinatura", assignee: null }),
+                row({ project_id: "d", name: "Andando Delta", lane: "revisao", assignee: "Duda" }),
+            ],
+        });
+        const names = () => screen.getAllByRole("link").map((l) => l.textContent);
+
+        it("counts each situation on its tab and filters by it", async () => {
+            const user = userEvent.setup();
+            render(<ContractsPortfolioView load={load} today={today} />);
+            await screen.findByText("Vigente Alfa");
+            for (const label of ["Todos · 4", "Em andamento · 1", "Em assinatura · 1", "Vigentes · 1", "Vencidos · 1"])
+                expect(screen.getByRole("button", { name: label })).toBeVisible();
+            await user.click(screen.getByRole("button", { name: "Vencidos · 1" }));
+            expect(names()).toEqual(["Vencido Beta"]);
+            await user.click(screen.getByRole("button", { name: "Em assinatura · 1" }));
+            expect(names()).toEqual(["Assinando Gama"]);
+        });
+
+        it("shows the stage and the owner on every row", async () => {
+            render(<ContractsPortfolioView load={load} today={today} />);
+            await screen.findByText("Vigente Alfa");
+            expect(screen.getByText("Análise")).toBeVisible();
+            expect(screen.getAllByText("Duda")).toHaveLength(3);
+            expect(screen.getByText("Sem responsável", { selector: "span" })).toBeVisible();
+        });
+
+        it("narrows by owner and by search, and says so when nothing is left", async () => {
+            const user = userEvent.setup();
+            render(<ContractsPortfolioView load={load} today={today} />);
+            await screen.findByText("Vigente Alfa");
+            await user.selectOptions(screen.getByLabelText("Responsável"), "Duda");
+            expect(names()).toEqual(["Vigente Alfa", "Andando Delta"]);
+            await user.type(screen.getByLabelText("Buscar contrato"), "delta");
+            expect(names()).toEqual(["Andando Delta"]);
+            await user.selectOptions(screen.getByLabelText("Responsável"), "__sem__");
+            expect(await screen.findByText("Nenhum contrato nesse filtro")).toBeVisible();
+            await user.click(screen.getByRole("button", { name: "Limpar filtros" }));
+            expect(names()).toHaveLength(4);
+        });
+
+        it("exports exactly what the filters leave", async () => {
+            const user = userEvent.setup();
+            vi.mocked(downloadBlob).mockClear();
+            render(<ContractsPortfolioView load={load} today={today} />);
+            await screen.findByText("Vigente Alfa");
+            await user.click(screen.getByRole("button", { name: "Em andamento · 1" }));
+            await user.click(screen.getByRole("button", { name: /Exportar \(1\)/ }));
+            expect(downloadBlob).toHaveBeenCalledTimes(1);
+            const [blob, filename] = vi.mocked(downloadBlob).mock.calls[0];
+            expect(filename).toBe("contratos.csv");
+            const text = await new Response(blob).text();
+            expect(text).toContain("Andando Delta");
+            expect(text).not.toContain("Vigente Alfa");
+        });
+
+        it("offers no filters before there is a list", async () => {
+            render(<ContractsPortfolioView load={async () => ({ status: "ok", rows: [] })} today={today} />);
+            await screen.findByText("Nenhum contrato ainda");
+            expect(screen.queryByLabelText("Buscar contrato")).not.toBeInTheDocument();
+        });
     });
 });

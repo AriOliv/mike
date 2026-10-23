@@ -36,7 +36,7 @@ import {
     startAnalystAnalysis,
 } from "../contractReview.service";
 
-import { DEFAULT_ANALYSIS_MODEL } from "../contractReview.analysisService";
+import { analysisCostCap, DEFAULT_ANALYSIS_MODEL } from "../contractReview.analysisService";
 
 const caller = { userId: "u1", userEmail: "time@example.com" };
 const ID = "11111111-2222-4333-8444-555555555555";
@@ -179,6 +179,57 @@ describe("handleAnalystAnalysis", () => {
         expect(done.result.attention).toHaveLength(6);
         expect(done.result.redlines).toHaveLength(1);
         expect(done.result.partial).toBeUndefined();
+    });
+
+    it("defaults the cap to 0.50 so a typical contract is not cut short, and the variable overrides it", () => {
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "");
+        expect(analysisCostCap()).toBe(0.5);
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "0.25");
+        expect(analysisCostCap()).toBe(0.25);
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "lixo");
+        expect(analysisCostCap()).toBe(0.5);
+    });
+
+    it("lets a typical contract finish in two calls under the default cap", async () => {
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "");
+        llm.completeText.mockImplementationOnce(async (p: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            p.onUsage?.({ inputTokens: 25_000, outputTokens: 16_000 });
+            return longCutOff();
+        });
+        llm.completeText.mockImplementationOnce(async (p: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            p.onUsage?.({ inputTokens: 28_000, outputTokens: 6_000 });
+            return JSON.stringify({ favorable: [], redlines: [], compliance: {}, open_points: [] });
+        });
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        expect(llm.completeText).toHaveBeenCalledTimes(2);
+        const done = fake.calls[3].payload as Record<string, any>;
+        expect(done.status).toBe("done");
+        expect(done.result.partial).toBeUndefined();
+        expect(done.usage.per_call).toHaveLength(2);
+    });
+
+    it("makes the cap real: the second call asks only for what the budget still pays, and each call is recorded", async () => {
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "0.40");
+        // Sonnet 3/15: 25k in + ~16k out = 0.075 + 0.24 = 0.315 on the first call.
+        llm.completeText.mockImplementationOnce(async (p: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            p.onUsage?.({ inputTokens: 25_000, outputTokens: 16_000 });
+            return longCutOff();
+        });
+        llm.completeText.mockImplementationOnce(async (p: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void; maxTokens: number; user: string }) => {
+            // Input as the provider would count it for this prompt (~3.5 characters per token in Portuguese).
+            p.onUsage?.({ inputTokens: Math.round(p.user.length / 3.5), outputTokens: p.maxTokens });
+            return "{ cortado";
+        });
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        const second = llm.completeText.mock.calls[1][0];
+        expect(second.maxTokens).toBeLessThan(8_000);
+        const done = fake.calls[3].payload as Record<string, any>;
+        expect(done.usage.estimated_cost_usd).toBeLessThanOrEqual(0.4);
+        expect(done.usage.per_call).toHaveLength(2);
+        expect(done.usage.per_call[0]).toMatchObject({ input_tokens: 25_000, output_tokens: 16_000, max_tokens: 16_000 });
+        expect(done.usage.per_call[1].max_tokens).toBe(second.maxTokens);
     });
 
     it("marks the analysis partial when the missing sections do not come either", async () => {

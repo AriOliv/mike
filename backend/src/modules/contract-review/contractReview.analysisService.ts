@@ -29,8 +29,11 @@ import {
     parseSectionsAnswer,
     ANALYSIS_PROMPT_VERSION,
     estimateUsage,
+    MIN_CALL_OUTPUT_TOKENS,
+    outputBudget,
     normalizeAnalysis,
     parseAnalysisAnswer,
+    unknownSuggestions,
     withMissingIntake,
     type AnalysisResult,
     type DroppedCitation,
@@ -55,10 +58,10 @@ export function analysisModel(): string {
     return process.env.LEGAL_ANALYSIS_MODEL?.trim() || DEFAULT_ANALYSIS_MODEL;
 }
 
-/** Most an analysis may spend, in US$: LEGAL_ANALYSIS_MAX_COST_USD, else 0.40. Checked before each model call. */
+/** Most an analysis may spend, in US$: LEGAL_ANALYSIS_MAX_COST_USD, else 0.50 (a typical contract takes ~0.41 in two calls). Each call's max output is limited to what is left of it. */
 export function analysisCostCap(): number {
     const value = Number(process.env.LEGAL_ANALYSIS_MAX_COST_USD);
-    return Number.isFinite(value) && value > 0 ? value : 0.4;
+    return Number.isFinite(value) && value > 0 ? value : 0.5;
 }
 
 /** A failure that carries what the model calls spent, so a failed run still records its cost. */
@@ -113,7 +116,13 @@ export function cleanIntake(value: unknown): IntakeAnswer[] | null {
         const answer = typeof item.value === "string" ? item.value.trim().slice(0, 2_000) : "";
         if (!key || !label) return null;
         if (!answer) continue;
-        out.push({ key, label, value: answer, source: typeof item.source === "string" ? item.source.slice(0, 40) : null });
+        out.push({
+            key,
+            label,
+            value: answer,
+            source: typeof item.source === "string" ? item.source.slice(0, 40) : null,
+            ...(item.unknown === true ? { unknown: true } : {}),
+        });
     }
     return out;
 }
@@ -263,18 +272,21 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
         // again in full: what came whole is kept and only the missing sections
         // are asked for, small. An answer with nothing usable gets one shorter
         // try. No call starts once the analysis has spent its cap.
-        const calls: { input: number; output: number; reported: TokenUsage | null }[] = [];
+        const calls: { input: number; output: number; maxTokens: number; reported: TokenUsage | null }[] = [];
         const cap = analysisCostCap();
         const ask = async (user: string, maxTokens: number) => {
             const spent = estimateUsage(model, calls).estimated_cost_usd;
             if (spent !== null && spent >= cap) throw new AnalysisAnswerError("cost_cap", estimateUsage(model, calls));
-            const call = { input: user.length, output: 0, reported: null as TokenUsage | null };
+            // The cap is real: this call may only ask for what the budget still pays.
+            const allowed = outputBudget(model, spent ?? 0, cap, user.length, maxTokens);
+            if (allowed < MIN_CALL_OUTPUT_TOKENS) throw new AnalysisAnswerError("cost_cap", estimateUsage(model, calls));
+            const call = { input: user.length, output: 0, maxTokens: allowed, reported: null as TokenUsage | null };
             calls.push(call);
             const raw = await completeText({
                 model,
                 systemPrompt: "Você é um analista jurídico brasileiro revisando um contrato para o time jurídico da Avenia. Responda apenas com JSON válido.",
                 user,
-                maxTokens,
+                maxTokens: allowed,
                 apiKeys: settings.api_keys,
                 onUsage: (usage) => {
                     call.reported = usage;
@@ -304,7 +316,7 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
         }
         const partial = missing.length ? { missing } : undefined;
         const { result, dropped } = normalizeAnalysis(value, documentText, yardstick?.findings ?? []);
-        const final = { ...withMissingIntake(result, row.intake ?? []), ...(partial && { partial }) };
+        const final = { ...withMissingIntake(result, row.intake ?? [], unknownSuggestions(value, row.intake ?? [], documentText)), ...(partial && { partial }) };
         if (dropped.length)
             // Counts only: the quotes are contract text.
             console.warn(`[analysis] ${row.id}: ${dropped.length} citation(s) not found in the document were dropped`);

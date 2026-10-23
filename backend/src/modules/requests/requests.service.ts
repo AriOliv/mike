@@ -35,7 +35,7 @@ export {
     setIntakeTemplate,
     type RequestIntake,
 } from "./requests.checklist";
-export { parseTerms, termEnd, MAX_TERM_MONTHS, MIN_TERM_MONTHS } from "./requests.terms";
+export { getTerms, setTerms, parseTerms, termEnd, MAX_TERM_MONTHS, MIN_TERM_MONTHS, type RequestTerms } from "./requests.terms";
 export {
     applyAssignmentRules,
     getAssignmentRules,
@@ -59,7 +59,19 @@ export {
     type Stage,
     type StageStrip,
 } from "./requests.stages";
+export { searchContracts, type ContractChoice } from "./requests.parent";
 export { handleIntakePrefill, parsePrefill, PREFILL_JOB_KIND } from "./requests.prefill";
+export {
+    enqueueRenewalSweep,
+    getRenewalSettings,
+    handleRenewalSweep,
+    runRenewalSweep,
+    setRenewalSettings,
+    DEFAULT_RENEWAL_LEAD_DAYS,
+    RENEWAL_JOB_KIND,
+    type RenewalSettings,
+    type RenewalSweep,
+} from "./requests.renewals";
 export {
     DEFAULT_INTAKE_TEMPLATE,
     intakeForAnalysis,

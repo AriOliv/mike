@@ -6,7 +6,10 @@ const { resolveDocumentEdit } = vi.hoisted(() => ({
     resolveDocumentEdit: vi.fn(),
 }));
 
-vi.mock("@/app/lib/mikeApi", () => ({ resolveDocumentEdit }));
+vi.mock("@/app/lib/mikeApi", async (original) => ({
+    ...(await original<typeof import("@/app/lib/mikeApi")>()),
+    resolveDocumentEdit,
+}));
 
 const annotation = {
     edit_id: "edit-1",
@@ -107,4 +110,25 @@ describe("EditCard", () => {
             );
         },
     );
+
+    it("tells the person, in Portuguese and with the server's reason, when the contract was written at the same time", async () => {
+        resolveDocumentEdit.mockRejectedValueOnce(
+            Object.assign(new Error("O contrato foi alterado por outra pessoa ao mesmo tempo. Sua decisão não foi gravada; tente de novo."), {
+                status: 409,
+                code: "document_busy",
+            }),
+        );
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const onError = vi.fn();
+        render(<EditCard annotation={annotation} onError={onError} />);
+        fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+        await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+        const { message } = onError.mock.calls[0][0];
+        expect(message).toContain("O contrato foi alterado por outra pessoa ao mesmo tempo.");
+        expect(message).toMatch(/^Não consegui salvar a recusa: /);
+        expect(message).toMatch(/A edição voltou ao que era\.$/);
+        expect(message).not.toMatch(/Couldn't|reverted/);
+        // The card is open again, so the person can try once more.
+        expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    });
 });

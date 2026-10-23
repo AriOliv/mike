@@ -8,6 +8,8 @@ import type {
     RequestListItem,
     RequesterStep,
     RequestSla,
+    RequestStage,
+    RequestStageStrip,
     RequestStatus,
     RequestUrgency,
 } from "./mikeApi";
@@ -70,6 +72,7 @@ export const CHANNEL_LABEL: Record<string, string> = {
     whatsapp: "WhatsApp",
     email: "E-mail",
     mcp: "Assistente",
+    sistema: "Automático",
 };
 
 export const STEP_LABELS: { step: RequesterStep; label: string }[] = [
@@ -150,8 +153,16 @@ export type NextAction = {
     detail: string;
     /** "mine" is the signed-in person's task; "wait" is somebody else's turn. */
     tone: "mine" | "head" | "wait";
-    /** The button: open the document, or pick the owner. */
-    action: "review" | "assign" | null;
+    /** The button: open the document, pick the owner, or fill the checklist for whoever asked. */
+    action: "review" | "assign" | "checklist" | null;
+};
+
+/** What the person does in each stage they can hold; "recebido" and "concluido" have no task. */
+const STAGE_TASK: Partial<Record<RequestStage, string>> = {
+    triagem: "Revisar a triagem",
+    analise: "Analisar e decidir",
+    negociacao: "Negociar",
+    assinatura: "Assinar",
 };
 
 /**
@@ -161,6 +172,8 @@ export type NextAction = {
  */
 export function nextAction(request: LegalRequest, userId: string | null, now: number = Date.now()): NextAction | null {
     if (request.status === "entregue" || request.status === "cancelado") return null;
+    // With the spine, the stage is the one source: the card and the strip cannot disagree.
+    if (request.stage) return nextActionFromStage(request, request.stage, userId, now);
     if (request.status === "aguardando_solicitante") {
         const who = request.requester_name ?? request.requester_email;
         return { title: `Aguardando ${who}`, detail: "o prazo está pausado", tone: "wait", action: null };
@@ -173,6 +186,41 @@ export function nextAction(request: LegalRequest, userId: string | null, now: nu
     if (userId && request.assignee_id === userId) {
         return {
             title: "Analisar e decidir",
+            detail: slaText(request.sla, request.due_at, now),
+            tone: "mine",
+            action: request.project_id ? "review" : null,
+        };
+    }
+    return null;
+}
+
+function nextActionFromStage(
+    request: LegalRequest,
+    stage: RequestStageStrip,
+    userId: string | null,
+    now: number,
+): NextAction | null {
+    const { owner } = stage;
+    if (stage.stage === "concluido") return null;
+    if (owner.kind === "requester") {
+        const who = owner.name ?? request.requester_name ?? request.requester_email;
+        return {
+            title: `Aguardando ${who}`,
+            detail: stage.stage === "checklist" ? "falta o checklist do pedido" : "o prazo está pausado",
+            tone: "wait",
+            // The team can answer the checklist for them; the link goes to it.
+            action: stage.stage === "checklist" && request.can_decide !== undefined ? "checklist" : null,
+        };
+    }
+    if (owner.kind === "none") {
+        return request.can_decide
+            ? { title: "Escolher quem pega este pedido", detail: slaText(request.sla, request.due_at, now), tone: "head", action: "assign" }
+            : null;
+    }
+    const task = STAGE_TASK[stage.stage];
+    if (owner.kind === "person" && userId && owner.id === userId && task) {
+        return {
+            title: task,
             detail: slaText(request.sla, request.due_at, now),
             tone: "mine",
             action: request.project_id ? "review" : null,

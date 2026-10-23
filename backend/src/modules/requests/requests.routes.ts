@@ -8,13 +8,18 @@ import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
 import {
     getRequestAnalysis,
+    getTerms,
+    setTerms,
     listCriticalAlerts,
     requestAnalysis,
     answerIntake,
     getIntake,
     getAssignmentRules,
     getIntakeTemplate,
+    getRenewalSettings,
+    setRenewalSettings,
     setAssignmentRules,
+    searchContracts,
     setIntakeTemplate,
     assignRequest,
     createRequest,
@@ -114,6 +119,15 @@ requestsRouter.put(
     }),
 );
 
+// Contracts of the Mike to tie an amendment to (before "/:id").
+requestsRouter.get(
+    "/contracts",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await searchContracts(createServerSupabase(), req.query.q));
+    }),
+);
+
 requestsRouter.get(
     "/intake-template",
     requireAuth,
@@ -130,6 +144,23 @@ requestsRouter.put(
     }),
 );
 
+// Whether a contract's end opens its renewal request (before "/:id").
+requestsRouter.get(
+    "/renewal-settings",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await getRenewalSettings(createServerSupabase(), caller(res)));
+    }),
+);
+
+requestsRouter.put(
+    "/renewal-settings",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setRenewalSettings(createServerSupabase(), caller(res), body(req)));
+    }),
+);
+
 requestsRouter.get(
     "/:id",
     requireAuth,
@@ -143,6 +174,22 @@ requestsRouter.get(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await getIntake(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.get(
+    "/:id/terms",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await getTerms(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.put(
+    "/:id/terms",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setTerms(createServerSupabase(), caller(res), req.params.id, body(req)));
     }),
 );
 

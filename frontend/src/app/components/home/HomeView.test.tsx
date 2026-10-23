@@ -176,6 +176,9 @@ describe("HomeView", () => {
     });
 
     describe("a long queue", () => {
+        // The queue is sorted most recently updated first. Each review gets its own fixed time,
+        // r1 the newest, so the order is the one written here and never depends on the clock or
+        // on how fast the fixtures were built (they used to share "now" and tie).
         const many = (n: number) =>
             Array.from({ length: n }, (_, i) =>
                 review({
@@ -183,26 +186,32 @@ describe("HomeView", () => {
                     project_id: `p${i + 1}`,
                     filename: `Contrato ${String(i + 1).padStart(2, "0")}.pdf`,
                     assignee_email: "duda@avenia.io",
+                    updated_at: new Date(Date.UTC(2026, 9, 20, 12, 0, 0) - i * 60_000).toISOString(),
                 }),
             );
 
         it("draws only the first rows and says how many there are, with the way to the rest", async () => {
             api.getHomeSummary.mockResolvedValue(summary(many(21)));
             render(<HomeView />);
-            await screen.findByText("Contrato 01.pdf");
+            // Wait for the settled state, not just the first row: the tab, the count and
+            // the link all follow the same load, and under CI load they land a tick apart.
+            expect(await screen.findByText(/Mostrando 8 de 21\./)).toBeInTheDocument();
             const list = screen.getByRole("list", { name: "Revisões" });
-            expect(within(list).getAllByRole("listitem")).toHaveLength(8);
-            expect(screen.queryByText("Contrato 09.pdf")).not.toBeInTheDocument();
-            expect(screen.getByText(/Mostrando 8 de 21\./)).toBeInTheDocument();
-            expect(screen.getByRole("link", { name: "Ver todos os contratos (21)" })).toHaveAttribute("href", "/contratos");
+            await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(8));
+            // Only inside the table: the same name can appear elsewhere on the page (the greeting,
+            // the activity), and this is about what the table draws.
+            expect(within(list).queryByText("Contrato 09.pdf")).not.toBeInTheDocument();
+            expect(within(list).getByText("Contrato 08.pdf")).toBeInTheDocument();
+            expect(await screen.findByRole("link", { name: "Ver todos os contratos (21)" })).toHaveAttribute("href", "/contratos");
         });
 
         it("keeps the notice deadlines and the activity after the table in the page, not over it", async () => {
             api.getHomeSummary.mockResolvedValue(summary(many(25)));
             render(<HomeView />);
             await screen.findByText("Contrato 01.pdf");
-            const table = screen.getByRole("region", { name: "Revisões" });
-            const deadlines = screen.getByRole("region", { name: "Prazos de aviso" });
+            // The deadlines section is drawn by the same load; wait for it instead of assuming it.
+            const table = await screen.findByRole("region", { name: "Revisões" });
+            const deadlines = await screen.findByRole("region", { name: "Prazos de aviso" });
             // Both sections are in normal flow: nothing is absolutely placed or sticky, and the
             // table's box has a ceiling and clips what is inside it.
             expect(table.compareDocumentPosition(deadlines) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -226,12 +235,14 @@ describe("HomeView", () => {
         it("counts the whole queue in the tabs and keeps j/k and the search on all of it", async () => {
             api.getHomeSummary.mockResolvedValue(summary(many(21)));
             render(<HomeView />);
+            // The tab count and the first row come from the same load; wait for both, not one.
+            const all = await screen.findByRole("button", { name: "Todas (21)" });
             await screen.findByText("Contrato 01.pdf");
-            expect(screen.getByRole("button", { name: "Todas (21)" })).toBeInTheDocument();
-            fireEvent.click(screen.getByRole("button", { name: "Todas (21)" }));
-            fireEvent.change(screen.getByLabelText("Buscar revisões"), { target: { value: "Contrato 20" } });
+            fireEvent.click(all);
+            fireEvent.change(await screen.findByLabelText("Buscar revisões"), { target: { value: "Contrato 20" } });
             expect(await screen.findByText("Contrato 20.pdf")).toBeInTheDocument();
-            expect(screen.queryByText(/Mostrando/)).not.toBeInTheDocument();
+            // The search narrows the queue to what fits, so the "Mostrando" line goes away.
+            await waitFor(() => expect(screen.queryByText(/Mostrando/)).not.toBeInTheDocument());
         });
     });
 
@@ -308,10 +319,12 @@ describe("HomeView", () => {
         await act(async () => assigned.actions[0].onClick());
         expect(api.updateContractReview).toHaveBeenLastCalledWith("r1", { assignee_email: "duda@avenia.io" });
 
+        // The shortcuts read the list through a ref that an effect refreshes after the accept and
+        // the assign above; under CI load the key can land a tick before it, so wait for the result.
         fireEvent.keyDown(window, { key: "j" });
-        expect(nav.replace).toHaveBeenLastCalledWith("?doc=r2", { scroll: false });
+        await waitFor(() => expect(nav.replace).toHaveBeenLastCalledWith("?doc=r2", { scroll: false }));
         fireEvent.keyDown(window, { key: "Escape" });
-        expect(nav.replace).toHaveBeenLastCalledWith("/", { scroll: false });
+        await waitFor(() => expect(nav.replace).toHaveBeenLastCalledWith("/", { scroll: false }));
     });
 
     it("retries a failed review and reports a failed accept", async () => {
