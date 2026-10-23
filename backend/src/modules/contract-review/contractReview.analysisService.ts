@@ -113,7 +113,13 @@ export function cleanIntake(value: unknown): IntakeAnswer[] | null {
         const answer = typeof item.value === "string" ? item.value.trim().slice(0, 2_000) : "";
         if (!key || !label) return null;
         if (!answer) continue;
-        out.push({ key, label, value: answer, source: typeof item.source === "string" ? item.source.slice(0, 40) : null });
+        out.push({
+            key,
+            label,
+            value: answer,
+            source: typeof item.source === "string" ? item.source.slice(0, 40) : null,
+            ...(item.unknown === true ? { unknown: true } : {}),
+        });
     }
     return out;
 }

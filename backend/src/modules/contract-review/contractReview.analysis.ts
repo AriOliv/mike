@@ -24,7 +24,7 @@ export const ANALYSIS_NOTICE = "Rascunho gerado por IA para o time jur√≠dico. N√
 export const ANALYSIS_PROMPT_VERSION = "analise-analista-v2";
 
 export type Light = "red" | "yellow" | "green";
-export type IntakeAnswer = { key: string; label: string; value: string; source?: string | null };
+export type IntakeAnswer = { key: string; label: string; value: string; source?: string | null; unknown?: boolean };
 
 export type AnalysisItem = {
     id: string;
