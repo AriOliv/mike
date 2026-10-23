@@ -505,6 +505,7 @@ async function createConfiguredAdapter(
     baseURL: configured.baseUrl,
     // Omit Authorization entirely for endpoints declared without auth.
     ...(apiKey ? { apiKey } : {}),
+    ...(configured.headers ? { headers: configured.headers } : {}),
     ...(configured.maxTokensField === "max_completion_tokens"
       ? {
           transformRequestBody: (body: Record<string, unknown>) => {

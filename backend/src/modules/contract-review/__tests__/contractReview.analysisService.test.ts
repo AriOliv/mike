@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 import type { DbJob } from "../../../lib/dbq/types";
 
@@ -21,9 +21,10 @@ const contracts = vi.hoisted(() => ({
     finishAgentRun: vi.fn(async () => undefined),
 }));
 vi.mock("../../contracts/contracts.service", () => contracts);
-vi.mock("../../user/user.service", () => ({
-    getUserModelSettings: vi.fn(async () => ({ tabular_model: null, last_selected_chat_model: null, api_keys: {} })),
+const user = vi.hoisted(() => ({
+    getUserModelSettings: vi.fn(async () => ({ tabular_model: null as string | null, last_selected_chat_model: null, api_keys: {} })),
 }));
+vi.mock("../../user/user.service", () => user);
 
 import {
     ANALYSIS_READY_JOB,
@@ -34,6 +35,7 @@ import {
     markAnalystAnalysisFailed,
     startAnalystAnalysis,
 } from "../contractReview.service";
+
 import { DEFAULT_ANALYSIS_MODEL } from "../contractReview.analysisService";
 
 const caller = { userId: "u1", userEmail: "time@example.com" };
@@ -108,6 +110,72 @@ describe("startAnalystAnalysis", () => {
 });
 
 describe("handleAnalystAnalysis", () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+    const runScript = () =>
+        scriptedDb([
+            { table: "contract_analyses", data: row() },
+            { table: "contract_analyses", op: "update" }, // running
+            { table: "projects", data: { contract_type: null } },
+            { table: "contract_analyses", op: "update" }, // done or failed
+        ]);
+
+    it("runs on its own model: a profile set to Haiku for tabular reviews does not change it", async () => {
+        user.getUserModelSettings.mockResolvedValue({ tabular_model: "claude-haiku-5-5", last_selected_chat_model: null, api_keys: {} });
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        expect(llm.completeText).toHaveBeenCalledWith(expect.objectContaining({ model: DEFAULT_ANALYSIS_MODEL }));
+        expect(fake.calls[3].payload).toMatchObject({ status: "done", model: DEFAULT_ANALYSIS_MODEL });
+
+        vi.stubEnv("LEGAL_ANALYSIS_MODEL", " claude-opus-5-5 ");
+        llm.completeText.mockClear();
+        await handleAnalystAnalysis(runScript().db, job());
+        expect(llm.completeText).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-opus-5-5" }));
+        user.getUserModelSettings.mockResolvedValue({ tabular_model: null, last_selected_chat_model: null, api_keys: {} });
+    });
+
+    it("mends a small JSON slip without asking again", async () => {
+        llm.completeText.mockResolvedValueOnce(`${modelAnswer.slice(0, -1)},}`);
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        expect(llm.completeText).toHaveBeenCalledTimes(1);
+        expect(fake.calls[3].payload).toMatchObject({ status: "done" });
+    });
+
+    it("asks once more after a cut-off answer, and counts both calls", async () => {
+        llm.completeText.mockResolvedValueOnce(modelAnswer.slice(0, 300));
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        expect(llm.completeText).toHaveBeenCalledTimes(2);
+        expect(llm.completeText.mock.calls[1][0].user).toContain("a resposta anterior veio cortada");
+        expect(fake.calls[3].payload).toMatchObject({ status: "done", usage: { calls: 2 } });
+    });
+
+    it("fails for good after two bad answers, keeping the reason and what the calls spent", async () => {
+        llm.completeText.mockImplementation(async (params: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            params.onUsage?.({ inputTokens: 10_000, outputTokens: 2_000 });
+            return "Desculpe, não consigo.";
+        });
+        const fake = runScript();
+        await expect(handleAnalystAnalysis(fake.db, job(1))).rejects.toThrow("invalid_json");
+        expect(llm.completeText).toHaveBeenCalledTimes(2);
+        const failed = fake.calls[3].payload as Record<string, any>;
+        expect(failed).toMatchObject({
+            status: "failed",
+            model: DEFAULT_ANALYSIS_MODEL,
+            usage: { calls: 2, input_tokens: 20_000, output_tokens: 4_000, estimated_cost_usd: 0.12, estimated: false, failure: "invalid_json" },
+        });
+        expect(failed.error).toContain("incompleta duas vezes");
+        expect(contracts.finishAgentRun).toHaveBeenCalledWith(
+            expect.anything(),
+            "run1",
+            expect.objectContaining({ status: "failed", error: "invalid_json", tokensIn: 20_000, tokensOut: 4_000, costUsd: 0.12 }),
+        );
+        llm.completeText.mockReset();
+        llm.completeText.mockResolvedValue(modelAnswer);
+    });
+
     it("records the provider's token counts, not the character estimate, when it reports them", async () => {
         llm.completeText.mockImplementationOnce(async (params: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
             params.onUsage?.({ inputTokens: 10_000, outputTokens: 2_000 });

@@ -4,6 +4,7 @@ import {
     analysisPrompt,
     ANALYSIS_NOTICE,
     estimateUsage,
+    parseAnalysisAnswer,
     normalizeAnalysis,
     withMissingIntake,
 } from "../contractReview.analysis";
@@ -125,5 +126,27 @@ describe("withMissingIntake and estimateUsage", () => {
             estimated_cost_usd: 0.63,
             estimated: false,
         });
+    });
+});
+
+describe("parseAnalysisAnswer", () => {
+    const whole = {
+        executive_summary: { text: "x" }, critical: [], attention: [], favorable: [], redlines: [],
+        compliance: {}, open_points: [],
+    };
+
+    it("reads a whole answer, fenced or with a small JSON slip", () => {
+        expect(parseAnalysisAnswer(JSON.stringify(whole))).toMatchObject({ ok: true });
+        expect(parseAnalysisAnswer("```json\n" + JSON.stringify(whole) + "\n```")).toMatchObject({ ok: true });
+        expect(parseAnalysisAnswer(JSON.stringify(whole).replace('"critical":[]', '"critical":[1,2,]'))).toMatchObject({
+            ok: true,
+            value: { critical: [1, 2] },
+        });
+    });
+
+    it("tells a cut-off answer from one that is not JSON at all", () => {
+        // Repaired, a cut-off answer is valid JSON missing its last sections.
+        expect(parseAnalysisAnswer(JSON.stringify(whole).slice(0, 60))).toEqual({ ok: false, reason: "incomplete_answer" });
+        expect(parseAnalysisAnswer("Desculpe, não consigo.")).toEqual({ ok: false, reason: "invalid_json" });
     });
 });
