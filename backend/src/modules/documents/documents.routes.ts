@@ -407,7 +407,7 @@ async function handleEditResolution(
         if (result.error) return void sendInternalError(res, result.error);
         return void res
             .status(result.status ?? 404)
-            .json({ detail: result.detail });
+            .json({ ...(result.code ? { code: result.code } : {}), detail: result.detail });
     }
     res.json(result.body);
 }
