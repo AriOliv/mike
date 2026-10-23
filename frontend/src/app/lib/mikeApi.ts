@@ -5420,6 +5420,8 @@ export async function decideReviewClause(
     runId: string,
     findingId: string,
     input: { decision: "aceito" | "editado" | "rejeitado" | "desfeito"; edited_text?: string; reason?: string },
+    /** Leaving the page: the browser finishes the request after the tab is gone. */
+    options: { keepalive?: boolean } = {},
 ): Promise<{ decision: ReviewDecision | null; edit: EditAnnotation | null }> {
     return apiRequest(
         contractReviewPath(
@@ -5430,6 +5432,7 @@ export async function decideReviewClause(
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(input),
+            ...(options.keepalive ? { keepalive: true } : {}),
         },
     );
 }

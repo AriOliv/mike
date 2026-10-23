@@ -68,8 +68,12 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 type Pending = {
     timer: ReturnType<typeof setTimeout>;
     toastId: string;
+    /** What was decided, to tell a repeat of it from a different decision. */
+    input: { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string };
     /** Enough to send the decision without the component, when it unmounts. */
     send: () => Promise<unknown>;
+    /** The same, for a page going away: the browser finishes it after the tab is gone. */
+    sendNow: () => Promise<unknown>;
 };
 
 /**
@@ -353,7 +357,13 @@ export function ContractReviewWorkspace({
                     applyDecision(runId, clause.id, result.decision, result.edit);
                     setDocRevision((n) => n + 1);
                 } catch (error) {
-                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
+                    // A refusal (a conflict, a slow server) says so and offers to send the same
+                    // decision again: the person never has to find the point and decide twice.
+                    notifyError(error, {
+                        lang: "pt",
+                        action: "registrar a decisão",
+                        onRetry: () => void commit(clause, input),
+                    });
                 } finally {
                     setOptimistic((current) => without(current, clause.id));
                     setBusy((id) => (id === clause.id ? null : id));
@@ -409,6 +419,14 @@ export function ContractReviewWorkspace({
      * notice whose Desfazer takes back every one of them.
      */
     function queueDecisions(targets: ReviewClause[], input: DecisionInput, message: string) {
+        // A second click, or a held key, on a point that is already decided or already waiting
+        // for the same decision is the same decision: it must not queue twice. Read from the
+        // refs, not from what was last drawn, because the repeat arrives before the redraw.
+        targets = targets.filter((clause) => {
+            if (clause.decision) return false;
+            const waiting = pending.current.get(clause.id);
+            return !(waiting && waiting.input.decision === input.decision && waiting.input.edited_text === input.edited_text);
+        });
         if (!targets.length) return;
         for (const clause of targets) cancelPending(clause.id);
         const at = new Date().toISOString();
@@ -452,7 +470,9 @@ export function ContractReviewWorkspace({
             const entry: Pending = {
                 timer,
                 toastId,
+                input,
                 send: () => (runId ? decideReviewClause(projectId, runId, clause.id, input) : Promise.resolve()),
+                sendNow: () => (runId ? decideReviewClause(projectId, runId, clause.id, input, { keepalive: true }) : Promise.resolve()),
             };
             entries.push(entry);
             pending.current.set(clause.id, entry);
@@ -471,7 +491,11 @@ export function ContractReviewWorkspace({
                     const result = await decideReviewClause(projectId, runId, clause.id, input);
                     applyDecision(runId, clause.id, result.decision, result.edit);
                 } catch (error) {
-                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
+                    notifyError(error, {
+                        lang: "pt",
+                        action: "registrar a decisão",
+                        onRetry: () => void commit(clause, input),
+                    });
                 } finally {
                     setOptimistic((current) => without(current, clause.id));
                 }
@@ -513,6 +537,38 @@ export function ContractReviewWorkspace({
             queue.clear();
         };
     }, [enqueue]);
+
+    // The tab closing or reloading inside the undo window would lose the decisions only
+    // held in memory. When the page is hidden or going away, send them now (keepalive lets the
+    // browser finish the request), and ask before leaving while any is still waiting.
+    useEffect(() => {
+        const queue = pending.current;
+        const flush = () => {
+            for (const [clauseId, item] of [...queue.entries()]) {
+                clearTimeout(item.timer);
+                dismissToast(item.toastId);
+                queue.delete(clauseId);
+                void item.sendNow().catch(() => undefined);
+            }
+        };
+        const onHide = () => {
+            if (document.visibilityState === "hidden") flush();
+        };
+        const onBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (queue.size === 0) return;
+            event.preventDefault();
+            // Some browsers still need a return value to show the prompt.
+            event.returnValue = "";
+        };
+        window.addEventListener("pagehide", flush);
+        document.addEventListener("visibilitychange", onHide);
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => {
+            window.removeEventListener("pagehide", flush);
+            document.removeEventListener("visibilitychange", onHide);
+            window.removeEventListener("beforeunload", onBeforeUnload);
+        };
+    }, []);
 
     async function exportDocx() {
         const documentId = review?.document.id;
