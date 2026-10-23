@@ -11,7 +11,7 @@ const MARK_DOT: Record<ObligationMark, string> = {
     tarefa: "bg-gray-400",
 };
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
 /** Date-only string -> local Date, avoiding the UTC shift that would move a
  *  deadline to the previous day for anyone west of Greenwich. */
@@ -90,7 +90,7 @@ export function RadarCalendar() {
     }, [items]);
 
     const today = iso(new Date());
-    const monthLabel = cursor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    const monthLabel = cursor.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
     const selectedItems = selected ? (byDay.get(selected) ?? []) : [];
 
     function shiftMonth(delta: number) {
@@ -103,7 +103,7 @@ export function RadarCalendar() {
             <div className="mb-3 flex items-center gap-3">
                 <button
                     onClick={() => shiftMonth(-1)}
-                    aria-label="Previous month"
+                    aria-label="Mês anterior"
                     className="rounded-md border border-gray-200 p-1 text-gray-500 hover:bg-gray-50"
                 >
                     <ChevronLeft className="h-4 w-4" />
@@ -113,7 +113,7 @@ export function RadarCalendar() {
                 </span>
                 <button
                     onClick={() => shiftMonth(1)}
-                    aria-label="Next month"
+                    aria-label="Próximo mês"
                     className="rounded-md border border-gray-200 p-1 text-gray-500 hover:bg-gray-50"
                 >
                     <ChevronRight className="h-4 w-4" />
@@ -125,7 +125,7 @@ export function RadarCalendar() {
                     }}
                     className="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
                 >
-                    Today
+                    Hoje
                 </button>
                 {loading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
             </div>
@@ -185,7 +185,7 @@ export function RadarCalendar() {
                                     ))}
                                     {dayItems.length > 2 && (
                                         <span className="text-[10px] text-gray-400">
-                                            +{dayItems.length - 2} more
+                                            +{dayItems.length - 2}
                                         </span>
                                     )}
                                 </div>
@@ -198,7 +198,7 @@ export function RadarCalendar() {
             {selectedItems.length > 0 && (
                 <div className="mt-4 rounded-xl border border-gray-200 bg-white">
                     <div className="border-b border-gray-100 px-4 py-2 text-[11px] uppercase tracking-wider text-gray-500">
-                        {parseDate(selected!).toLocaleDateString("en-US", {
+                        {parseDate(selected!).toLocaleDateString("pt-BR", {
                             weekday: "long",
                             day: "numeric",
                             month: "long",

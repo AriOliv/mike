@@ -1,0 +1,37 @@
+{
+  "about": "Pedidos (PR #8): a fila do time com o painel aberto numa triagem pendente, os pedidos do solicitante e a página de um pedido.",
+  "shots": [
+    {
+      "name": "pedidos-time",
+      "as": "legal",
+      "path": "/pedidos",
+      "widths": [1440, 390],
+      "themes": ["light", "dark"],
+      "steps": [
+        { "waitFor": "[role=button][aria-label^='LEG-']" },
+        { "click": "[role=button][aria-label^='LEG-']:has-text('Triagem pronta')" },
+        { "waitFor": "text=Agente de triagem", "wait": 600 }
+      ]
+    },
+    {
+      "name": "pedidos-solicitante",
+      "as": "solicitante",
+      "path": "/pedidos",
+      "widths": [1440, 390],
+      "themes": ["light", "dark"],
+      "steps": [{ "waitFor": "text=Meus pedidos" }]
+    },
+    {
+      "name": "pedido-solicitante",
+      "as": "solicitante",
+      "path": "/pedidos",
+      "widths": [1440, 390],
+      "themes": ["light", "dark"],
+      "fullPage": true,
+      "steps": [
+        { "click": "li button:has-text('LEG-')" },
+        { "waitFor": "text=Conversa com o Legal", "wait": 400 }
+      ]
+    }
+  ]
+}
