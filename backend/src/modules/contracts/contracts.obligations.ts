@@ -14,14 +14,17 @@ import {
     isIsoDate,
     normalizeString,
     requireProjectEdit,
+    requireProjectView,
     type Caller,
 } from "./contracts.shared";
 import { saoPauloDate } from "./contracts.home";
 
 const MARKS = ["recorrente", "critico", "tarefa"] as const;
+export const OBLIGATION_STATUSES = ["aberto", "feito", "dispensado"] as const;
+export type ObligationStatus = (typeof OBLIGATION_STATUSES)[number];
 
 const COLUMNS =
-    "id, project_id, title, mark, due_date, done, note, source_quote, owner_email, alert_days, created_at, updated_at";
+    "id, project_id, title, mark, due_date, done, note, source_quote, owner_email, alert_days, kind, status, created_at, updated_at";
 
 /** Warn 30 days before the end unless the deadline says otherwise. */
 export const DEFAULT_ALERT_DAYS = 30;
@@ -138,7 +141,19 @@ export async function updateObligation(
     options: OwnerOptions = {},
 ): Promise<ServiceResult<Obligation>> {
     const patch: Record<string, unknown> = {};
-    if ("done" in body) patch.done = !!body.done;
+    // `status` says where a deadline stands; `done` follows it, so the radar
+    // and the calendar mirror keep reading one boolean. The radar's own tick
+    // sends only `done`, which maps onto feito / aberto.
+    if ("status" in body) {
+        if (!OBLIGATION_STATUSES.includes(body.status as ObligationStatus)) {
+            return failure("validation", "O status do prazo é aberto, feito ou dispensado.");
+        }
+        patch.status = body.status;
+        patch.done = body.status !== "aberto";
+    } else if ("done" in body) {
+        patch.done = !!body.done;
+        patch.status = body.done ? "feito" : "aberto";
+    }
     if ("title" in body) {
         const title = normalizeString(body.title);
         if (!title) return failure("validation", "title cannot be empty");
@@ -231,4 +246,118 @@ export async function listObligationAlerts(
 
 function daysBetween(from: string, to: string): number {
     return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+export type ContractAlert = Obligation & { days_left: number };
+
+/**
+ * Every deadline of one contract, whoever made it or owns it: opening the
+ * contract is what gives the right to see them (view access), and the tab
+ * shows them all, open first, then by date. Done and dismissed ones stay, as
+ * the contract's history of deadlines.
+ */
+export async function listContractAlerts(
+    db: Db,
+    caller: Caller,
+    projectId: string,
+    now: Date = new Date(),
+): Promise<ServiceResult<ContractAlert[]>> {
+    const access = await requireProjectView(db, caller, projectId);
+    if (!access.ok) return access;
+    const { data, error } = await db
+        .from("obligations")
+        .select(COLUMNS)
+        .eq("project_id", projectId)
+        .order("due_date", { ascending: true });
+    if (error) return internalFailure(error);
+    const today = saoPauloDate(now);
+    const rows = ((data ?? []) as unknown as (Obligation & { due_date: string; status: string })[])
+        .map((row) => ({ ...row, days_left: daysBetween(today, row.due_date) }))
+        // Open first; within a group, by date (the query already ordered it).
+        .sort((a, b) => Number(a.status !== "aberto") - Number(b.status !== "aberto"));
+    return ok(rows as ContractAlert[]);
+}
+
+const ICS_STATUS: Record<string, string> = { aberto: "CONFIRMED", feito: "CONFIRMED", dispensado: "CANCELLED" };
+
+function icsText(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+}
+
+function icsDate(date: string): string {
+    return date.replace(/-/g, "");
+}
+
+function nextDate(date: string): string {
+    const d = new Date(`${date}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+/**
+ * One deadline as an iCalendar file, for "criar evento": it opens in Google
+ * Calendar, Outlook or Apple Calendar without any credential here. An
+ * all-day event on the due date, with an alarm `alert_days` before it.
+ */
+export async function obligationIcs(
+    db: Db,
+    caller: Caller,
+    obligationId: string,
+    now: Date = new Date(),
+): Promise<ServiceResult<{ filename: string; body: string }>> {
+    const { data, error } = await db
+        .from("obligations")
+        .select(COLUMNS + ", projects(name, counterparty)")
+        .eq("id", obligationId)
+        .maybeSingle();
+    if (error) return internalFailure(error);
+    const row = data as unknown as
+        | (Obligation & {
+              title: string;
+              due_date: string;
+              note: string | null;
+              source_quote: string | null;
+              alert_days: number;
+              status: string;
+              project_id: string | null;
+              projects?: { name: string; counterparty: string | null } | null;
+          })
+        | null;
+    if (!row) return failure("not_found", "Não encontrei este prazo.");
+    // Only whoever may see its contract, or whoever made or owns it.
+    if (row.project_id) {
+        const access = await requireProjectView(db, caller, row.project_id);
+        if (!access.ok) return failure("not_found", "Não encontrei este prazo.");
+    } else {
+        const mine = await db.from("obligations").select("id").eq("id", obligationId).or(mineFilter(caller)).maybeSingle();
+        if (mine.error) return internalFailure(mine.error);
+        if (!mine.data) return failure("not_found", "Não encontrei este prazo.");
+    }
+    const contract = row.projects?.counterparty || row.projects?.name || null;
+    const description = [contract ? `Contrato: ${contract}` : null, row.note, row.source_quote ? `Trecho: ${row.source_quote}` : null]
+        .filter(Boolean)
+        .join("\n");
+    const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Mike//Prazos//PT",
+        "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        `UID:${obligationId}@mike`,
+        `DTSTAMP:${stamp}`,
+        `DTSTART;VALUE=DATE:${icsDate(row.due_date)}`,
+        `DTEND;VALUE=DATE:${nextDate(row.due_date)}`,
+        `SUMMARY:${icsText(row.title)}`,
+        ...(description ? [`DESCRIPTION:${icsText(description)}`] : []),
+        `STATUS:${ICS_STATUS[row.status] ?? "CONFIRMED"}`,
+        "BEGIN:VALARM",
+        "ACTION:DISPLAY",
+        `DESCRIPTION:${icsText(row.title)}`,
+        `TRIGGER:-P${Math.max(0, row.alert_days)}D`,
+        "END:VALARM",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ];
+    return ok({ filename: `prazo-${row.due_date}.ics`, body: lines.join("\r\n") + "\r\n" });
 }

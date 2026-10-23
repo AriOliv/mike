@@ -1,4 +1,4 @@
-import type { Obligation } from "@/app/lib/mikeApi";
+import type { Obligation, ObligationKind, ObligationStatus } from "@/app/lib/mikeApi";
 
 /** Days until `date` (YYYY-MM-DD) from `today`; negative when overdue. */
 export function daysUntil(date: string, today: Date = new Date()): number {
@@ -40,4 +40,24 @@ export function parseAlertDays(value: string): number | null {
     if (!/^\d{1,3}$/.test(value.trim())) return null;
     const n = Number(value);
     return n >= 0 && n <= 365 ? n : null;
+}
+
+export const KIND_LABEL: Record<ObligationKind, string> = {
+    vigencia: "Fim da vigência",
+    aviso_previo: "Aviso prévio",
+    renovacao: "Decisão de renovação",
+    manual: "Prazo",
+};
+
+export const STATUS_LABEL: Record<ObligationStatus, string> = {
+    aberto: "Aberto",
+    feito: "Feito",
+    dispensado: "Dispensado",
+};
+
+/** Open deadlines first, then the closed ones, each group by date. */
+export function sortAlerts<T extends { status: ObligationStatus; due_date: string }>(items: T[]): T[] {
+    return [...items].sort(
+        (a, b) => Number(a.status !== "aberto") - Number(b.status !== "aberto") || a.due_date.localeCompare(b.due_date),
+    );
 }

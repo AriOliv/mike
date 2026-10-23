@@ -28,6 +28,8 @@ export type PortfolioRow = {
     verified: number;
     total: number;
     risk: "critico" | "atencao" | "ok" | null;
+    /** Who holds the contract's request, by name; null when no one does (or it has no request). */
+    assignee: string | null;
 };
 
 export type Portfolio = { rows: PortfolioRow[]; total: number; next_offset: number | null };
@@ -55,6 +57,20 @@ function fichaNoticeDays(ficha: Ficha | null): number | null {
     return exitValue ? durationDays(exitValue.aviso_previo_avenia) : null;
 }
 
+/** Owners by name, the way the rest of the app shows them (display name, else the e-mail's local part). */
+async function assigneeNames(db: Db, ids: string[]): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += CHUNK) {
+        const { data, error } = await db.from("user_profiles").select("user_id, display_name, email").in("user_id", ids.slice(i, i + CHUNK));
+        if (error) throw error;
+        for (const p of (data ?? []) as { user_id: string; display_name: string | null; email: string | null }[]) {
+            const name = p.display_name?.trim() || p.email?.split("@")[0];
+            if (name) names.set(p.user_id, name);
+        }
+    }
+    return names;
+}
+
 export async function listContractPortfolio(
     db: Db,
     caller: Caller,
@@ -71,10 +87,11 @@ export async function listContractPortfolio(
         const ids = await listAccessibleProjectIds(caller.userId, caller.userEmail, db);
         const projects: ProjectRow[] = [];
         const fichas = new Map<string, { ficha: Ficha | null; risk_overall: PortfolioRow["risk"] }>();
+        const requests = new Map<string, string | null>();
         const terms = new Map<string, { term_end: string | null; notice_days: number | null; notice_deadline: string | null }>();
         for (let i = 0; i < ids.length; i += CHUNK) {
             const chunk = ids.slice(i, i + CHUNK);
-            const [p, f, t] = await Promise.all([
+            const [p, f, t, r] = await Promise.all([
                 db
                     .from("projects")
                     .select("id, name, counterparty, contract_type, lane, org_id")
@@ -83,15 +100,19 @@ export async function listContractPortfolio(
                     .is("archived_at", null),
                 db.from("contract_fichas").select("project_id, ficha, risk_overall").in("project_id", chunk),
                 db.from("contract_terms").select("project_id, term_end, notice_days, notice_deadline").in("project_id", chunk),
+                db.from("legal_requests").select("project_id, assignee_id").in("project_id", chunk),
             ]);
             if (p.error) throw p.error;
             if (f.error) throw f.error;
             if (t.error) throw t.error;
+            if (r.error) throw r.error;
             projects.push(...((p.data ?? []) as ProjectRow[]).filter((row) => workspaceMatches(workspace, row.org_id)));
             for (const row of (f.data ?? []) as { project_id: string; ficha: Ficha | null; risk_overall: PortfolioRow["risk"] }[])
                 fichas.set(row.project_id, row);
             for (const row of (t.data ?? []) as ({ project_id: string } & PortfolioRow)[]) terms.set(row.project_id, row);
+            for (const row of (r.data ?? []) as { project_id: string; assignee_id: string | null }[]) requests.set(row.project_id, row.assignee_id);
         }
+        const names = await assigneeNames(db, [...new Set([...requests.values()].filter((id): id is string => !!id))]);
         const rows: PortfolioRow[] = projects.map((project) => {
             const ficha = fichas.get(project.id)?.ficha ?? null;
             const term = terms.get(project.id);
@@ -109,6 +130,7 @@ export async function listContractPortfolio(
                 verified: progress.verified,
                 total: progress.total,
                 risk: fichas.get(project.id)?.risk_overall ?? null,
+                assignee: names.get(requests.get(project.id) ?? "") ?? null,
             };
         });
         rows.sort((a, b) => {

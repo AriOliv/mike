@@ -50,6 +50,8 @@ export type AgentSuggestionProps = {
     canDecide?: boolean;
     busy?: boolean;
     onAccept?: () => void;
+    /** A line under an accepted card, e.g. what happened to the document. */
+    acceptedNote?: string;
     onEdit?: (text: string) => void;
     onReject?: (reason: string) => void;
     /** Reopens a decided suggestion. */
@@ -95,6 +97,7 @@ export function AgentSuggestion({
     canDecide = true,
     busy = false,
     onAccept,
+    acceptedNote,
     onEdit,
     editor,
     editing,
@@ -201,6 +204,9 @@ export function AgentSuggestion({
                 {decision.reason && (
                     <p className="mt-1 pl-5 text-xs text-gray-500 [overflow-wrap:anywhere]">“{decision.reason}”</p>
                 )}
+                {decision.kind === "aceito" && acceptedNote ? (
+                    <p className="mt-1 pl-5 text-xs text-gray-500 [overflow-wrap:anywhere]">{acceptedNote}</p>
+                ) : null}
             </article>
         );
 

@@ -28,6 +28,8 @@ const item: Obligation = {
     source_quote: null,
     owner_email: null,
     alert_days: 30,
+    kind: "manual",
+    status: "aberto",
 };
 const people: ObligationOwner[] = [
     { user_id: "b", email: "bia@x.io", name: "Bia" },
