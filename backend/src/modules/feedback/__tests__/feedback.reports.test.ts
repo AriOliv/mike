@@ -279,7 +279,7 @@ describe("the role travels as a label, set by the backend's App", () => {
 });
 
 describe("issueFor", () => {
-    const row = { id: "r1", number: 42, org_id: null, source: "agent" as const, client: "hermes", kind: "bug" as const, body: "Linha um\nLinha dois", expected: "Salvar", route: "/pedidos", app_version: "abc123", browser: "Firefox", role: "team", names_verdict: "names-clear" as const, status: "pending" };
+    const row = { id: "r1", number: 42, org_id: null, user_id: "u1", source: "agent" as const, client: "hermes", kind: "bug" as const, body: "Linha um\nLinha dois", expected: "Salvar", route: "/pedidos", app_version: "abc123", browser: "Firefox", role: "team", names_verdict: "names-clear" as const, status: "pending" };
     it("quotes the report as data, with the context and the labels", () => {
         const i = issueFor(row, "avenia");
         expect(i.title).toBe("[REL-0042][bug] Linha um");
