@@ -57,10 +57,10 @@ export function analysisModel(): string {
     return process.env.LEGAL_ANALYSIS_MODEL?.trim() || DEFAULT_ANALYSIS_MODEL;
 }
 
-/** Most an analysis may spend, in US$: LEGAL_ANALYSIS_MAX_COST_USD, else 0.40. Each call's max output is limited to what is left of it. */
+/** Most an analysis may spend, in US$: LEGAL_ANALYSIS_MAX_COST_USD, else 0.50 (a typical contract takes ~0.41 in two calls). Each call's max output is limited to what is left of it. */
 export function analysisCostCap(): number {
     const value = Number(process.env.LEGAL_ANALYSIS_MAX_COST_USD);
-    return Number.isFinite(value) && value > 0 ? value : 0.4;
+    return Number.isFinite(value) && value > 0 ? value : 0.5;
 }
 
 /** A failure that carries what the model calls spent, so a failed run still records its cost. */
