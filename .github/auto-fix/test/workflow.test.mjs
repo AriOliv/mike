@@ -60,6 +60,16 @@ test("o Claude Code é instalado antes de o segredo existir, sem scripts de inst
     assert.ok(install < agent.indexOf("LITELLM_AUTOFIX_KEY"), "instala antes do passo que recebe a chave");
 });
 
+test("o valor da chave é recusado no job do agente, onde a chave existe, antes de o patch sair", () => {
+    const agent = noComments(job("agent"));
+    assert.match(agent, /KEY_TO_REFUSE: \$\{\{ secrets\.LITELLM_AUTOFIX_KEY \}\}/);
+    assert.match(agent, /grep -F -q -- "\$KEY_TO_REFUSE"/);
+    assert.ok(agent.indexOf("Recusar patch que contém a chave") < agent.indexOf("upload-artifact"), "a recusa vem antes do upload");
+    assert.ok(agent.indexOf("Exportar o patch") < agent.indexOf("Recusar patch que contém a chave"), "e depois de gerar o patch");
+    // sem a chave para comparar, recusa (não deixa passar)
+    assert.match(agent, /sem a chave para conferir: recusado/);
+});
+
 test("o job do agente não tem token do GitHub, e nenhum git roda sobre a pasta do agente", () => {
     const agent = noComments(job("agent"));
     assert.ok(!agent.includes("create-github-app-token"));
