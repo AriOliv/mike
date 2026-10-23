@@ -12178,6 +12178,30 @@ alter table public.legal_requests
     check (jsonb_typeof(terms_inferred) = 'object');
 
 
+-- Migration date: 2026-10-23 (20261023_98_intake_by_kind.sql)
+--
+-- Intake questions by kind of request (U-05).
+--
+-- legal_teams.intake_by_kind: optional map kind -> list of question keys
+-- that apply to that kind, for an organization with its own checklist.
+-- Without it the generic checklist is cut by the code's defaults.
+--
+-- legal_requests.intake_kind: the kind the checklist was last shown or
+-- answered for. When the triage corrects the kind, the screen tells the
+-- requester the number of questions changed (kind_changed).
+
+alter table public.legal_teams
+  add column if not exists intake_by_kind jsonb not null default '{}'::jsonb;
+alter table public.legal_teams
+  drop constraint if exists legal_teams_intake_by_kind_check;
+alter table public.legal_teams
+  add constraint legal_teams_intake_by_kind_check
+    check (jsonb_typeof(intake_by_kind) = 'object');
+
+alter table public.legal_requests
+  add column if not exists intake_kind text;
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12368,5 +12392,6 @@ insert into public.schema_migrations (filename) values
   ('20261023_94_request_contract_terms.sql'),
   ('20261023_95_request_terms_inferred.sql'),
   ('20261023_96_feedback_reports.sql'),
-  ('20261023_97_feedback_names_verdict.sql')
+  ('20261023_97_feedback_names_verdict.sql'),
+  ('20261023_98_intake_by_kind.sql')
 on conflict (filename) do nothing;

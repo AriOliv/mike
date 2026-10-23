@@ -9,7 +9,7 @@
 
 import { cleanText } from "./requests.shared";
 
-export const INTAKE_KINDS = ["text", "long_text", "yes_no", "date", "money"] as const;
+export const INTAKE_KINDS = ["text", "long_text", "yes_no", "date", "money", "choice", "multi_choice"] as const;
 export type IntakeKind = (typeof INTAKE_KINDS)[number];
 
 export type IntakeItem = {
@@ -21,6 +21,10 @@ export type IntakeItem = {
     hint?: string;
     /** For yes_no: the detail asked when the answer is "sim". */
     detail_label?: string;
+    /** For choice and multi_choice: what the person picks from. */
+    options?: { value: string; label: string }[];
+    /** The question cannot be answered "não sei" (it is the request itself). */
+    no_unknown?: boolean;
 };
 
 export type IntakeAnswer = {
@@ -29,6 +33,10 @@ export type IntakeAnswer = {
     choice?: "sim" | "nao";
     /** For yes_no with a detail_label. */
     detail?: string;
+    /** For choice and multi_choice: the option values picked. */
+    selected?: string[];
+    /** The requester said "não sei": an explicit button, never read from the text. */
+    unknown?: true;
     source: "requester" | "inferred";
     confirmed: boolean;
     /** For an inferred answer: the contract's own words it was read from. */
@@ -71,10 +79,124 @@ export const DEFAULT_INTAKE_TEMPLATE: readonly IntakeItem[] = [
         required: true,
         detail_label: "Quem trata os dados, e cada parte decide sozinha como tratá-los?",
     },
+    {
+        key: "quem_compartilha",
+        label: "Quem vai compartilhar informação?",
+        kind: "choice",
+        required: true,
+        hint: "Define se o NDA é unilateral ou mútuo.",
+        options: [
+            { value: "nos", label: "Só nós" },
+            { value: "eles", label: "Só eles" },
+            { value: "ambos", label: "Os dois" },
+        ],
+    },
+    {
+        key: "finalidade",
+        label: "Para que a informação vai ser usada?",
+        kind: "text",
+        required: true,
+        hint: "Em poucas palavras: avaliar parceria, due diligence...",
+    },
+    {
+        key: "modelo",
+        label: "O modelo é nosso ou deles?",
+        kind: "choice",
+        required: true,
+        options: [
+            { value: "nosso", label: "Nosso" },
+            { value: "deles", label: "Deles" },
+            { value: "sem_modelo", label: "Ainda não tem" },
+        ],
+    },
+    {
+        key: "contrato_original",
+        label: "Qual é o contrato original?",
+        kind: "text",
+        required: true,
+        hint: "Nome do contrato, ou \"não está no Mike, vou anexar\".",
+    },
+    {
+        key: "o_que_muda",
+        label: "O que muda?",
+        kind: "multi_choice",
+        required: true,
+        options: [
+            { value: "prazo", label: "Prazo" },
+            { value: "valor", label: "Valor" },
+            { value: "escopo", label: "Escopo" },
+            { value: "partes", label: "Partes" },
+            { value: "outro", label: "Outro" },
+        ],
+    },
+    { key: "duvida", label: "O que você quer saber?", kind: "long_text", required: true, no_unknown: true },
 ];
+
+type KindQuestion = { key: string; required?: boolean };
+const BASE: KindQuestion[] = [
+    { key: "aprovacao" },
+    { key: "contraparte" },
+    { key: "empresa_signataria" },
+    { key: "motivo_condicoes" },
+    { key: "de_acordo" },
+    { key: "inicio" },
+    { key: "valor_recorrencia" },
+    { key: "confidencial" },
+    { key: "dados_pessoais" },
+];
+
+/**
+ * Which questions of the generic checklist apply to each kind of request
+ * (U-05). A kind not listed here gets them all. Only the generic checklist
+ * is cut this way: an organization with its own list keeps it whole for
+ * every kind, unless it sets `intake_by_kind`.
+ */
+export const DEFAULT_KIND_QUESTIONS: Record<string, KindQuestion[]> = {
+    contrato_novo: BASE,
+    revisao: BASE,
+    nda: [
+        { key: "aprovacao" },
+        { key: "contraparte" },
+        { key: "empresa_signataria" },
+        { key: "quem_compartilha" },
+        { key: "finalidade" },
+        { key: "modelo" },
+        { key: "confidencial" },
+        { key: "dados_pessoais" },
+        { key: "inicio" },
+    ],
+    aditivo: [
+        { key: "aprovacao" },
+        { key: "contraparte" },
+        { key: "empresa_signataria" },
+        { key: "contrato_original" },
+        { key: "o_que_muda" },
+        { key: "motivo_condicoes" },
+        { key: "de_acordo" },
+        { key: "inicio" },
+        { key: "valor_recorrencia" },
+        { key: "confidencial" },
+        { key: "dados_pessoais" },
+    ],
+    parecer: [{ key: "duvida" }, { key: "contraparte", required: false }],
+    outro: [{ key: "contraparte" }, { key: "empresa_signataria" }, { key: "motivo_condicoes" }],
+};
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
 export const MAX_INTAKE_ITEMS = 20;
+
+function parseOptions(value: unknown): { value: string; label: string }[] | null {
+    if (!Array.isArray(value) || value.length < 2 || value.length > 10) return null;
+    const out: { value: string; label: string }[] = [];
+    for (const raw of value) {
+        const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+        const v = typeof r?.value === "string" ? r.value.trim() : "";
+        const label = cleanText(r?.label, 100);
+        if (!KEY_RE.test(v) || !label || out.some((o) => o.value === v)) return null;
+        out.push({ value: v, label });
+    }
+    return out;
+}
 
 /**
  * An organization's checklist as sent to the API, checked and cleaned:
@@ -107,6 +229,12 @@ export function parseIntakeTemplate(value: unknown): { ok: true; items: IntakeIt
         if (hint) item.hint = hint;
         const detail = kind === "yes_no" ? cleanText(r.detail_label, 200) : null;
         if (detail) item.detail_label = detail;
+        if (kind === "choice" || kind === "multi_choice") {
+            const options = parseOptions(r.options);
+            if (!options) return { ok: false, detail: `Informe de 2 a 10 opções para a pergunta ${n}.` };
+            item.options = options;
+        }
+        if (r.no_unknown === true) item.no_unknown = true;
         items.push(item);
     }
     return { ok: true, items };
@@ -130,6 +258,8 @@ export function readAnswers(stored: unknown): IntakeAnswers {
             value: a.value,
             ...(a.choice === "sim" || a.choice === "nao" ? { choice: a.choice } : {}),
             ...(typeof a.detail === "string" && a.detail ? { detail: a.detail } : {}),
+            ...(Array.isArray(a.selected) ? { selected: a.selected.filter((v): v is string => typeof v === "string") } : {}),
+            ...(a.unknown === true ? { unknown: true as const } : {}),
             source: a.source === "inferred" ? "inferred" : "requester",
             confirmed: a.confirmed === true,
             ...(typeof a.quote === "string" && a.quote ? { quote: a.quote } : {}),
@@ -151,7 +281,7 @@ export function normalizeAnswer(
     item: IntakeItem,
     raw: unknown,
     detailRaw?: unknown,
-): { ok: true; answer: Pick<IntakeAnswer, "value" | "choice" | "detail"> } | { ok: false; detail: string } {
+): { ok: true; answer: Pick<IntakeAnswer, "value" | "choice" | "detail" | "selected"> } | { ok: false; detail: string } {
     if (item.kind === "yes_no") {
         const text = typeof raw === "boolean" ? (raw ? "sim" : "nao") : typeof raw === "string" ? raw.trim() : "";
         const choice = YES.test(text) ? "sim" : NO.test(text) ? "nao" : null;
@@ -162,6 +292,24 @@ export function normalizeAnswer(
             answer: {
                 choice,
                 value: (choice === "sim" ? "Sim" : "Não") + (detail ? `. ${detail}` : ""),
+                ...(detail ? { detail } : {}),
+            },
+        };
+    }
+    if (item.kind === "choice" || item.kind === "multi_choice") {
+        const list = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+        const picked = [...new Set(list.filter((v): v is string => typeof v === "string").map((v) => v.trim()))];
+        const byValue = new Map((item.options ?? []).map((o) => [o.value, o.label]));
+        if (picked.length === 0 || picked.some((v) => !byValue.has(v))) {
+            return { ok: false, detail: `Escolha uma das opções em “${item.label}”.` };
+        }
+        if (item.kind === "choice" && picked.length > 1) return { ok: false, detail: `Escolha só uma opção em “${item.label}”.` };
+        const detail = cleanText(detailRaw, 300);
+        return {
+            ok: true,
+            answer: {
+                selected: picked,
+                value: picked.map((v) => byValue.get(v)).join(", ") + (detail ? `. ${detail}` : ""),
                 ...(detail ? { detail } : {}),
             },
         };
@@ -184,6 +332,8 @@ export type IntakeStatus = {
     complete: boolean;
     answered: number;
     total: number;
+    /** Nothing to ask for this kind of request (a legal question): the screen says so instead of "0 de 0". */
+    nothing_to_fill: boolean;
 };
 
 /** Where the checklist stands: what is confirmed, inferred, or still open. */
@@ -205,6 +355,7 @@ export function intakeStatus(template: IntakeItem[], answers: IntakeAnswers): In
         complete: pending.length === 0,
         answered: items.filter((i) => i.state === "confirmado").length,
         total: items.length,
+        nothing_to_fill: items.every((i) => !i.required),
     };
 }
 
@@ -229,6 +380,13 @@ export function applyAnswers(
         const item = byKey.get(key);
         if (!item) return { ok: false, detail: "Uma das respostas não corresponde a nenhuma pergunta do checklist." };
         const value = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : { value: raw };
+        if (value.unknown === true) {
+            // The explicit button: "não sei" is an answer, and the analysis gets it marked.
+            if (item.no_unknown) return { ok: false, detail: `“${item.label}” precisa de uma resposta.` };
+            next[key] = { value: "Não sei", unknown: true, source: "requester", confirmed: true, updated_at: now };
+            changed.push(key);
+            continue;
+        }
         const normalized = normalizeAnswer(item, value.value, value.detail);
         if (!normalized.ok) return normalized;
         next[key] = { ...normalized.answer, source: "requester", confirmed: true, updated_at: now };
@@ -253,7 +411,7 @@ export function applyAnswers(
 export function mergeInferred(
     template: IntakeItem[],
     stored: IntakeAnswers,
-    inferred: Record<string, { value: string; quote?: string | null; choice?: "sim" | "nao" | null }>,
+    inferred: Record<string, { value: string; quote?: string | null; choice?: "sim" | "nao" | null; selected?: string[] }>,
     now: string,
 ): { answers: IntakeAnswers; filled: string[] } {
     const next: IntakeAnswers = { ...stored };
@@ -261,10 +419,14 @@ export function mergeInferred(
     for (const item of template) {
         if (next[item.key]) continue;
         const got = inferred[item.key];
-        const value = cleanText(got?.value, item.kind === "long_text" ? 2000 : 300);
+        const labels = new Map((item.options ?? []).map((o) => [o.value, o.label]));
+        const picked = (got?.selected ?? []).filter((v) => labels.has(v));
+        const isChoice = item.kind === "choice" || item.kind === "multi_choice";
+        const value = isChoice ? picked.map((v) => labels.get(v)).join(", ") : cleanText(got?.value, item.kind === "long_text" ? 2000 : 300);
         if (!got || !value) continue;
         next[item.key] = {
             value,
+            ...(isChoice ? { selected: picked } : {}),
             ...(item.kind === "yes_no" && (got.choice === "sim" || got.choice === "nao") ? { choice: got.choice } : {}),
             source: "inferred",
             confirmed: false,
@@ -283,8 +445,53 @@ export function mergeInferred(
 export function intakeForAnalysis(
     template: IntakeItem[],
     answers: IntakeAnswers,
-): { key: string; label: string; value: string; source: "requester" | "inferred" }[] {
+): { key: string; label: string; value: string; source: "requester" | "inferred"; unknown?: true }[] {
     return template
         .filter((i) => answers[i.key])
-        .map((i) => ({ key: i.key, label: i.label, value: answers[i.key].value, source: answers[i.key].source }));
+        .map((i) => ({
+            key: i.key,
+            label: i.label,
+            value: answers[i.key].value,
+            source: answers[i.key].source,
+            ...(answers[i.key].unknown ? { unknown: true as const } : {}),
+        }));
+}
+
+/**
+ * The questions that apply to a kind of request (U-05). The organization's
+ * `intake_by_kind` wins; otherwise the generic checklist is cut by
+ * DEFAULT_KIND_QUESTIONS, and an organization's own list stays whole.
+ * Answers to questions outside the cut stay on the request, unseen.
+ */
+export function applicableItems(
+    items: IntakeItem[],
+    source: "org" | "padrao",
+    kind: string | null,
+    byKind: Record<string, string[]>,
+): IntakeItem[] {
+    if (!kind) return source === "padrao" ? cut(items, BASE) : items;
+    const own = byKind[kind];
+    if (own) return cut(items, own.map((key) => ({ key })));
+    if (source === "org") return items;
+    return cut(items, DEFAULT_KIND_QUESTIONS[kind] ?? BASE);
+}
+
+function cut(items: IntakeItem[], keep: KindQuestion[]): IntakeItem[] {
+    const byKey = new Map(items.map((i) => [i.key, i]));
+    const out: IntakeItem[] = [];
+    for (const k of keep) {
+        const item = byKey.get(k.key);
+        if (item) out.push(k.required === false ? { ...item, required: false } : item);
+    }
+    return out;
+}
+
+/** The organization's `intake_by_kind`, read defensively: kind -> keys. */
+export function parseByKind(value: unknown): Record<string, string[]> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const out: Record<string, string[]> = {};
+    for (const [kind, keys] of Object.entries(value as Record<string, unknown>)) {
+        if (Array.isArray(keys)) out[kind] = keys.filter((k): k is string => typeof k === "string" && KEY_RE.test(k));
+    }
+    return out;
 }
