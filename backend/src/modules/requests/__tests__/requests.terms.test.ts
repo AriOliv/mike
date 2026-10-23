@@ -41,6 +41,7 @@ function world() {
                 legal_request_notifications: () => ({ status: "pending", attempts: 0, created_at: new Date().toISOString() }),
                 legal_request_messages: () => ({ created_at: new Date().toISOString() }),
                 legal_request_participants: () => ({ revoked_at: null, created_at: new Date().toISOString() }),
+                legal_request_stages: () => ({ left_at: null }),
             },
             rpc: {
                 create_project_with_memory: (args, tables) => {
@@ -175,6 +176,17 @@ describe("on a request", () => {
             term_months: 1,
             term_end: "2027-02-28",
         });
+    });
+
+    it("shows the team the terms together with the stage and its history", async () => {
+        const w = world();
+        const created = await createRequest(w.db, REQUESTER, { ...base, term_start: "2026-11-12", term_months: 12 });
+        const id = created.ok ? created.data.request.id : "";
+        const view = await getRequest(w.db, HEAD, id);
+        const team = view.ok ? (view.data as RequestTeamView) : null;
+        expect(team?.terms).toMatchObject({ term_start: "2026-11-12", term_months: 12, term_end: "2027-11-11" });
+        expect(team?.stage.stage).toBeTruthy();
+        expect(team?.stages.length).toBeGreaterThan(0);
     });
 
     it("is born without terms when the form leaves them empty, and then shows no end", async () => {

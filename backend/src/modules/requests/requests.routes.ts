@@ -14,7 +14,9 @@ import {
     requestAnalysis,
     answerIntake,
     getIntake,
+    getAssignmentRules,
     getIntakeTemplate,
+    setAssignmentRules,
     setIntakeTemplate,
     assignRequest,
     createRequest,
@@ -98,6 +100,22 @@ requestsRouter.get(
 );
 
 // The organization's intake checklist (before "/:id", which would match it).
+requestsRouter.get(
+    "/assignment-rules",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await getAssignmentRules(createServerSupabase(), caller(res)));
+    }),
+);
+
+requestsRouter.put(
+    "/assignment-rules",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setAssignmentRules(createServerSupabase(), caller(res), body(req)));
+    }),
+);
+
 requestsRouter.get(
     "/intake-template",
     requireAuth,
