@@ -23,6 +23,7 @@ import {
 } from "@/app/lib/mikeApi";
 import {
     isRunning,
+    attentionProgress,
     pendingAligned,
     plural,
     relativeTime,
@@ -260,6 +261,7 @@ export function ContractReviewWorkspace({
     const shown = useMemo(() => visibleClauses(clauses, filter), [clauses, filter]);
     const counts = useMemo(() => verdictCounts(clauses), [clauses]);
     const aligned = useMemo(() => pendingAligned(clauses), [clauses]);
+    const progress = useMemo(() => attentionProgress(clauses), [clauses]);
 
     // ── actions ──────────────────────────────────────────────────────────────
     async function startReview() {
@@ -694,6 +696,35 @@ export function ContractReviewWorkspace({
         <div className="space-y-3" onKeyDown={onListKey}>
             <VerdictCountsUI variant="tiles" {...counts} selected={filter} onSelect={setFilter} />
             {review.summary && <p className="text-sm leading-relaxed text-gray-700">{review.summary}</p>}
+            {progress.total > 0 && (
+                <div role="status" aria-live="polite" className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className={progress.left === 0 ? "font-medium text-emerald-700" : "font-medium text-gray-800"}>
+                            {progress.left === 0
+                                ? "Tudo tratado"
+                                : `Falta${progress.left === 1 ? "" : "m"} ${progress.left} de ${plural(progress.total, "ponto de atenção", "pontos de atenção")}`}
+                        </span>
+                        {progress.left === 0 && (
+                            <TextButtonUI size="xs" onClick={exportDocx} disabled={!review.document.id}>
+                                Exportar .docx
+                            </TextButtonUI>
+                        )}
+                    </div>
+                    <div
+                        role="progressbar"
+                        aria-label="Pontos de atenção tratados"
+                        aria-valuemin={0}
+                        aria-valuemax={progress.total}
+                        aria-valuenow={progress.decided}
+                        className="h-1.5 overflow-hidden rounded-full bg-gray-100"
+                    >
+                        <div
+                            className={`h-full rounded-full transition-[width] ${progress.left === 0 ? "bg-emerald-500" : "bg-amber-400"}`}
+                            style={{ width: `${(progress.decided / progress.total) * 100}%` }}
+                        />
+                    </div>
+                </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
                 <span>
                     {review.playbook.name} · {relativeTime(review.completed_at ?? review.started_at)}

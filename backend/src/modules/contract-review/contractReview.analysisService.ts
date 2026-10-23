@@ -25,6 +25,8 @@ import {
     analysisCounts,
     analysisPrompt,
     analysisRetryPrompt,
+    analysisCompletionPrompt,
+    parseSectionsAnswer,
     ANALYSIS_PROMPT_VERSION,
     estimateUsage,
     normalizeAnalysis,
@@ -53,10 +55,16 @@ export function analysisModel(): string {
     return process.env.LEGAL_ANALYSIS_MODEL?.trim() || DEFAULT_ANALYSIS_MODEL;
 }
 
+/** Most an analysis may spend, in US$: LEGAL_ANALYSIS_MAX_COST_USD, else 0.40. Checked before each model call. */
+export function analysisCostCap(): number {
+    const value = Number(process.env.LEGAL_ANALYSIS_MAX_COST_USD);
+    return Number.isFinite(value) && value > 0 ? value : 0.4;
+}
+
 /** A failure that carries what the model calls spent, so a failed run still records its cost. */
 class AnalysisAnswerError extends NonRetryableJobError {
     constructor(
-        reason: "invalid_json" | "incomplete_answer",
+        reason: "invalid_json" | "incomplete_answer" | "cost_cap",
         readonly usage: ReturnType<typeof estimateUsage>,
     ) {
         super(reason);
@@ -251,33 +259,52 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
             intake: row.intake ?? [],
             playbook: yardstick ? { name: yardstick.name, findings: yardstick.findings } : null,
         });
-        // One answer, mended if its JSON slipped; when it is still not the
-        // analysis (cut off or invalid), one more try with a shorter ask.
+        // One answer, mended if its JSON slipped. A cut-off answer is not asked
+        // again in full: what came whole is kept and only the missing sections
+        // are asked for, small. An answer with nothing usable gets one shorter
+        // try. No call starts once the analysis has spent its cap.
         const calls: { input: number; output: number; reported: TokenUsage | null }[] = [];
-        const ask = async (user: string) => {
+        const cap = analysisCostCap();
+        const ask = async (user: string, maxTokens: number) => {
+            const spent = estimateUsage(model, calls).estimated_cost_usd;
+            if (spent !== null && spent >= cap) throw new AnalysisAnswerError("cost_cap", estimateUsage(model, calls));
             const call = { input: user.length, output: 0, reported: null as TokenUsage | null };
             calls.push(call);
             const raw = await completeText({
                 model,
                 systemPrompt: "Você é um analista jurídico brasileiro revisando um contrato para o time jurídico da Avenia. Responda apenas com JSON válido.",
                 user,
-                maxTokens: 16_000,
+                maxTokens,
                 apiKeys: settings.api_keys,
                 onUsage: (usage) => {
                     call.reported = usage;
                 },
             });
             call.output = raw.length;
-            return parseAnalysisAnswer(raw);
+            return raw;
         };
-        let answer = await ask(prompt);
+        let answer = parseAnalysisAnswer(await ask(prompt, 16_000));
         if (!answer.ok) {
-            console.warn(`[analysis] ${row.id}: ${answer.reason}, asking once more`);
-            answer = await ask(analysisRetryPrompt(prompt));
+            console.warn(`[analysis] ${row.id}: ${answer.reason}, asking once more, shorter`);
+            answer = parseAnalysisAnswer(await ask(analysisRetryPrompt(prompt), 8_000));
         }
         if (!answer.ok) throw new AnalysisAnswerError(answer.reason, estimateUsage(model, calls));
-        const { result, dropped } = normalizeAnalysis(answer.value, documentText, yardstick?.findings ?? []);
-        const final = withMissingIntake(result, row.intake ?? []);
+        let missing = answer.missing;
+        let value = answer.value;
+        if (missing.length) {
+            console.warn(`[analysis] ${row.id}: answer cut off, ${missing.length} section(s) missing`);
+            try {
+                const more = parseSectionsAnswer(await ask(analysisCompletionPrompt(prompt, missing), 8_000), missing);
+                value = { ...value, ...more };
+                missing = missing.filter((section) => !(section in more));
+            } catch (error) {
+                // The cap stops the extra call, not the analysis already in hand.
+                if (!(error instanceof AnalysisAnswerError)) throw error;
+            }
+        }
+        const partial = missing.length ? { missing } : undefined;
+        const { result, dropped } = normalizeAnalysis(value, documentText, yardstick?.findings ?? []);
+        const final = { ...withMissingIntake(result, row.intake ?? []), ...(partial && { partial }) };
         if (dropped.length)
             // Counts only: the quotes are contract text.
             console.warn(`[analysis] ${row.id}: ${dropped.length} citation(s) not found in the document were dropped`);
@@ -296,7 +323,7 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
         });
         await finishAgentRun(db, runId, {
             status: "succeeded",
-            output: { analysis_id: row.id, ...counts, dropped: dropped.length },
+            output: { analysis_id: row.id, ...counts, dropped: dropped.length, ...(partial && { partial: partial.missing }) },
             modelResolved: model,
             latencyMs: Date.now() - started,
             tokensIn: usage.input_tokens,
@@ -358,6 +385,7 @@ function analysisFailureText(error: unknown): string {
     const code = error instanceof NonRetryableJobError ? error.message : "";
     if (code === "no_document") return "O contrato não tem documento para analisar.";
     if (code === "unreadable_document") return "Não consegui ler o texto do contrato.";
+    if (code === "cost_cap") return "A análise passou do teto de custo antes de ficar pronta e foi interrompida. O contrato pode ser longo demais para uma análise só.";
     if (code === "invalid_json" || code === "incomplete_answer")
         return "O modelo devolveu uma análise incompleta duas vezes. Tente de novo; se repetir, o contrato pode ser longo demais para uma análise só.";
     return "A análise falhou. Tente de novo.";
