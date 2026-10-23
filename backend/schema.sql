@@ -1068,6 +1068,18 @@ create index if not exists idx_obligations_user_due
 create index if not exists idx_obligations_project
   on public.obligations(project_id);
 
+-- A deadline with an owner and its own warning lead time (20261022_98).
+alter table public.obligations
+  add column if not exists owner_email text,
+  add column if not exists alert_days integer not null default 30;
+alter table public.obligations
+  drop constraint if exists obligations_alert_days_check;
+alter table public.obligations
+  add constraint obligations_alert_days_check check (alert_days between 0 and 365);
+create index if not exists idx_obligations_owner_due
+  on public.obligations(lower(owner_email), due_date)
+  where owner_email is not null and done = false;
+
 -- AI contract analysis: structured review whose every item quotes the clause
 -- it came from, so a finding can be traced back to the document text.
 create table if not exists public.dossiers (
@@ -12216,6 +12228,7 @@ insert into public.schema_migrations (filename) values
   ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
   ('20261022_97_card_events_cascade.sql'),
+  ('20261022_98_obligation_owner.sql'),
   ('20261023_91_assignment_rules.sql'),
   ('20261023_92_request_stages.sql'),
   ('20261023_94_request_contract_terms.sql')
