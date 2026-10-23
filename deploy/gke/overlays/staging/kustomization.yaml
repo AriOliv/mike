@@ -1,0 +1,66 @@
+# staging.clm.avenia.tech — the environment the Legal team works on, with the
+# Avenia's REAL contracts (decision of 2026-10-21). No synthetic seed here, and
+# never point screenshot/e2e scripts at it: the preview is the fictitious one.
+# Disks: daily snapshot (mike-staging-daily, 14 days). The same deployment also
+# answers on <ip>.nip.io (both certificates are attached).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: staging
+resources:
+  - namespace.yaml
+  - ../../base
+components:
+  - ../../staging-egress
+  - ../../staging-egress-proxy
+configMapGenerator:
+  - name: mike-env
+    literals:
+      - PUBLIC_URL=https://staging.clm.avenia.tech
+      # temporary second origin while the Cloudflare record does not exist
+      - ALLOWED_ORIGINS=https://34-120-191-197.nip.io
+      # Avenia LiteLLM (US$ 50 / 30 days on the key). The key comes from the
+      # mike-litellm Secret (patch below), never from here. Every call carries
+      # LiteLLM's message-redaction header (needs the per-model headers of PR #21).
+      - MIKE_MODEL_CONFIG_JSON={"models":[{"id":"claude-sonnet-5-5","label":"Claude Sonnet 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}},{"id":"claude-opus-5-5","label":"Claude Opus 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}},{"id":"claude-haiku-5-5","label":"Claude Haiku 5.5","provider":"openai-compatible","location":"cloud","baseUrl":"https://proxy.avenia.tech/v1","apiKeyEnv":"LITELLM_API_KEY","headers":{"x-litellm-enable-message-redaction":"true"}}]}
+      - LLM_MAX_OUTPUT_TOKENS=32000
+      # triage and the request checklist prefill run on Haiku for the whole team,
+      # not on each owner's profile model; the analyst's analysis stays on Sonnet
+      - LEGAL_TRIAGE_MODEL=claude-haiku-5-5
+images:
+  - name: mike-backend
+    newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend
+    newTag: e4ecce02
+  - name: mike-frontend
+    newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/frontend
+    newTag: e4ecce02
+patches:
+  - target: { kind: Gateway, name: mike-edge }
+    patch: |-
+      - op: replace
+        path: /spec/listeners/0/tls/options/networking.gke.io~1pre-shared-certs
+        value: mike-staging-clm,mike-staging-nip,mike-preview-nip
+      # the integration preview (namespace preview) routes through this edge
+      - op: add
+        path: /spec/listeners/0/allowedRoutes
+        value: { namespaces: { from: Selector, selector: { matchLabels: { app.kubernetes.io/part-of: mike } } } }
+      - op: add
+        path: /spec/listeners/1/allowedRoutes
+        value: { namespaces: { from: Selector, selector: { matchLabels: { app.kubernetes.io/part-of: mike } } } }
+      - op: replace
+        path: /spec/addresses/0/value
+        value: mike-staging-ip
+  # LB access log (who reached the real-contracts environment, from where);
+  # set on the policy so the Gateway controller keeps it on
+  - target: { kind: GCPBackendPolicy, name: frontend-iap }
+    patch: |-
+      - op: add
+        path: /spec/default/logging
+        value: { enabled: true, sampleRate: 1000000 }
+  # the LiteLLM key for the backend only, from the Secret the LiteLLM session made
+  - target: { kind: Deployment, name: backend }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LITELLM_API_KEY
+          valueFrom: { secretKeyRef: { name: mike-litellm, key: LITELLM_API_KEY } }

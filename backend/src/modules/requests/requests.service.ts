@@ -35,6 +35,29 @@ export {
     type RequestIntake,
 } from "./requests.checklist";
 export { parseTerms, termEnd, MAX_TERM_MONTHS, MIN_TERM_MONTHS } from "./requests.terms";
+export {
+    applyAssignmentRules,
+    getAssignmentRules,
+    matchRule,
+    parseAssignmentRules,
+    reloadAfterRules,
+    setAssignmentRules,
+    valueFromIntake,
+    type AssignmentRule,
+} from "./requests.rules";
+export { parseMoney } from "./requests.money";
+export {
+    buildStrip,
+    currentStage,
+    laneOfStage,
+    moveStage,
+    stageOwner,
+    STAGE_CATALOG,
+    STAGES,
+    syncStage,
+    type Stage,
+    type StageStrip,
+} from "./requests.stages";
 export { handleIntakePrefill, parsePrefill, PREFILL_JOB_KIND } from "./requests.prefill";
 export {
     DEFAULT_INTAKE_TEMPLATE,

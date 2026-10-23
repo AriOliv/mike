@@ -1,0 +1,33 @@
+# Mike on GKE Autopilot — base stack (Supabase core + backend + frontend).
+# Same topology as docker-compose.yml, minus what staging does not need yet:
+#   - storage: STORAGE_DRIVER=fs on a PVC (no S3 host to expose to browsers)
+#   - redis:   unset REDIS_URL → backend uses its Postgres job queue
+#   - mailpit: GOTRUE_MAILER_AUTOCONFIRM (users are created by the seed job)
+# Secrets are NOT here: scripts/bootstrap-secrets.sh generates `mike-secrets`
+# in the namespace. Overlays set namespace, hostnames and image tags.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - networkpolicy.yaml
+  - db.yaml
+  - auth.yaml
+  - rest.yaml
+  - gateway.yaml
+  - backend.yaml
+  - frontend.yaml
+  - db-init.yaml
+  - edge.yaml
+configMapGenerator:
+  - name: gateway-conf
+    files:
+      - default.conf=gateway.conf
+  - name: db-extra-sql
+    files:
+      - domain-guard.sql
+  - name: db-init-sql
+    files:
+      - zz-roles.sh=roles.sh
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: mike
+# Image names/tags are set per overlay (one images: block, so tags apply).
