@@ -27,6 +27,7 @@ import {
     handleIntakePrefill,
     intakeForAnalysis,
     parsePrefill,
+    searchContracts,
     setIntakeTemplate,
 } from "../requests.service";
 import { cleanIntake } from "../../contract-review/contractReview.analysisService";
@@ -725,5 +726,66 @@ describe("questions by kind of request", () => {
         const id = await newRequest(w, { kind: "nda" });
         const got = await getIntake(w.db, REQUESTER, id);
         expect(got.ok && got.data.items.map((i) => i.key)).toEqual(["aprovacao", "contraparte"]);
+    });
+});
+
+describe("the contract an amendment changes", () => {
+    const PARENT = "cccccccc-0000-4000-8000-000000000001";
+    const OTHER_ORG_CARD = "cccccccc-0000-4000-8000-000000000002";
+    function withContracts() {
+        const w = world({
+            projects: [
+                { id: PARENT, org_id: ORG, name: "Contrato de Nuvem 2025", counterparty: "Nuvem Fictícia S.A.", archived_at: null },
+                { id: "cccccccc-0000-4000-8000-000000000003", org_id: ORG, name: "Licença de Software", counterparty: "Código Ágil Ltda.", archived_at: null },
+                { id: "cccccccc-0000-4000-8000-000000000004", org_id: ORG, name: "Contrato antigo", counterparty: "Nuvem Fictícia S.A.", archived_at: "2026-01-01" },
+                { id: OTHER_ORG_CARD, org_id: "22222222-2222-4222-8222-222222222222", name: "Contrato de Nuvem de outra org", counterparty: "Nuvem Outra", archived_at: null },
+            ],
+        });
+        return w;
+    }
+
+    it("finds contracts by name or counterparty, accents aside, only of the team's org and not archived", async () => {
+        const w = withContracts();
+        const byName = await searchContracts(w.db, "licenca");
+        expect(byName.ok && byName.data.contracts.map((c) => c.name)).toEqual(["Licença de Software"]);
+        const byParty = await searchContracts(w.db, "nuvem fict");
+        expect(byParty.ok && byParty.data.contracts.map((c) => c.id)).toEqual([PARENT]);
+        expect(await searchContracts(w.db, "n")).toMatchObject({ ok: false, kind: "validation" });
+    });
+
+    it("ties the amendment to the picked contract, and 'não está no Mike' unties it", async () => {
+        const w = withContracts();
+        const id = await newRequest(w, { kind: "aditivo" });
+        const tied = await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: { project_id: PARENT } } });
+        expect(tied).toMatchObject({ ok: true, data: { parent_contract: { id: PARENT, name: "Contrato de Nuvem 2025" } } });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id).toBe(PARENT);
+        expect(readAnswers(w.table("legal_requests").find((r) => r.id === id)!.intake).contrato_original).toMatchObject({ project_id: PARENT });
+        const seen = await getIntake(w.db, REQUESTER, id);
+        expect(seen.ok && seen.data.parent_contract?.id).toBe(PARENT);
+        const typed = await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: "Não está no Mike, vou anexar" } });
+        expect(typed).toMatchObject({ ok: true, data: { parent_contract: null } });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id).toBeNull();
+    });
+
+    it("refuses a contract that is archived, from another organization or not a card", async () => {
+        const w = withContracts();
+        const id = await newRequest(w, { kind: "aditivo" });
+        for (const project_id of ["cccccccc-0000-4000-8000-000000000004", OTHER_ORG_CARD, "não-é-id"]) {
+            const r = await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: { project_id } } });
+            expect(r).toMatchObject({ ok: false, kind: "validation" });
+        }
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id ?? null).toBeNull();
+    });
+
+    it("does not leave the link when other questions are answered, and the agent never guesses the contract", async () => {
+        const w = withContracts();
+        const id = await newRequest(w, { kind: "aditivo" });
+        await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: { project_id: PARENT } } });
+        await answerIntake(w.db, REQUESTER, id, { answers: { aprovacao: "Diretoria" } });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id).toBe(PARENT);
+        withDocument(w, id);
+        llm.completeText.mockResolvedValue(JSON.stringify({ answers: { contrato_original: { value: "Contrato X", quote: "Cláusula 3" } } }));
+        await handleIntakePrefill(w.db, { payload: { request_id: id } });
+        expect(llm.completeText.mock.calls[0]?.[0]).toMatchObject({ systemPrompt: expect.not.stringContaining('"contrato_original"') });
     });
 });

@@ -31,6 +31,7 @@ import {
     type IntakeItem,
     type IntakeStatus,
 } from "./requests.intake";
+import { contractLabel, findContract, type ContractChoice } from "./requests.parent";
 import { PREFILL_JOB_KIND } from "./requests.prefill";
 import { REQUEST_KINDS } from "./requests.shared";
 import { applyAssignmentRules, reloadAfterRules } from "./requests.rules";
@@ -74,6 +75,8 @@ export type RequestIntake = IntakeStatus & {
     kind: string;
     /** The kind changed since the requester last saw the checklist (the triage corrected it). */
     kind_changed: { from: string; to: string } | null;
+    /** For an amendment: the Mike contract it was tied to. */
+    parent_contract: ContractChoice | null;
 };
 
 export type Template = {
@@ -124,7 +127,13 @@ export async function prefillState(db: Db, requestId: string): Promise<PrefillSt
     return "concluido";
 }
 
-function view(row: RequestRow, template: Template, canAnswer: boolean, prefill: PrefillState): RequestIntake {
+function view(
+    row: RequestRow,
+    template: Template,
+    canAnswer: boolean,
+    prefill: PrefillState,
+    parent: ContractChoice | null = null,
+): RequestIntake {
     return {
         ...intakeStatus(forKind(template, row.kind), readAnswers(row.intake)),
         request_id: row.id,
@@ -134,6 +143,7 @@ function view(row: RequestRow, template: Template, canAnswer: boolean, prefill: 
         template_source: template.source,
         kind: row.kind,
         kind_changed: row.intake_kind && row.intake_kind !== row.kind ? { from: row.intake_kind, to: row.kind } : null,
+        parent_contract: parent,
     };
 }
 
@@ -143,6 +153,8 @@ function mayAnswer(row: RequestRow, audience: Awaited<ReturnType<typeof loadRequ
     return audience.audience.kind === "requester" || isTeam(audience.audience);
 }
 
+const key_in = (o: Record<string, unknown>, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+
 /** The request's checklist: each item, its answer and state, and what is still open. */
 export async function getIntake(db: Db, caller: Caller, requestId: string): Promise<ServiceResult<RequestIntake>> {
     const loaded = await loadRequestFor(db, caller, requestId);
@@ -150,7 +162,8 @@ export async function getIntake(db: Db, caller: Caller, requestId: string): Prom
     if (loaded.audience.kind === "guest") return failure("forbidden", "O checklist do pedido é de quem pediu e do time do Legal.");
     try {
         const template = await loadTemplate(db, loaded.row.org_id);
-        return ok(view(loaded.row, template, mayAnswer(loaded.row, loaded), await prefillState(db, loaded.row.id)));
+        const parent = loaded.row.parent_project_id ? await findContract(db, loaded.row.org_id, loaded.row.parent_project_id) : null;
+        return ok(view(loaded.row, template, mayAnswer(loaded.row, loaded), await prefillState(db, loaded.row.id), parent));
     } catch (error) {
         return internalFailure(error);
     }
@@ -182,7 +195,22 @@ export async function answerIntake(
     }
     const now = new Date().toISOString();
     const items = forKind(template, row.kind);
-    const applied = applyAnswers(items, readAnswers(row.intake), body, now);
+    // A contract picked from the Mike list: its label is the answer, the card is the link.
+    let picked: ContractChoice | null | undefined;
+    const given = body.answers && typeof body.answers === "object" && !Array.isArray(body.answers) ? { ...(body.answers as Record<string, unknown>) } : null;
+    const contractItem = items.find((i) => i.kind === "contract" && given && key_in(given, i.key));
+    if (given && contractItem) {
+        const raw = given[contractItem.key];
+        const projectId = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>).project_id : undefined;
+        if (projectId !== undefined) {
+            picked = await findContract(db, row.org_id, projectId);
+            if (!picked) return failure("validation", "Esse contrato não está no Mike. Escolha outro ou digite o nome.");
+            given[contractItem.key] = { value: contractLabel(picked), project_id: picked.id };
+        } else {
+            picked = null;
+        }
+    }
+    const applied = applyAnswers(items, readAnswers(row.intake), given ? { ...body, answers: given } : body, now);
     if (!applied.ok) return failure("validation", applied.detail);
     const prefill = await prefillState(db, row.id);
     if (applied.changed.length === 0) return ok(view(row, template, true, prefill));
@@ -194,12 +222,13 @@ export async function answerIntake(
         .update({
             intake: applied.answers,
             intake_kind: row.kind,
+            ...(picked !== undefined ? { parent_project_id: picked ? picked.id : null } : {}),
             ...(closing ? { intake_completed_at: now } : {}),
             ...(!status.complete && row.intake_completed_at ? { intake_completed_at: null } : {}),
             updated_at: now,
         })
         .eq("id", row.id)
-        .select("id, intake, intake_completed_at, intake_kind")
+        .select("id, intake, intake_completed_at, intake_kind, parent_project_id")
         .single();
     if (error || !data) return internalFailure(error);
     const updated = { ...row, ...(data as Partial<RequestRow>) } as RequestRow;
@@ -220,7 +249,8 @@ export async function answerIntake(
     // The checklist may carry the contract value a rule is waiting for.
     if (closing) await applyAssignmentRules(db, updated);
     await syncStage(db, closing ? await reloadAfterRules(db, updated) : updated, closing ? "checklist fechado" : null);
-    return ok(view(updated, template, true, prefill));
+    const parent = updated.parent_project_id ? (picked ?? (await findContract(db, row.org_id, updated.parent_project_id))) : null;
+    return ok(view(updated, template, true, prefill, parent));
 }
 
 /** Queue the intake agent for a request whose card has a contract. Never fails the caller. */
