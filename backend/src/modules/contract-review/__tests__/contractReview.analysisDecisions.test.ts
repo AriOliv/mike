@@ -95,11 +95,40 @@ describe("decideAnalysisRedline", () => {
         expect(documents.applyTrackedEditsToDocument).not.toHaveBeenCalled();
     });
 
+    it("accepts a second redline on the version the first one made: an analysis's own edits are not 'stale'", async () => {
+        // r1 was accepted and made v2; the contract is now v2, and r2 still quotes text that v2 holds.
+        shared.contractDocument.mockResolvedValueOnce({ ...docx, versionId: "v2" });
+        const fake = scriptedDb([
+            { table: "contract_analyses", data: analysis() },
+            { table: "contract_analysis_decisions", data: null },
+            { table: "contract_analysis_decisions", data: [{ edit: { version_id: "v2" } }] },
+            { table: "user_profiles", data: { display_name: "Pessoa", email: "time@example.com" } },
+            { table: "contract_analysis_decisions", op: "insert" },
+        ]);
+        expect(await decideAnalysisRedline(fake.db, caller, "p1", ID, "r2", { decision: "aceito" })).toMatchObject({ ok: true });
+        fake.done();
+    });
+
+    it("says so, and saves nothing, when the contract was written by someone else at the same time and every retry lost", async () => {
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", conflict: true });
+        const fake = scriptedDb([
+            { table: "contract_analyses", data: analysis() },
+            { table: "contract_analysis_decisions", data: null },
+        ]);
+        const decided = await decideAnalysisRedline(fake.db, caller, "p1", ID, "r1", { decision: "aceito" });
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "document_busy" });
+        expect(decided).toMatchObject({ detail: expect.stringMatching(/não foi gravada/) });
+        // No decision row was written: the person can try again.
+        expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
+        fake.done();
+    });
+
     it("refuses a stale analysis, a decided redline, an unplaceable change and bad input", async () => {
         shared.contractDocument.mockResolvedValueOnce({ ...docx, versionId: "v2" });
         const stale = scriptedDb([
             { table: "contract_analyses", data: analysis() },
             { table: "contract_analysis_decisions", data: null },
+            { table: "contract_analysis_decisions", data: [] }, // no decision of this analysis made version v2
         ]);
         expect(await decideAnalysisRedline(stale.db, caller, "p1", ID, "r1", { decision: "aceito" })).toMatchObject({ ok: false, kind: "conflict", code: "stale_analysis" });
 
