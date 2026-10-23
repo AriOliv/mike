@@ -41,6 +41,8 @@ import {
     watchProject,
     getDossier,
     getIntegrationStatus,
+    getObligationAlerts,
+    getObligationOwners,
     getObligations,
     getPipeline,
     updateObligation,
@@ -220,6 +222,26 @@ describe("radar", () => {
             to: "2026-12-31",
             include_done: "true",
         });
+    });
+
+    it("reads the alerts waiting for the caller", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ id: "o1", days_left: -2 }]));
+        expect(await getObligationAlerts()).toEqual([{ id: "o1", days_left: -2 }]);
+        expect(lastFetchCall().url).toMatch(/\/obligations\/alerts$/);
+    });
+
+    it("lists the people who can own a deadline", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ user_id: "b", email: "bia@x.io", name: "Bia" }]));
+        expect(await getObligationOwners()).toEqual([{ user_id: "b", email: "bia@x.io", name: "Bia" }]);
+        expect(lastFetchCall().url).toMatch(/\/obligations\/owners$/);
+    });
+
+    it("sends the owner and the warning lead time", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ id: "o1" }));
+        await createObligation({ title: "Aviso", due_date: "2026-12-01", owner_email: "bia@x.io", alert_days: 7 });
+        expect(jsonBody()).toEqual({ title: "Aviso", due_date: "2026-12-01", owner_email: "bia@x.io", alert_days: 7 });
+        await updateObligation("o1", { owner_email: null, alert_days: 0 });
+        expect(jsonBody()).toEqual({ owner_email: null, alert_days: 0 });
     });
 
     it("creates, updates and deletes an obligation", async () => {

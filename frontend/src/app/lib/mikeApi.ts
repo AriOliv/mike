@@ -5211,7 +5211,31 @@ export interface Obligation {
     done: boolean;
     note: string | null;
     source_quote: string | null;
+    /** Who looks after the deadline and is warned; null = whoever created it. */
+    owner_email: string | null;
+    /** Days before the due date when the warning starts. */
+    alert_days: number;
     projects?: { name: string; counterparty: string | null; lane: string | null } | null;
+}
+
+/** A deadline whose warning window is open for the caller; negative = overdue. */
+export interface ObligationAlert extends Obligation {
+    days_left: number;
+}
+
+export async function getObligationAlerts(): Promise<ObligationAlert[]> {
+    return apiRequest("/obligations/alerts");
+}
+
+/** A person who can own a deadline: the legal team. */
+export interface ObligationOwner {
+    user_id: string;
+    email: string;
+    name: string;
+}
+
+export async function getObligationOwners(): Promise<ObligationOwner[]> {
+    return apiRequest("/obligations/owners");
 }
 
 export async function getObligations(params?: {
@@ -5233,6 +5257,8 @@ export async function createObligation(input: {
     mark?: ObligationMark;
     project_id?: string | null;
     note?: string | null;
+    owner_email?: string | null;
+    alert_days?: number;
 }): Promise<Obligation> {
     return apiRequest("/obligations", {
         method: "POST",
@@ -5243,7 +5269,15 @@ export async function createObligation(input: {
 
 export async function updateObligation(
     id: string,
-    patch: { done?: boolean; title?: string; due_date?: string; mark?: ObligationMark; note?: string | null },
+    patch: {
+        done?: boolean;
+        title?: string;
+        due_date?: string;
+        mark?: ObligationMark;
+        note?: string | null;
+        owner_email?: string | null;
+        alert_days?: number;
+    },
 ): Promise<Obligation> {
     return apiRequest(`/obligations/${id}`, {
         method: "PATCH",
