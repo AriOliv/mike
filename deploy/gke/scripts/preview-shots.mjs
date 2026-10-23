@@ -10,6 +10,7 @@
 //
 //   { "shots": [ { "name": "fila", "as": "legal", "path": "/pedidos",
 //                  "widths": [1440, 390], "themes": ["light", "dark"],
+//                  // "height": 1000 (optional; default 900, or 844 below 600 px)
 //                  "steps": [ { "click": "text=LEG-0001" }, { "wait": 800 } ] } ] }
 //
 // Steps: click, press, fill {selector, value}, goto, waitFor, scrollTo, wait
@@ -143,7 +144,7 @@ async function main() {
         for (const theme of shot.themes ?? ["light"]) {
             const page = await session(shot.as ?? "legal", theme);
             for (const width of shot.widths ?? [1440]) {
-                await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+                await page.setViewportSize({ width, height: shot.height ?? (width < 600 ? 844 : 900) });
                 await page.goto(`${BASE}${shot.path}`, { waitUntil: "networkidle" });
                 // The theme is a class on <html> set from the profile (lib/theme.ts);
                 // force it after loading and again after the steps, which may re-render.
