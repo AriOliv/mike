@@ -102,6 +102,48 @@ export function slaTone(sla: RequestSla): "default" | "atencao" | "critico" {
     return "default";
 }
 
+/**
+ * "agora", "há 2 h", "ontem", "há 3 dias", then the date ("12/10") past a
+ * week: relative is easier to read while it is recent, and a date is easier
+ * to find later.
+ */
+export function sinceText(iso: string, now: number = Date.now()): string {
+    const ms = now - Date.parse(iso);
+    if (!Number.isFinite(ms)) return "";
+    const minutes = Math.floor(ms / 60_000);
+    if (minutes < 1) return "agora";
+    if (minutes < 60) return `há ${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `há ${hours} h`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return "ontem";
+    if (days <= 7) return `há ${days} dias`;
+    return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" });
+}
+
+/**
+ * Who has the ball and since when, in words: "com Fulano, desde ontem",
+ * "aguardando Ana, há 2 h", "sem responsável, desde ontem". Without a `since`
+ * (a request older than the history) the time is left out.
+ */
+export function stageHolderText(
+    owner: { kind: "agent" | "person" | "requester" | "none"; name: string | null },
+    since: string | null,
+    now: number = Date.now(),
+): string {
+    const when = since ? sinceText(since, now) : "";
+    const time = when ? (when.startsWith("há") || when === "agora" ? `, ${when}` : `, desde ${when}`) : "";
+    if (owner.kind === "requester") return `aguardando ${owner.name ?? "quem pediu"}${time}`;
+    if (owner.kind === "agent") return `com o ${(owner.name ?? "agente").toLowerCase()}${time}`;
+    if (owner.kind === "person" && owner.name) return `com ${owner.name}${time}`;
+    return `sem responsável${time}`;
+}
+
+/** "Etapa 3 de 5", or null on the two ends, which do not count. */
+export function positionText(position: { index: number; of: number } | null): string | null {
+    return position ? `Etapa ${position.index} de ${position.of}` : null;
+}
+
 export type NextAction = {
     /** What is waiting, in a few words ("Analisar e decidir"). */
     title: string;
