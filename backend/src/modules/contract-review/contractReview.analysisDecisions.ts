@@ -26,6 +26,9 @@ export type RedlineDecision = {
     edit: EditAnnotation | null;
 };
 
+/** Two people wrote the same contract at once and this one lost every retry: nothing was saved, and the person is told. */
+export const SAVE_CONFLICT = "O contrato foi alterado por outra pessoa ao mesmo tempo. Sua decisão não foi gravada; tente de novo.";
+
 const DECISIONS = new Set(["aceito", "editado", "rejeitado"]);
 
 async function callerName(db: Db, caller: Caller): Promise<string> {
@@ -103,9 +106,21 @@ export async function decideAnalysisRedline(
         let edit: EditAnnotation | null = null;
         if (decision !== "rejeitado") {
             const doc = await contractDocument(db, projectId);
-            // The redline quotes the version that was analysed; a newer one may not hold it.
-            if (!doc || doc.versionId !== analysis.version_id)
-                return failure("conflict", "O contrato tem uma versão mais nova que a analisada. Peça uma nova análise.", "stale_analysis");
+            // The redline quotes the version that was analysed; a newer one may not hold it. The versions
+            // this analysis's own accepted redlines made are fine: each one keeps the text the next quotes.
+            if (!doc) return failure("conflict", "O contrato tem uma versão mais nova que a analisada. Peça uma nova análise.", "stale_analysis");
+            if (doc.versionId !== analysis.version_id) {
+                const { data: made, error: madeError } = await db
+                    .from("contract_analysis_decisions")
+                    .select("edit")
+                    .eq("analysis_id", analysisId);
+                if (madeError) throw madeError;
+                const ownVersions = new Set(
+                    ((made ?? []) as { edit: { version_id?: string } | null }[]).map((d) => d.edit?.version_id).filter(Boolean),
+                );
+                if (!ownVersions.has(doc.versionId))
+                    return failure("conflict", "O contrato tem uma versão mais nova que a analisada. Peça uma nova análise.", "stale_analysis");
+            }
             if (doc.isDocx) {
                 const applied = await applyTrackedEditsToDocument({
                     documentId: doc.documentId,
@@ -122,6 +137,7 @@ export async function decideAnalysisRedline(
                         },
                     ],
                 });
+                if (!applied.ok && applied.conflict) return failure("conflict", SAVE_CONFLICT, "document_busy");
                 if (!applied.ok || !applied.annotations[0])
                     return failure("conflict", "Não consegui colocar a redação no documento. Recarregue e tente de novo.");
                 edit = applied.annotations[0];

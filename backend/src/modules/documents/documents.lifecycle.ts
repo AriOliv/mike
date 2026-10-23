@@ -2,6 +2,7 @@ import { processDocumentTextInline } from "./documents.indexing";
 import { safeError } from "../../lib/safeError";
 import { logError } from "../../lib/log";
 import {
+  captureInlineDocumentCleanup,
   captureInlineVersionUpdateCleanup,
   completeInlineDocumentCleanup,
 } from "./documents.cleanupJobs";
@@ -74,6 +75,55 @@ export async function activateDocumentVersion(
     p_version_id: versionId,
   });
   return { activated: data === true, error };
+}
+
+/**
+ * Compare-and-swap activation: `versionId` becomes the active version only if
+ * `expectedCurrentId` still is. One conditional UPDATE, so two writers that
+ * read the same active version cannot both win: Postgres makes the second
+ * wait for the row and re-checks the condition against the committed value.
+ * `activated: false` with no error means somebody else activated first.
+ */
+export async function activateDocumentVersionIfCurrent(
+  db: Db,
+  documentId: string,
+  versionId: string,
+  expectedCurrentId: string,
+) {
+  const { data, error } = await db
+    .from("documents")
+    .update({ current_version_id: versionId, updated_at: new Date().toISOString() })
+    .eq("id", documentId)
+    .eq("current_version_id", expectedCurrentId)
+    .select("id")
+    .maybeSingle();
+  return { activated: !error && !!data, error };
+}
+
+/**
+ * Throws away a version that was written but lost its race: the row is
+ * retired through the lifecycle RPC (which queues its file for cleanup) and
+ * never becomes active. Best effort: a failure here leaves an inactive
+ * version behind, which is untidy but loses nothing.
+ */
+export async function discardDocumentVersion(
+  db: Db,
+  documentId: string,
+  versionId: string,
+  actorId: string,
+): Promise<void> {
+  try {
+    const keys = await captureInlineDocumentCleanup(db, { versionIds: [versionId] });
+    const { error } = await db.rpc("delete_document_version", {
+      p_document_id: documentId,
+      p_version_id: versionId,
+      p_actor_id: actorId,
+    });
+    if (error) throw error;
+    await completeInlineDocumentCleanup(db, keys);
+  } catch (err) {
+    logError("document-version-discard", safeError(err));
+  }
 }
 
 export type DocumentVersionPatch = Partial<
