@@ -50,6 +50,7 @@ import {
     type RequestStatus,
     type Urgency,
 } from "./requests.shared";
+import { parseTerms, termEnd, type Terms } from "./requests.terms";
 import { buildStrip, loadStageHistory, syncStage, type StageRow, type StageStrip } from "./requests.stages";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
 import { loadTemplate, queueIntakePrefill } from "./requests.checklist";
@@ -76,6 +77,11 @@ export type CreateRequestInput = {
     source?: unknown;
     /** Checklist answers given with the request: {key: value | {value, detail}}. */
     intake?: unknown;
+    /** The other party's e-mail: only kept (for the validation by link), never mailed. */
+    counterparty_email?: unknown;
+    /** When the contract starts (YYYY-MM-DD) and for how many months; the end is computed. */
+    term_start?: unknown;
+    term_months?: unknown;
     idempotency_key?: unknown;
 };
 
@@ -120,6 +126,13 @@ export type RequestTeamView = RequestPublicView & {
     intake_completed_at: string | null;
     /** The analysis found a critical risk and the Head was alerted. */
     critical_alert_at: string | null;
+    /** What the form asked about the contract. The end is computed; the e-mail is only kept, never mailed. */
+    terms: {
+        counterparty_email: string | null;
+        term_start: string | null;
+        term_months: number | null;
+        term_end: string | null;
+    };
     /** The spine: current stage, who holds the ball and since when, and the strip. */
     stage: StageStrip;
     /** The stages it went through, oldest first; the open one is the current stage. */
@@ -167,8 +180,9 @@ function validateCreate(input: CreateRequestInput):
           urgency: Urgency;
           neededBy: string | null;
           documentIds: string[];
+          terms: Terms;
       }
-    | { ok: false; detail: string } {
+    | { ok: false; detail: string; field?: string } {
     const kind = REQUEST_KINDS.includes(input.kind as RequestKind) ? (input.kind as RequestKind) : null;
     if (!kind) return { ok: false, detail: "Escolha o tipo de pedido." };
     const context = cleanText(input.context, 8000) ?? "";
@@ -194,7 +208,19 @@ function validateCreate(input: CreateRequestInput):
     if (documentIds.length > MAX_ATTACHMENTS) {
         return { ok: false, detail: `Anexe no máximo ${MAX_ATTACHMENTS} arquivos.` };
     }
-    return { ok: true, kind, title, counterparty, context, urgency, neededBy, documentIds };
+    const terms = parseTerms(input);
+    if (!terms.ok) return { ok: false, detail: terms.detail, field: terms.field };
+    return {
+        ok: true,
+        kind,
+        title,
+        counterparty,
+        context,
+        urgency,
+        neededBy,
+        documentIds,
+        terms: { counterpartyEmail: terms.counterpartyEmail, termStart: terms.termStart, termMonths: terms.termMonths },
+    };
 }
 
 /**
@@ -287,7 +313,7 @@ export async function createRequest(
     const requesterEmail = normalizeEmail(caller.userEmail);
     if (!requesterEmail) return failure("validation", "Sua conta não tem e-mail.");
     const valid = validateCreate(input);
-    if (!valid.ok) return failure("validation", valid.detail);
+    if (!valid.ok) return failure("validation", valid.detail, valid.field ? `field:${valid.field}` : undefined);
 
     let team;
     try {
@@ -372,6 +398,9 @@ export async function createRequest(
             urgency: valid.urgency,
             needed_by: valid.neededBy,
             due_at: dueAt.toISOString(),
+            counterparty_email: valid.terms.counterpartyEmail,
+            term_start: valid.terms.termStart,
+            term_months: valid.terms.termMonths,
             source: sourceOf(input.source),
             idempotency_key: idempotencyKey,
         })
@@ -580,6 +609,12 @@ async function buildView(
         can_decide: isHead(audience),
         intake_completed_at: row.intake_completed_at,
         critical_alert_at: row.critical_alert_at,
+        terms: {
+            counterparty_email: row.counterparty_email,
+            term_start: row.term_start,
+            term_months: row.term_months,
+            term_end: termEnd(row.term_start, row.term_months),
+        },
     };
 }
 
