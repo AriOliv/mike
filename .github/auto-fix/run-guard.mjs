@@ -1,7 +1,7 @@
 // A ponta que o workflow executa, sempre com o código de `main`. Nunca imprime o repro
 // nem repete texto vindo do agente sem passar por `logSafe`.
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { changesFromPatch, checkDiff, checkPatch, leaksSecret, logSafe, looksLikeSecret, parsePayload, prText } from "./guard.mjs";
+import { changesFromPatch, checkDiff, checkPatch, leaksSecret, logSafe, looksLikeLeak, looksLikeSecret, parsePayload, prText } from "./guard.mjs";
 
 const out = (k, v) => process.env.GITHUB_OUTPUT && appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${logSafe(v)}\n`);
 const mode = process.argv[2];
@@ -24,8 +24,9 @@ if (mode === "payload") {
     const d = checkDiff(changes);
     const keys = (process.env.SECRETS_TO_REFUSE ?? "").split("\n");
     const leaked = leaksSecret(patch, keys) || looksLikeSecret(patch);
-    const reasons = [...p.reasons, ...d.reasons, ...(leaked ? ["segredo no patch"] : [])];
-    const ok = p.ok && d.ok && !leaked;
+    const induced = looksLikeLeak(patch);
+    const reasons = [...p.reasons, ...d.reasons, ...(leaked ? ["segredo no patch"] : []), ...(induced ? ["o agente gravou mensagem de permissão ou ambiente do processo"] : [])];
+    const ok = p.ok && d.ok && !leaked && !induced;
     console.log(ok ? `diff aprovado (${changes.length} arquivo(s))` : `diff recusado: ${logSafe(reasons.join("; "))}`);
     process.exit(ok ? 0 : 2);
 } else if (mode === "pr") {

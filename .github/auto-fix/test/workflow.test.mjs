@@ -16,12 +16,14 @@ const job = (name) => {
 };
 const noComments = (t) => t.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
 
-test("são três jobs: agent, verify e publish", () => {
-    for (const j of ["agent", "verify", "publish"]) assert.ok(job(j));
-    assert.deepEqual([...wf.matchAll(/^  ([a-z-]+):$/gm)].map((m) => m[1]).filter((n) => ["agent", "verify", "publish"].includes(n)), ["agent", "verify", "publish"]);
-    assert.match(job("verify"), /needs: agent/);
-    assert.match(job("publish"), /needs: \[agent, verify\]/);
-    assert.match(job("publish"), /needs\.verify\.result == 'success'/);
+test("são dois jobs, e o verify não existe mais: nada que o agente escreve roda no repositório", () => {
+    const names = [...wf.matchAll(/^  ([a-z-]+):$/gm)].map((m) => m[1]).filter((n) => ["agent", "verify", "publish"].includes(n));
+    assert.deepEqual(names, ["agent", "publish"]);
+    assert.ok(!/^  verify:/m.test(wf));
+    assert.match(job("publish"), /needs: agent/);
+    // nada que o agente escreveu é instalado, compilado ou testado aqui: os testes rodam no CI do PR
+    assert.ok(!/npm (ci|install|test|run)|npx |vitest/.test(noComments(job("publish")).replace(/npm install --global[^\n]*/g, "")));
+    assert.ok(!/vitest/.test(noComments(job("agent"))));
 });
 
 test("toda chamada ao gateway pede a redação das mensagens, no env do workflow", () => {
@@ -32,13 +34,13 @@ test("toda chamada ao gateway pede a redação das mensagens, no env do workflow
 test("a chave do gateway tem o nome combinado e só aparece no job do agente", () => {
     assert.ok(!wf.includes("secrets.LITELLM_API_KEY"));
     assert.match(job("agent"), /secrets\.LITELLM_AUTOFIX_KEY/);
-    assert.ok(!job("verify").includes("LITELLM"));
     assert.ok(!job("publish").includes("LITELLM"), "a chave nunca entra no job que tem o token do App");
 });
 
 test("o agente só lê e edita arquivos: sem Bash, sem rede, sem tarefas, configuração fixada", () => {
     const agent = noComments(job("agent"));
-    assert.match(agent, /--tools "Read,Grep,Glob,Edit,Write"/);
+    // o cliente só oferece Read e Edit (Edit também cria arquivo novo); provado numa bancada local
+    assert.match(agent, /--tools "Read,Edit"/);
     assert.match(agent, /--bare/);
     assert.match(agent, /--setting-sources ""/);
     assert.match(agent, /--settings "\$RUNNER_TEMP\/agent\/settings\.json"/);
@@ -47,10 +49,25 @@ test("o agente só lê e edita arquivos: sem Bash, sem rede, sem tarefas, config
     assert.match(agent, /--permission-mode dontAsk/);
     assert.ok(!/--allowedTools[^\n]*Bash/.test(agent), "nenhuma permissão de Bash");
     assert.match(agent, /"deny": \["Bash", "WebFetch", "WebSearch", "Task"/);
-    for (const denied of ["Read(./.git/**)", "Read(./.claude/**)", "Read(/proc/**)", "Edit(./.git/**)", "Write(./.claude/**)", "Edit(./.github/**)"]) assert.ok(agent.includes(denied), denied);
+    for (const denied of ["Read(./.git/**)", "Read(./.claude/**)", "Read(./.github/**)", "Edit(./.git/**)", "Edit(./.claude/**)", "Edit(./.github/**)"]) assert.ok(agent.includes(denied), denied);
+    // caminho ABSOLUTO se escreve com duas barras; com uma só a regra é relativa e não bloqueia nada
+    for (const root of ["proc", "sys", "etc", "run", "var", "root"]) {
+        assert.ok(agent.includes(`"Read(//${root}/**)"`), `Read(//${root}/**)`);
+        assert.ok(!agent.includes(`"Read(/${root}/**)"`), `/${root} com uma barra só não bloqueia`);
+    }
+    // /home e /tmp NÃO entram: o diretório de trabalho do runner mora em /home/runner/work, e negá-lo cega o agente
+    assert.ok(!agent.includes("//home") && !agent.includes("//tmp"), "negar /home ou /tmp bloquearia o próprio código");
+    // Grep e Glob: nunca liberados, e negados
+    assert.ok(!/"allow": \[[^\]]*(Grep|Glob)/.test(agent));
+    assert.match(agent, /"deny": \[[^\]]*"Grep", "Glob"/);
     // edita só o código do app
     assert.match(agent, /"Edit\(\.\/backend\/src\/\*\*\)"/);
     assert.ok(!/"Edit\(\.\/\*\*\)"/.test(agent));
+    // o repro vive em work/REPRO.md (fora do patch), e só ele é lido fora de src
+    assert.match(agent, /cp "\$RUNNER_TEMP\/repro\.md" work\/REPRO\.md/);
+    assert.match(agent, /"Read\(\.\/REPRO\.md\)"/);
+    assert.match(agent, /Corrija o bug descrito em REPRO\.md/);
+    assert.ok(!/RUNNER_TEMP\/repro\.md\. Esse/.test(agent), "o agente não é mandado ler fora do diretório de trabalho");
 });
 
 test("o Claude Code é instalado antes de o segredo existir, sem scripts de instalação", () => {
@@ -83,22 +100,16 @@ test("o job do agente não tem token do GitHub, e nenhum git roda sobre a pasta 
     assert.match(agent, /find "work\/\$tree" -type l/);
 });
 
-test("o job de testes não tem segredo nem environment, e as guardas rodam antes do código do agente", () => {
-    const verify = noComments(job("verify"));
-    assert.ok(!verify.includes("secrets."));
-    assert.ok(!verify.includes("environment:"));
-    assert.ok(!verify.includes("create-github-app-token"));
-    assert.ok(verify.indexOf("run-guard.mjs diff") < verify.indexOf("vitest run"), "o patch é checado antes de qualquer teste");
-    assert.ok(verify.indexOf("run-guard.mjs diff") < verify.indexOf("npm ci"), "e antes de qualquer instalação");
-    assert.match(verify, /npm ci --ignore-scripts/);
-});
-
 test("só o job final tem o token do App, e ele não executa nada que o agente escreveu", () => {
     assert.match(job("publish"), /create-github-app-token/);
     assert.ok(!noComments(job("agent")).includes("create-github-app-token"));
-    assert.ok(!noComments(job("verify")).includes("create-github-app-token"));
     const publish = noComments(job("publish"));
     assert.ok(!/npm (ci|install|test|run)|npx |vitest/.test(publish), "publish não instala nem testa o código do agente");
+    // o gitleaks roda sobre as linhas adicionadas do patch, com binário verificado por sha256
+    assert.match(publish, /GITLEAKS_SHA256: [0-9a-f]{64}/);
+    assert.match(publish, /sha256sum -c -/);
+    assert.match(publish, /gitleaks" detect --no-banner --redact --no-git --source/);
+    assert.ok(publish.indexOf("gitleaks\" detect") < publish.indexOf("create-github-app-token"), "o gitleaks roda antes de o token existir");
     assert.match(publish, /core\.hooksPath=\/dev\/null/);
     assert.match(publish, /core\.fsmonitor=false/);
     assert.match(publish, /commit --no-verify/);
@@ -113,19 +124,36 @@ test("o job final RECALCULA o diff do patch e não lê numstat nem summary pront
     const upload = job("agent").slice(job("agent").indexOf("upload-artifact"));
     assert.ok(!/numstat|namestatus|summary/.test(upload));
     assert.match(upload, /auto-fix\.patch/);
+    // o artifact leva só o patch: o repro NÃO vai (o publish usa o do evento)
+    assert.ok(!/repro\.md/.test(upload.split("retention-days")[0]), "o repro não vai no artifact");
 });
 
-test("o repro volta a ser validado e o PR é montado pelas guardas, em rascunho", () => {
+test("o publish revalida o payload do EVENTO, não do artifact, e re-testa o ID antes da branch", () => {
+    const publish = noComments(job("publish"));
+    assert.match(publish, /PAYLOAD_JSON: \$\{\{ toJson\(github\.event\.client_payload\) \}\}/);
+    assert.match(publish, /run-guard\.mjs payload/);
+    // o ID e o repro do PR vêm do passo que validou, nunca de needs.agent.outputs nem do artifact
+    assert.ok(!/needs\.agent\.outputs\.rel/.test(publish), "o ID não vem de output do job do agente");
+    assert.match(publish, /REL: \$\{\{ steps\.payload\.outputs\.rel \}\}/);
+    assert.match(publish, /REPRO_FILE: \$\{\{ runner\.temp \}\}\/repro\.validated\.md/);
+    assert.ok(!/in\/repro\.md/.test(publish), "o repro do artifact não é usado");
+    // o ID é testado de novo logo antes de virar nome de branch e mensagem de commit
+    const last = publish.slice(publish.indexOf("Empurrar a branch"));
+    assert.match(last, /grep -Eq '\^REL-\[0-9\]\{4,\}\$'/);
+    assert.ok(last.indexOf("grep -Eq") < last.indexOf("branch=\"auto-fix"));
+});
+
+test("o PR é montado pelas guardas, em rascunho", () => {
     const publish = noComments(job("publish"));
     assert.match(publish, /run-guard\.mjs pr/);
     assert.match(publish, /--draft/);
     assert.ok(!/Fixes #/.test(wf));
 });
 
-test("a pasta do agente nunca é exportada: só o patch e o repro", () => {
+test("a pasta do agente nunca é exportada: só o patch", () => {
     const upload = job("agent").slice(job("agent").indexOf("upload-artifact"));
     assert.ok(!/work\//.test(upload.split("retention-days")[0]), "o artifact não inclui a pasta work");
-    for (const j of ["verify", "publish"]) assert.match(job(j), /Código limpo de main/);
+    assert.match(job("publish"), /Código limpo de main/);
 });
 
 test("o git deste workflow não lê configuração de ninguém", () => {
@@ -134,8 +162,8 @@ test("o git deste workflow não lê configuração de ninguém", () => {
     assert.match(wf, /GIT_CONFIG_NOSYSTEM: "1"/);
 });
 
-test("as guardas rodam em verify e de novo em publish, sempre com o código de main", () => {
-    for (const j of ["verify", "publish"]) {
+test("as guardas do publish são o código de main, em checkout separado, e rodam antes do token", () => {
+    for (const j of ["publish"]) {
         assert.match(job(j), /run-guard\.mjs diff/);
         assert.match(job(j), /ref: main\n\s+path: guard/);
     }

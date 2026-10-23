@@ -172,6 +172,30 @@ export function leaksSecret(patch, secrets) {
     return secrets.some((s) => s && s.length >= 8 && added.includes(s));
 }
 
+/**
+ * Sinais de que o agente foi induzido a gravar o que o cliente lhe devolveu ou o ambiente do processo.
+ * Dois sinais, calibrados contra 600 commits reais do repositório (sem recusar nenhum deles):
+ *
+ *  1. as mensagens de NEGAÇÃO de permissão do Claude Code, que o cliente devolve ao modelo quando
+ *     ele tenta ler ou gravar onde não pode. `tool_use_id` e `tool_result` NÃO entram: são campos do
+ *     protocolo que o próprio Mike usa no chat com ferramentas.
+ *  2. o formato de `/proc/self/environ`: nomes de variáveis de SISTEMA (PATH, HOME, USER, PWD, as do
+ *     runner do GitHub) com valor, em número que um comentário ou teste nunca teria. `NODE_ENV=...` e
+ *     afins aparecem em código legítimo e não contam.
+ *
+ * Pega o que `looksLikeSecret` não pega: uma chave codificada em base64 ou partida passa por ele, mas
+ * o texto de erro em volta, ou o ambiente despejado, não.
+ */
+export function looksLikeLeak(patch) {
+    const added = String(patch)
+        .split("\n")
+        .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
+        .join("\n");
+    if (/denied by your permission settings|Permission to use \w+ has been denied|running in don'?t ask mode|<tool_use_error>/i.test(added)) return true;
+    const system = added.match(/(?:^|[\0\s+"'`])(?:PATH|HOME|USER|PWD|SHELL|LOGNAME|HOSTNAME|RUNNER_[A-Z_]+|GITHUB_[A-Z_]+|ACTIONS_[A-Z_]+|CI|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|LITELLM_[A-Z_]+)=[^\s\0"'`]{1,300}/g) ?? [];
+    return new Set(system.map((m) => m.replace(/^[\0\s+"'`]/, "").split("=")[0])).size >= 4;
+}
+
 /** Padrões de chave/token que nunca devem aparecer numa linha adicionada, mesmo sem saber o valor. */
 export function looksLikeSecret(patch) {
     const added = String(patch)
@@ -186,14 +210,20 @@ export function looksLikeSecret(patch) {
 }
 
 /**
- * O título e o corpo do PR: só o repro e a referência. Nenhum "#123", "Fixes #n"
- * nem menção vira ligação no GitHub: o `#` ganha uma barra invertida invisível
- * ao Markdown (`\#`) e o `@` também.
+ * O título e o corpo do PR: só o repro e a referência. Nenhuma ligação do GitHub pode nascer
+ * daqui: `#123`, `owner/repo#123`, `GH-123`, `Fixes/Closes #n` e `@menção` são neutralizados
+ * com uma barra invertida, que o Markdown mostra mas o GitHub não resolve.
  */
 export function neutralize(text) {
     return String(text)
-        .replace(/\b(fix(?:e[sd])?|close[sd]?|resolve[sd]?)\b(\s*:?\s*)(#\d+)/gi, (_, w, sp, n) => `${w}${sp}\\${n}`)
+        // referências cruzadas: owner/repo#123, repo#123, GH-123
+        .replace(/([\w.-]+(?:\/[\w.-]+)?)#(\d+)/g, "$1\\#$2")
+        .replace(/(^|[^\w\\])(GH-\d+)/gi, "$1\\$2")
+        // fecha-issue: a palavra e o número, com ou sem dois-pontos
+        .replace(/\b(fix(?:e[sd])?|close[sd]?|resolve[sd]?)\b(\s*:?\s*)#(\d+)/gi, (_, w, sp, n) => `${w}${sp}\\#${n}`)
+        // #123 solto
         .replace(/(^|[^\w\\])#(\d+)/g, "$1\\#$2")
+        // @menção
         .replace(/(^|[^\w\\`])@([A-Za-z0-9])/g, "$1\\@$2");
 }
 

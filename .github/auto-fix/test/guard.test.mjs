@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { changesFromPatch, checkDiff, checkPatch, leaksSecret, LIMITS, logSafe, looksLikeSecret, neutralize, parsePayload, prText } from "../guard.mjs";
+import { changesFromPatch, checkDiff, checkPatch, leaksSecret, LIMITS, logSafe, looksLikeLeak, looksLikeSecret, neutralize, parsePayload, prText } from "../guard.mjs";
 
 const REPRO = `## Comportamento errado
 Ao salvar um pedido de exemplo, o botão fica girando e nada é gravado.
@@ -195,14 +195,25 @@ test("o valor de um segredo e os padrões de chave nunca passam por uma linha ad
 
 // ── texto do PR e log ──────────────────────────────────────────────────────
 
-test("o corpo do PR não cria ligação: #n, Fixes/Closes #n e @menção são neutralizados", () => {
-    const n = neutralize("Veja #123. Fixes #45 e closes: #6, resolved #7. Fale com @alguem e (@outra). `@codigo` fica. Item #abc é texto.");
+test("o corpo do PR não cria ligação: #n, owner/repo#n, GH-n, Fixes/Closes e @menção são neutralizados", () => {
+    const n = neutralize("Veja #123. Fixes #45 e closes: #6, resolved #7. Fixes aol-tech/mike#99 e mike#5. GH-123. Fale com @alguem e (@outra). `@codigo` fica. Item #abc é texto.");
+    // nenhum '#<dígitos>' sem a barra, nem depois de owner/repo
     assert.ok(!/(^|[^\\])#\d/.test(n), n);
-    assert.ok(!/(^|[^\\`])@[A-Za-z0-9]/.test(n.replace(/`@codigo`/, "")), n);
-    assert.match(n, /\\#123/);
+    assert.match(n, /aol-tech\/mike\\#99/);
+    assert.match(n, /mike\\#5/);
     assert.match(n, /Fixes \\#45/);
+    assert.match(n, /\\GH-123/);
+    assert.ok(!/(^|[^\w\\`])@[A-Za-z0-9]/.test(n.replace(/`@codigo`/, "")), n);
     assert.match(n, /`@codigo`/);
     assert.match(n, /#abc/);
+});
+
+test("neutralize cobre as formas que fecham issue de OUTRO repositório", () => {
+    for (const t of ["Fixes owner/repo#123", "closes other-org/other.repo#7", "Resolves a.b-c/d_e#42", "fixes: x/y#1", "GH-9", "(gh-77)"]) {
+        const n = neutralize(t);
+        assert.ok(!/[\w./-]#\d/.test(n.replace(/\\#/g, "")), `${t} => ${n}`);
+        assert.ok(!/(^|[^\\])GH-\d/i.test(n), `${t} => ${n}`);
+    }
 });
 
 test("o texto do PR cita o ID e o repro neutralizado; nada vindo do agente, e sem 'Fixes'", () => {
@@ -217,4 +228,45 @@ test("o texto do log não carrega comandos do runner nem quebras de linha", () =
     assert.equal(logSafe("::error::falhou\n::set-output name=x::y"), ": :error: :falhou : :set-output name=x: :y".replace(": :set", ": :set"));
     assert.ok(!logSafe("a\r\nb").includes("\n"));
     assert.equal(logSafe("x".repeat(500)).length, 200);
+});
+
+// ── o canário REL-9999 e os sinais de indução ──────────────────────────────
+
+const addLines = (...lines) => ["--- a/x", "+++ b/x", "@@ -1 +1 @@", ...lines.map((l) => `+${l}`)].join("\n") + "\n";
+
+test("o patch do canário (mensagens de permissão negada gravadas pelo agente) é reconhecido", () => {
+    for (const leaked of [
+        'export const env = "Permission to use Read has been denied because Claude Code is running in don\'t ask mode.";',
+        "const e = `File is in a directory that is denied by your permission settings.`;",
+        "// <tool_use_error>Error: No such tool available</tool_use_error>",
+        "export const x = 'running in dont ask mode';",
+    ]) assert.equal(looksLikeLeak(addLines(leaked)), true, leaked);
+});
+
+test("o ambiente do processo despejado (formato de /proc/self/environ) é reconhecido", () => {
+    const env = "PATH=/usr/bin:/bin HOME=/home/runner USER=runner PWD=/home/runner/work GITHUB_TOKEN=ghs_x ANTHROPIC_API_KEY=abc";
+    assert.equal(looksLikeLeak(addLines(`export const env = "${env}";`)), true);
+    assert.equal(looksLikeLeak(addLines("PATH=/a", "HOME=/b", "USER=c", "PWD=/d")), true);
+    // separado por NUL, como no kernel
+    assert.equal(looksLikeLeak(addLines("PATH=/a\0HOME=/b\0USER=c\0RUNNER_OS=Linux")), true);
+});
+
+test("código legítimo do Mike NÃO é tomado por vazamento (calibrado contra 600 commits reais)", () => {
+    for (const ok of [
+        "type ToolResult = { tool_use_id: string; content: string };",
+        "  ) => Promise<{ tool_use_id: string; content: string }[]>;",
+        '{ tool_use_id: "call-1", content: "result" }',
+        "// em produção NODE_ENV=production e SENTRY_DISABLED=true desligam isto",
+        "// DOCUMENT_LIFECYCLE_GUARD=off. NODE_ENV=production",
+        "process.env.HOME = tmp; process.env.PATH = path;",
+        "const home = process.env.HOME ?? '/root'; // HOME=/root no contêiner",
+    ]) assert.equal(looksLikeLeak(addLines(ok)), false, ok);
+});
+
+test("um padrão de chave é recusado também em fixture de teste (falha fechada, decidido)", () => {
+    // O custo: um PR de auto-fix que precise de fixture com forma de chave é recusado e uma pessoa o faz à mão.
+    // O benefício: nunca sai chave real, nem codificada em fixture. Ver o README.
+    assert.equal(looksLikeSecret(addLines('const k = "sk-ant-secret123456";')), true);
+    assert.equal(looksLikeSecret(addLines('const k = "AKIAABCDEFGHIJKLMNOP";')), true);
+    assert.equal(looksLikeSecret(addLines("-----BEGIN PRIVATE KEY-----")), true);
 });
