@@ -31,6 +31,7 @@ import {
     estimateUsage,
     normalizeAnalysis,
     parseAnalysisAnswer,
+    unknownSuggestions,
     withMissingIntake,
     type AnalysisResult,
     type DroppedCitation,
@@ -310,7 +311,7 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
         }
         const partial = missing.length ? { missing } : undefined;
         const { result, dropped } = normalizeAnalysis(value, documentText, yardstick?.findings ?? []);
-        const final = { ...withMissingIntake(result, row.intake ?? []), ...(partial && { partial }) };
+        const final = { ...withMissingIntake(result, row.intake ?? [], unknownSuggestions(value, row.intake ?? [], documentText)), ...(partial && { partial }) };
         if (dropped.length)
             // Counts only: the quotes are contract text.
             console.warn(`[analysis] ${row.id}: ${dropped.length} citation(s) not found in the document were dropped`);
