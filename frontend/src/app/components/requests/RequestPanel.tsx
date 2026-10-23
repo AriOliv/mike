@@ -24,6 +24,7 @@ import { toActivityItems } from "@/app/lib/activityFeed";
 import {
     CHANNEL_LABEL,
     formatDate,
+    nextAction,
     requestPlan,
     slaText,
     requestChip,
@@ -65,11 +66,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export function RequestPanel({
     requestId,
     team,
+    userId = null,
     onClose,
     onChanged,
 }: {
     requestId: string;
     team: { id: string; name: string; email: string }[];
+    /** The signed-in person, to show their next task first. */
+    userId?: string | null;
     onClose: () => void;
     onChanged: () => void;
 }) {
@@ -177,6 +181,7 @@ export function RequestPanel({
         );
     };
     const focusAssignee = () => document.getElementById(`assignee-${r.id}`)?.focus();
+    const next = nextAction(r, userId);
     const chip = requestChip(r.status, { triaged: !!r.triage, pending: !!r.triage && !r.triage.decision });
 
     return (
@@ -196,6 +201,43 @@ export function RequestPanel({
                     >
                         Abrir card <ExternalLink aria-hidden="true" className="h-3 w-3" />
                     </Link>
+                ) : null
+            }
+            banner={
+                next ? (
+                    <div
+                        role="region"
+                        aria-label="Sua tarefa"
+                        className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
+                            next.tone === "wait"
+                                ? "border-amber-200 bg-amber-50"
+                                : "border-blue-200 bg-blue-50"
+                        }`}
+                    >
+                        <div className="min-w-0">
+                            <p className="text-[11px] text-gray-500">
+                                {next.tone === "mine" ? "Sua tarefa" : next.tone === "head" ? "Falta decidir" : "Na vez de quem pediu"}
+                            </p>
+                            <p className="truncate text-sm font-medium text-gray-900">{next.title}</p>
+                            <p className="text-xs text-gray-600">{next.detail}</p>
+                        </div>
+                        {next.action === "review" && r.project_id ? (
+                            <Link
+                                href={`/projects/${r.project_id}/review`}
+                                className="shrink-0 rounded-full bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                Abrir o documento
+                            </Link>
+                        ) : next.action === "assign" ? (
+                            <button
+                                type="button"
+                                onClick={focusAssignee}
+                                className="shrink-0 rounded-full bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                Escolher responsável
+                            </button>
+                        ) : null}
+                    </div>
                 ) : null
             }
             fields={[
