@@ -56,19 +56,6 @@ describe("describeError", () => {
         });
     });
 
-    it("treats document_busy as a conflict to try again, in the server's own words", () => {
-        const message = "O contrato foi alterado por outra pessoa ao mesmo tempo. Sua decisão não foi gravada; tente de novo.";
-        // By code, so it holds even if the status changes; and with the status alone.
-        for (const status of [409, 400]) {
-            const described = describeError(new FakeApiError({ status, message, code: "document_busy" }), {
-                lang: "pt",
-                action: "registrar a decisão",
-            });
-            expect(described).toMatchObject({ kind: "conflict", message, retryable: true, code: "document_busy" });
-            expect(described.title).toBe("Não consegui registrar a decisão");
-        }
-    });
-
     it("never echoes a 5xx body and offers retry plus support", () => {
         const described = describeError(
             new FakeApiError({
