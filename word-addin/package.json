@@ -78,7 +78,10 @@
     "js-yaml": "^4.3.2",
     "proxy-addr": "2.0.8",
     "qs": "^6.15.4",
+    "zod": "^4.6.6",
     "source-map-js": "1.2.2",
-    "@modelcontextprotocol/sdk": "^1.32.0"
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "body-parser@2.3.0": "2.4.0",
+    "body-parser@1.20.8": "1.20.9"
   }
 }

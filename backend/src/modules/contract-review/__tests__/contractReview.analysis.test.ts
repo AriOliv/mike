@@ -5,6 +5,8 @@ import {
     SECTION_LIMITS,
     ANALYSIS_NOTICE,
     estimateUsage,
+    MIN_CALL_OUTPUT_TOKENS,
+    outputBudget,
     parseAnalysisAnswer,
     normalizeAnalysis,
     unknownSuggestions,
@@ -157,6 +159,10 @@ describe("withMissingIntake and estimateUsage", () => {
             output_tokens: 10_000,
             estimated_cost_usd: 0.45,
             estimated: true,
+            per_call: [
+                { input_tokens: 100_000, output_tokens: 10_000, max_tokens: null, estimated_cost_usd: 0.45 },
+                { input_tokens: 0, output_tokens: 0, max_tokens: null, estimated_cost_usd: 0 },
+            ],
         });
         expect(estimateUsage("gemini-4-argon", [{ input: 4, output: 4 }]).estimated_cost_usd).toBeNull();
     });
@@ -171,7 +177,20 @@ describe("withMissingIntake and estimateUsage", () => {
             output_tokens: 12_000,
             estimated_cost_usd: 0.63,
             estimated: false,
+            per_call: [{ input_tokens: 150_000, output_tokens: 12_000, max_tokens: null, estimated_cost_usd: 0.63 }],
         });
+    });
+
+    it("limits a call's output to what the cap still pays, and refuses a call that would only come back cut off", () => {
+        // Sonnet: US$ 3 in / 15 out per million. 0.32 spent of 0.40, 12k-char input (~4k tokens ≈ 0.012).
+        const room = outputBudget("claude-sonnet-5-5", 0.32, 0.4, 12_000, 8_000);
+        expect(room).toBe(Math.floor(((0.4 - 0.32 - 0.012) / 15) * 1e6));
+        expect(room).toBeLessThan(8_000);
+        // The call at that limit cannot take the analysis over the cap.
+        expect(0.32 + 0.012 + (room / 1e6) * 15).toBeLessThanOrEqual(0.4);
+        expect(outputBudget("claude-sonnet-5-5", 0, 0.4, 100_000, 16_000)).toBe(16_000);
+        expect(outputBudget("claude-sonnet-5-5", 0.39, 0.4, 12_000, 8_000)).toBeLessThan(MIN_CALL_OUTPUT_TOKENS);
+        expect(outputBudget("gemini-4-argon", 0.39, 0.4, 12_000, 8_000)).toBe(8_000);
     });
 });
 
