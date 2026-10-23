@@ -79,6 +79,13 @@ describe("RequestPanel: sua tarefa", () => {
         expect(screen.getByRole("button", { name: "Escolher responsável" })).toBeInTheDocument();
     });
 
+    it("never cuts the task title: it wraps, so a long one still reads whole", async () => {
+        state.getRequest.mockResolvedValue(request({ assignee_id: null, assignee_name: null }));
+        render(<RequestPanel requestId="r1" team={team} userId="u9" onClose={() => {}} onChanged={() => {}} />);
+        const title = await screen.findByText("Escolher quem pega este pedido");
+        expect(title.className).not.toMatch(/truncate/);
+    });
+
     it("shows nothing when the task belongs to someone else", async () => {
         state.getRequest.mockResolvedValue(request());
         render(<RequestPanel requestId="r1" team={team} userId="u2" onClose={() => {}} onChanged={() => {}} />);
