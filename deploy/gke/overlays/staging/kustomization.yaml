@@ -26,6 +26,9 @@ configMapGenerator:
       # triage and the request checklist prefill run on Haiku for the whole team,
       # not on each owner's profile model; the analyst's analysis stays on Sonnet
       - LEGAL_TRIAGE_MODEL=claude-haiku-5-5
+      # the analyst's analysis on Sonnet for the whole team, read before the
+      # requester's (or team owner's) profile model, whatever tabular uses
+      - LEGAL_ANALYSIS_MODEL=claude-sonnet-5-5
 images:
   - name: mike-backend
     newName: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike/backend
