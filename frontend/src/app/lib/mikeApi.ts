@@ -4829,7 +4829,7 @@ export async function inviteRequestParticipant(
     return apiRequest(`/requests/${id}/participants`, jsonPost(body));
 }
 
-export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money";
+export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money" | "choice" | "multi_choice";
 
 export interface IntakeItem {
     key: string;
@@ -4838,12 +4838,20 @@ export interface IntakeItem {
     required: boolean;
     hint?: string;
     detail_label?: string;
+    /** For choice and multi_choice: what the person picks from (value is the code the server stores). */
+    options?: { value: string; label: string }[];
+    /** The question cannot be answered "não sei" (it is the request itself). */
+    no_unknown?: boolean;
 }
 
 export interface IntakeAnswer {
     value: string;
     choice?: "sim" | "nao";
     detail?: string;
+    /** For choice and multi_choice: the option codes picked. */
+    selected?: string[];
+    /** The requester pressed "Não sei". */
+    unknown?: true;
     source: "requester" | "inferred";
     confirmed: boolean;
     /** For an inferred answer: the contract's words it came from. */
@@ -4865,9 +4873,20 @@ export interface RequestIntake {
     prefill: "lendo" | "concluido" | "falhou" | null;
     can_answer: boolean;
     template_source: "org" | "padrao";
+    /** The kind these questions are for; absent on a server older than the per-kind checklist. */
+    kind?: string;
+    /** The kind changed since the person last saw the checklist (the triage corrected it). */
+    kind_changed?: { from: string; to: string } | null;
+    /** No question is required for this kind (a legal question): the screen says so instead of "0 de 0". */
+    nothing_to_fill?: boolean;
 }
 
-export type IntakeAnswerInput = string | boolean | { value: string | boolean; detail?: string };
+export type IntakeAnswerInput =
+    | string
+    | boolean
+    | string[]
+    | { value: string | boolean; detail?: string }
+    | { unknown: true };
 
 export async function getRequestIntake(id: string): Promise<RequestIntake> {
     return apiRequest(`/requests/${id}/intake`);
