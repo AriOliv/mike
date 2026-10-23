@@ -1,0 +1,23 @@
+name: ✨ Pedir uma melhoria
+description: Sugerir algo novo ou uma mudança — a IA vai propor como implementar
+title: "[Melhoria] "
+labels: ["auto-pr"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Descreva o que você gostaria em **linguagem simples**.
+        A IA vai propor uma **mudança (PR)** para um humano revisar antes de entrar no produto.
+  - type: textarea
+    id: what
+    attributes:
+      label: O que você gostaria?
+      description: Descreva a melhoria e por que ela ajudaria.
+      placeholder: "Gostaria de exportar o contrato em PDF direto da tela de revisão."
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Qual o objetivo? (opcional)
+      description: O que isso resolve ou facilita no dia a dia.

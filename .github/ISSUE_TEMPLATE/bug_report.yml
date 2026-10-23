@@ -1,0 +1,30 @@
+name: 🐞 Reportar um problema
+description: Algo está errado ou não funciona como esperado — a IA vai propor uma correção
+title: "[Problema] "
+labels: ["auto-pr"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Descreva o problema em **linguagem simples**. Não precisa saber programar.
+        A IA vai ler, tentar corrigir e abrir uma **proposta de mudança (PR)** para um humano revisar.
+        Quanto mais claro o exemplo, melhor a correção.
+  - type: textarea
+    id: what
+    attributes:
+      label: O que está acontecendo?
+      description: O que você fez, o que esperava que acontecesse, e o que aconteceu de verdade.
+      placeholder: "Quando eu clico em 'Salvar', aparece uma mensagem de erro em vez de salvar."
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Onde acontece? (opcional)
+      description: Em qual tela, página ou parte do produto.
+      placeholder: "Na tela de edição de contrato."
+  - type: textarea
+    id: extra
+    attributes:
+      label: Mais alguma coisa? (opcional)
+      description: Prints, mensagem de erro exata, ou um exemplo que ajude a reproduzir.

@@ -1,0 +1,4 @@
+# Guide reporters through the plain-language forms above. Blank issues stay
+# allowed so power users can still open free-form issues (they also trigger the
+# AI, minus the label).
+blank_issues_enabled: true

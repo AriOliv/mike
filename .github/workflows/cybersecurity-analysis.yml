@@ -1,0 +1,50 @@
+# GitHub Actions workflow: whole-repository cybersecurity analysis.
+# Runs the managed-agent security-review skill against the entire codebase and
+# writes findings to the job summary + a tracking issue. Tool vendored under
+# tools/pr-reviewer/. The pull_request trigger is intentionally omitted here: a
+# whole-repo scan on every PR is costly and pr-review already covers PR diffs.
+name: cybersecurity-analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      review_skill:
+        description: "Review skill (folder under tools/pr-reviewer/skills/)"
+        required: false
+        default: "security-review"
+      fail_on:
+        description: "Fail the job on findings at/above this severity (critical|high|medium|low|info|never)"
+        required: false
+        default: "never"
+  schedule:
+    # Weekly on Mondays at 06:17 UTC (off the hour to avoid the scheduler rush).
+    - cron: "17 6 * * 1"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write          # update the tracking issue
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r tools/pr-reviewer/requirements.txt
+
+      - name: Run cybersecurity analysis
+        run: python tools/pr-reviewer/security_scan.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEW_SKILL: ${{ inputs.review_skill || 'security-review' }}
+          FAIL_ON: ${{ inputs.fail_on || 'never' }}
+          GEMINI_MODEL: "gemini-3.6-flash"
