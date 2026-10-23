@@ -126,6 +126,7 @@ export function ReviewClauseCard({
             focused={focused}
             onFocus={onFocus}
             onAccept={decidable ? onAccept : undefined}
+            acceptedNote="Mantida como alteração rastreada para a contraparte."
             onEdit={decidable && !missing && before ? onEdit : undefined}
             editableText={decidable ? after : undefined}
             onReject={decidable ? onReject : undefined}

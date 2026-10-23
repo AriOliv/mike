@@ -190,6 +190,27 @@ describe("notifyError", () => {
         expect(screen.getByRole("link", { name: "Falar com o suporte" })).toBeVisible();
     });
 
+    it("offers 'Relatar este problema' on a real fault only while the feedback feature is on, and opens the box with the failure", async () => {
+        const { feedbackStore, setFeedbackOffered } = await import("./feedback");
+        const fault = () => new MikeApiError({ status: 500, message: "internal", requestId: "req-9" });
+        render(<ToastViewportUI />);
+
+        setFeedbackOffered(false);
+        act(() => void notifyError(fault(), { action: "carregar os pedidos", lang: "pt" }));
+        expect(screen.queryByRole("button", { name: "Relatar este problema" })).toBeNull();
+        act(() => clearToasts());
+
+        setFeedbackOffered(true);
+        act(() => void notifyError(fault(), { action: "carregar os pedidos", lang: "pt" }));
+        act(() => screen.getByRole("button", { name: "Relatar este problema" }).click());
+        expect(feedbackStore.getSnapshot().open).toBe(true);
+        expect(feedbackStore.getDraft().kind).toBe("bug");
+        expect(feedbackStore.getDraft().body).toContain("Não consegui carregar os pedidos");
+        feedbackStore.close();
+        feedbackStore.clearDraft();
+        setFeedbackOffered(false);
+    });
+
     it("offers Entrar on an expired session in Portuguese", () => {
         render(<ToastViewportUI />);
         const original = window.location;

@@ -41,6 +41,8 @@ export {
 
 export {
     resolveEdit,
+    DOCUMENT_BUSY,
+    DOCUMENT_BUSY_DETAIL,
 } from "./documents.edits";
 
 export {
