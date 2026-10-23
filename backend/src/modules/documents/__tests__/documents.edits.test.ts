@@ -143,7 +143,12 @@ describe("resolving a tracked edit", () => {
     ];
     const fake = scriptedDb(Array.from({ length: 6 }, () => lost).flat());
     const rpc = versionRpc();
-    expect(await run({ ...fake.db, rpc } as never)).toMatchObject({ ok: false, status: 409 });
+    expect(await run({ ...fake.db, rpc } as never)).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "document_busy",
+      detail: "O contrato foi alterado por outra pessoa ao mesmo tempo. Sua decisão não foi gravada; tente de novo.",
+    });
     expect(rpc.mock.calls.filter((call) => call[0] === "delete_document_version")).toHaveLength(6);
     expect(fake.calls.some((call) => call.table === "document_edits" && call.op === "update")).toBe(false);
     fake.done();

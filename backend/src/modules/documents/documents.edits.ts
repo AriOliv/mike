@@ -18,9 +18,13 @@ import { devLog } from "../../lib/log";
 // Accept / reject a tracked-change edit
 // ---------------------------------------------------------------------------
 
+/** The edit was not resolved because another write to the document won every retry. Nothing was saved. */
+export const DOCUMENT_BUSY = "document_busy";
+export const DOCUMENT_BUSY_DETAIL = "O contrato foi alterado por outra pessoa ao mesmo tempo. Sua decisão não foi gravada; tente de novo.";
+
 type ResolveResult =
     | { ok: true; body: Record<string, unknown> }
-    | { ok: false; detail: string; status?: number; error?: unknown };
+    | { ok: false; detail: string; status?: number; error?: unknown; code?: typeof DOCUMENT_BUSY };
 
 /** The first attempt plus this many more when another write to the document wins the race. */
 const MAX_CONFLICT_RETRIES = 5;
@@ -46,7 +50,7 @@ export async function resolveEdit(
         const result = await resolveOnce(mode, documentId, editId, userId, userEmail, db);
         if (result.ok || !("conflict" in result)) return result;
         if (attempt >= MAX_CONFLICT_RETRIES)
-            return { ok: false, status: 409, detail: "This document changed. Reopen the latest version and try again." };
+            return { ok: false, status: 409, code: DOCUMENT_BUSY, detail: DOCUMENT_BUSY_DETAIL };
         await sleep(20 * (attempt + 1) + Math.floor(Math.random() * 30));
     }
 }
