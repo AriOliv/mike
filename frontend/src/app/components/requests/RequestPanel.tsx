@@ -6,6 +6,7 @@ import { ExternalLink, Send, UserPlus, X } from "lucide-react";
 import { DetailPanel } from "@/app/components/shared/DetailPanel";
 import { ActivityFeed } from "@/app/components/shared/ActivityFeed";
 import { AgentPlan } from "@/app/components/shared/AgentPlan";
+import { StageStrip } from "./StageStrip";
 import { StatusChip } from "@/app/components/ui/status-chip";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
@@ -48,9 +49,9 @@ function criticalCount(events: { action: string; after?: unknown }[]): number {
     return n > 0 ? n : 1;
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, id, children }: { title: string; id?: string; children: ReactNode }) {
     return (
-        <section className="mt-6">
+        <section id={id} className="mt-6 scroll-mt-4">
             <h3 className="mb-2 text-xs font-medium text-gray-500">{title}</h3>
             {children}
         </section>
@@ -204,7 +205,9 @@ export function RequestPanel({
                 ) : null
             }
             banner={
-                next ? (
+                next || r.stage ? (
+                    <div className="space-y-3">
+                        {next ? (
                     <div
                         role="region"
                         aria-label="Sua tarefa"
@@ -236,7 +239,17 @@ export function RequestPanel({
                             >
                                 Escolher responsável
                             </button>
+                        ) : next.action === "checklist" ? (
+                            <a
+                                href="#checklist-do-pedido"
+                                className="shrink-0 rounded-full bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                Preencher no lugar
+                            </a>
                         ) : null}
+                    </div>
+                ) : null}
+                        {r.stage ? <StageStrip stage={r.stage} stages={r.stages} /> : null}
                     </div>
                 ) : null
             }
@@ -312,14 +325,16 @@ export function RequestPanel({
                     ) : (
                         <StatusChip status="rodando" label="Fazendo a triagem…" />
                     )}
-                    <AgentPlan
-                        className="mt-5"
-                        title="Plano"
-                        steps={requestPlan(r)}
-                        onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
-                    />
+                    {r.stage ? null : (
+                        <AgentPlan
+                            className="mt-5"
+                            title="Plano"
+                            steps={requestPlan(r)}
+                            onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
+                        />
+                    )}
 
-                    <Section title="Checklist do pedido">
+                    <Section title="Checklist do pedido" id="checklist-do-pedido">
                         <RequestIntakeSection
                             requestId={r.id}
                             audience="team"

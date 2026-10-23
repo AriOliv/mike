@@ -18,6 +18,7 @@ export {
     inviteParticipant,
     revokeParticipant,
     whoAmI,
+    listLegalTeamMembers,
     TRIAGE_JOB_KIND,
     type CreateRequestInput,
     type RequestPublicView,

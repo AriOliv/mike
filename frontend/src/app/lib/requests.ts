@@ -8,6 +8,8 @@ import type {
     RequestListItem,
     RequesterStep,
     RequestSla,
+    RequestStage,
+    RequestStageStrip,
     RequestStatus,
     RequestUrgency,
 } from "./mikeApi";
@@ -101,6 +103,48 @@ export function slaTone(sla: RequestSla): "default" | "atencao" | "critico" {
     return "default";
 }
 
+/**
+ * "agora", "há 2 h", "ontem", "há 3 dias", then the date ("12/10") past a
+ * week: relative is easier to read while it is recent, and a date is easier
+ * to find later.
+ */
+export function sinceText(iso: string, now: number = Date.now()): string {
+    const ms = now - Date.parse(iso);
+    if (!Number.isFinite(ms)) return "";
+    const minutes = Math.floor(ms / 60_000);
+    if (minutes < 1) return "agora";
+    if (minutes < 60) return `há ${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `há ${hours} h`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return "ontem";
+    if (days <= 7) return `há ${days} dias`;
+    return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" });
+}
+
+/**
+ * Who has the ball and since when, in words: "com Fulano, desde ontem",
+ * "aguardando Ana, há 2 h", "sem responsável, desde ontem". Without a `since`
+ * (a request older than the history) the time is left out.
+ */
+export function stageHolderText(
+    owner: { kind: "agent" | "person" | "requester" | "none"; name: string | null },
+    since: string | null,
+    now: number = Date.now(),
+): string {
+    const when = since ? sinceText(since, now) : "";
+    const time = when ? (when.startsWith("há") || when === "agora" ? `, ${when}` : `, desde ${when}`) : "";
+    if (owner.kind === "requester") return `aguardando ${owner.name ?? "quem pediu"}${time}`;
+    if (owner.kind === "agent") return `com o ${(owner.name ?? "agente").toLowerCase()}${time}`;
+    if (owner.kind === "person" && owner.name) return `com ${owner.name}${time}`;
+    return `sem responsável${time}`;
+}
+
+/** "Etapa 3 de 5", or null on the two ends, which do not count. */
+export function positionText(position: { index: number; of: number } | null): string | null {
+    return position ? `Etapa ${position.index} de ${position.of}` : null;
+}
+
 export type NextAction = {
     /** What is waiting, in a few words ("Analisar e decidir"). */
     title: string;
@@ -108,8 +152,16 @@ export type NextAction = {
     detail: string;
     /** "mine" is the signed-in person's task; "wait" is somebody else's turn. */
     tone: "mine" | "head" | "wait";
-    /** The button: open the document, or pick the owner. */
-    action: "review" | "assign" | null;
+    /** The button: open the document, pick the owner, or fill the checklist for whoever asked. */
+    action: "review" | "assign" | "checklist" | null;
+};
+
+/** What the person does in each stage they can hold; "recebido" and "concluido" have no task. */
+const STAGE_TASK: Partial<Record<RequestStage, string>> = {
+    triagem: "Revisar a triagem",
+    analise: "Analisar e decidir",
+    negociacao: "Negociar",
+    assinatura: "Assinar",
 };
 
 /**
@@ -119,6 +171,8 @@ export type NextAction = {
  */
 export function nextAction(request: LegalRequest, userId: string | null, now: number = Date.now()): NextAction | null {
     if (request.status === "entregue" || request.status === "cancelado") return null;
+    // With the spine, the stage is the one source: the card and the strip cannot disagree.
+    if (request.stage) return nextActionFromStage(request, request.stage, userId, now);
     if (request.status === "aguardando_solicitante") {
         const who = request.requester_name ?? request.requester_email;
         return { title: `Aguardando ${who}`, detail: "o prazo está pausado", tone: "wait", action: null };
@@ -131,6 +185,41 @@ export function nextAction(request: LegalRequest, userId: string | null, now: nu
     if (userId && request.assignee_id === userId) {
         return {
             title: "Analisar e decidir",
+            detail: slaText(request.sla, request.due_at, now),
+            tone: "mine",
+            action: request.project_id ? "review" : null,
+        };
+    }
+    return null;
+}
+
+function nextActionFromStage(
+    request: LegalRequest,
+    stage: RequestStageStrip,
+    userId: string | null,
+    now: number,
+): NextAction | null {
+    const { owner } = stage;
+    if (stage.stage === "concluido") return null;
+    if (owner.kind === "requester") {
+        const who = owner.name ?? request.requester_name ?? request.requester_email;
+        return {
+            title: `Aguardando ${who}`,
+            detail: stage.stage === "checklist" ? "falta o checklist do pedido" : "o prazo está pausado",
+            tone: "wait",
+            // The team can answer the checklist for them; the link goes to it.
+            action: stage.stage === "checklist" && request.can_decide !== undefined ? "checklist" : null,
+        };
+    }
+    if (owner.kind === "none") {
+        return request.can_decide
+            ? { title: "Escolher quem pega este pedido", detail: slaText(request.sla, request.due_at, now), tone: "head", action: "assign" }
+            : null;
+    }
+    const task = STAGE_TASK[stage.stage];
+    if (owner.kind === "person" && userId && owner.id === userId && task) {
+        return {
+            title: task,
             detail: slaText(request.sla, request.due_at, now),
             tone: "mine",
             action: request.project_id ? "review" : null,
