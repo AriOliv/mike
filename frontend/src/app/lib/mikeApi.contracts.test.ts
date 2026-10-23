@@ -43,6 +43,7 @@ import {
     getIntegrationStatus,
     downloadObligationIcs,
     getContractAlerts,
+    getContractAmendments,
     getObligationAlerts,
     getObligationOwners,
     getObligations,
@@ -230,6 +231,12 @@ describe("radar", () => {
         fetchMock.mockImplementation(async () => jsonResponse([{ id: "o1", days_left: -2 }]));
         expect(await getObligationAlerts()).toEqual([{ id: "o1", days_left: -2 }]);
         expect(lastFetchCall().url).toMatch(/\/obligations\/alerts$/);
+    });
+
+    it("lists the amendments tied to a contract, the id encoded in the path", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ id: "r1", code: "LEG-0001" }]));
+        expect(await getContractAmendments("p/1")).toEqual([{ id: "r1", code: "LEG-0001" }]);
+        expect(lastFetchCall().url).toMatch(/\/projects\/p%2F1\/amendments$/);
     });
 
     it("lists a contract's alerts, the id encoded in the path", async () => {

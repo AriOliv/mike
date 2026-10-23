@@ -188,8 +188,22 @@ jobs:
           --moduleResolution nodenext --target es2022 --skipLibCheck
           --esModuleInterop --types node e2e/*.ts playwright.config.ts
 
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-chromium
+
+      # A cache miss downloads the browsers (the CDN download is what stalls
+      # the job for ~30 min on bad days); a hit only installs the OS libs.
       - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS dependencies
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Verify and start deterministic model provider
         run: |

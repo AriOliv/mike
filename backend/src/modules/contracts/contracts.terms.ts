@@ -6,6 +6,7 @@
 // recorded — a tracked obligation nobody can trace is worse than a blank.
 
 import type { Db } from "../../lib/supabase";
+import { recordCardEvent } from "./contracts.events";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { completeText } from "../../lib/llm";
 import {
@@ -328,6 +329,91 @@ async function syncRenewalObligations(
         const { error: deleteError } = await db.from("obligations").delete().in("id", stale);
         if (deleteError) throw deleteError;
     }
+}
+
+export type AmendedTerm = { applied: boolean; before: string | null; after: string | null };
+
+/**
+ * An amendment that was delivered changes the term of the contract it amends.
+ * The end of the term and the notice deadline are recomputed from it (the
+ * notice period itself stays the contract's), the generated deadlines move in
+ * place, and the card says what changed and why. Nothing to do when the term
+ * already ends that day, or when the contract is not in the team's
+ * organization. `source` is a label ("Aditivo LEG-0042 …"), never contract text.
+ */
+export async function applyAmendedTerm(
+    db: Db,
+    input: {
+        projectId: string;
+        orgId: string;
+        termEnd: string;
+        source: string;
+        actor: { userId: string; name: string | null };
+    },
+): Promise<AmendedTerm> {
+    const none: AmendedTerm = { applied: false, before: null, after: null };
+    const { data: card, error: cardError } = await db
+        .from("projects")
+        .select("id, user_id, org_id, archived_at")
+        .eq("id", input.projectId)
+        .maybeSingle();
+    if (cardError) throw cardError;
+    const project = card as { id: string; user_id: string; org_id: string | null; archived_at: string | null } | null;
+    if (!project || project.archived_at || project.org_id !== input.orgId) return none;
+
+    const { data: current, error: termsError } = await db
+        .from("contract_terms")
+        .select(COLUMNS + ", user_id")
+        .eq("project_id", input.projectId)
+        .maybeSingle();
+    if (termsError) throw termsError;
+    const existing = current as unknown as (ContractTerms & { user_id: string }) | null;
+    if (existing?.term_end === input.termEnd) return { applied: false, before: input.termEnd, after: input.termEnd };
+
+    const noticeDays = existing?.notice_days ?? null;
+    const terms: ContractTerms = {
+        auto_renewal: existing?.auto_renewal ?? null,
+        term_end: input.termEnd,
+        notice_days: noticeDays,
+        notice_deadline: noticeDays !== null ? shiftDays(input.termEnd, -noticeDays) : null,
+        penalty_value: existing?.penalty_value ?? null,
+        penalty_recurrence: existing?.penalty_recurrence ?? null,
+        liability_cap: existing?.liability_cap ?? null,
+        unilateral_amendment: existing?.unilateral_amendment ?? null,
+        amendment_notes: existing?.amendment_notes ?? null,
+        price_regulatory_impact: existing?.price_regulatory_impact ?? null,
+        sources: { ...(existing?.sources ?? {}), term_end: input.source },
+    };
+    const now = new Date().toISOString();
+    const owner = existing?.user_id ?? project.user_id;
+    const write = existing
+        ? await db
+              .from("contract_terms")
+              .update({
+                  term_end: terms.term_end,
+                  notice_deadline: terms.notice_deadline,
+                  sources: terms.sources,
+                  updated_at: now,
+              })
+              .eq("project_id", input.projectId)
+        : await db
+              .from("contract_terms")
+              .insert({ project_id: input.projectId, user_id: owner, ...terms, extracted_at: now, updated_at: now });
+    if (write.error) throw write.error;
+
+    await syncRenewalObligations(db, input.projectId, owner, terms);
+    await recordCardEvent(db, {
+        projectId: input.projectId,
+        orgId: project.org_id,
+        actorType: "user",
+        actorId: input.actor.userId,
+        actorName: input.actor.name,
+        action: "terms.amended",
+        field: "term_end",
+        before: existing?.term_end ?? null,
+        after: { term_end: terms.term_end, notice_deadline: terms.notice_deadline, from: input.source },
+    });
+    return { applied: true, before: existing?.term_end ?? null, after: terms.term_end };
 }
 
 export type TermsSyncSummary = { extracted: number; skipped: number; errors: number };
