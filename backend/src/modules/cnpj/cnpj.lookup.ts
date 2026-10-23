@@ -5,6 +5,7 @@
 // The partners' names (QSA) are left out on purpose: personal data we do not need.
 
 import type { Db } from "../../lib/supabase";
+import { egressProxyFor, proxiedFetch } from "../../lib/egressProxy";
 import { guardedFetch } from "../../lib/mcp/client";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 
@@ -95,8 +96,18 @@ export function fromReceitaWs(cnpj: string, j: Record<string, unknown>): CnpjRec
 
 export type Fetcher = (url: string) => Promise<{ status: number; json: () => Promise<unknown> }>;
 
-const defaultFetcher: Fetcher = (url) =>
-    guardedFetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS) }, { label: "CNPJ lookup URL" });
+/**
+ * With CNPJ_EGRESS_PROXY_URL (or the shared EGRESS_PROXY_URL) set, the two
+ * hosts above are reached through that proxy, and only those two. Without it,
+ * the guarded direct path, as before.
+ */
+export const defaultFetcher: Fetcher = (url) => {
+    const init = { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS) };
+    const proxyUrl = egressProxyFor("CNPJ_EGRESS_PROXY_URL");
+    return proxyUrl
+        ? proxiedFetch(url, init, { proxyUrl, allowedHosts: CNPJ_HOSTS })
+        : guardedFetch(url, init, { label: "CNPJ lookup URL" });
+};
 
 type Source = { id: "brasilapi" | "receitaws"; url: (c: string) => string; parse: typeof fromBrasilApi };
 const SOURCES: Source[] = [
@@ -142,8 +153,10 @@ export async function lookupCnpj(
             const { error } = await db.from("cnpj_lookups").upsert({ cnpj, payload: record, fetched_at });
             if (error) return internalFailure(error);
             return ok({ ...record, fonte: source.id, consultado_em: fetched_at });
-        } catch {
-            // Timeout, blocked egress or a bad body: try the next source.
+        } catch (error) {
+            // Timeout, blocked egress, a bad body or a malformed proxy URL: try the
+            // next source, but leave the reason in the log (name only: no URL, it may carry credentials).
+            console.warn(`[cnpj] ${source.id} failed: ${error instanceof Error ? error.name : "error"}`);
         }
     }
     // A stale answer beats none when both sources are down.
