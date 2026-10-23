@@ -1,0 +1,75 @@
+# RASCUNHO — .github/workflows/ci.yml no fork AriOliv/mike. Não executado.
+# Roda em todo PR: lint/typecheck/testes do backend e frontend + build das imagens
+# (sem push). Barato e sem segredos: PRs de fork externo também rodam.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, clm/main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test -- --run
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: npx tsc --noEmit
+      - run: npm test -- --run --passWithNoTests
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci.invalid/supabase
+          NEXT_PUBLIC_API_BASE_URL: https://ci.invalid/api
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: ci-placeholder
+
+  migrations:
+    # Aplica schema.sql + todas as migrações em ordem num Postgres limpo: pega
+    # migração quebrada antes de chegar em staging.
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: supabase/postgres:17.6.1.136
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: apply schema + migrations
+        env: { PGPASSWORD: postgres }
+        run: |
+          set -euo pipefail
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f backend/schema.sql
+          for f in $(ls backend/migrations/*.sql | sort); do
+            echo "== $f"; psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }

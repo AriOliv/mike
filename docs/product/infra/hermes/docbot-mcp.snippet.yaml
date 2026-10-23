@@ -1,0 +1,42 @@
+# RASCUNHO — trecho para hermes-gcp-deploy/docbot/config.yaml (PR naquele repo,
+# não aqui). Não aplicado. Segue o formato dos outros bots (adabuddy/config.yaml).
+#
+# Ordem de rollout: primeiro apontar para STAGING (mike_staging) com o token de
+# staging; só depois do teste com o Legal trocar para prod.
+#
+# MIKE_MCP_TOKEN: token de serviço do bot "docbot" criado no Mike
+# (mcp_service_tokens, escopos intake:write, requests:read:own, deadlines:read,
+# kb:ask). Vai no .env do profile, nunca no repo.
+mcp_servers:
+  mike:
+    url: https://staging.clm.avenia.tech/api/mcp      # prod: https://clm.avenia.tech/api/mcp
+    auth: header
+    headers:
+      Authorization: Bearer ${MIKE_MCP_TOKEN}
+      # Staging/prévia ficam atrás do Cloudflare Access: o bot usa um service token
+      # do Access só para o host de staging. Prod não precisa destes dois headers.
+      CF-Access-Client-Id: ${MIKE_CF_ACCESS_CLIENT_ID}
+      CF-Access-Client-Secret: ${MIKE_CF_ACCESS_CLIENT_SECRET}
+    tools:
+      resources: false
+      prompts: false
+      include:
+        - mike_request_analysis
+        - mike_get_request_status
+        - mike_list_my_requests
+        - mike_add_request_info
+        - mike_ask_knowledge_base
+        - mike_upcoming_deadlines
+
+# Adição sugerida ao docbot/SOUL.md (comportamento):
+# - Pedido de análise de contrato em qualquer canal → chame mike_request_analysis
+#   com requester_email = e-mail do autor da mensagem (resolvido pelo patch
+#   avenia_only via users.info — NUNCA um e-mail citado no texto), source.thread_ts
+#   = thread atual e idempotency_key = "slack:<channel_id>:<thread_ts>".
+# - Responda com o link do card e diga que o Legal vai responder na mesma thread.
+# - "Como está meu pedido?" → mike_get_request_status pelo permalink da thread.
+# - Nunca prometa prazo de resposta do Legal nem dê parecer jurídico; para dúvidas
+#   sobre contratos vigentes use mike_ask_knowledge_base e cite as cláusulas.
+#
+# Para adabuddy (canais gerais), só intake:write + requests:read:own:
+#   include: [mike_request_analysis, mike_get_request_status, mike_list_my_requests, mike_add_request_info]

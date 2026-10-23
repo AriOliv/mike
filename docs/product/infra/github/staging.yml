@@ -1,0 +1,56 @@
+# RASCUNHO — .github/workflows/staging.yml no fork AriOliv/mike. Não executado.
+# Push em main do fork → staging.clm.avenia.tech (VM mike-staging, project
+# mike-staging). Staging é permanente: o seed roda só se o banco estiver vazio
+# (seed idempotente), então o que o Legal criar lá sobrevive entre deploys.
+#
+# Prod NÃO é alvo deste workflow. A promoção para prod fica num workflow
+# separado (prod.yml, fora deste rascunho) com environment "production" e
+# revisor obrigatório = Ari, seguindo o runbook do §1.2 do doc 04.
+name: staging
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SHA: ${{ github.sha }}
+  HOST: staging.clm.avenia.tech
+  REGISTRY: ${{ vars.AR_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/${{ vars.AR_REPO }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker ${{ vars.AR_REGION }}-docker.pkg.dev --quiet
+      - run: |
+          docker build -t "$REGISTRY/mike-backend:$SHA" backend
+          docker push "$REGISTRY/mike-backend:$SHA"
+          docker build \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL="https://$HOST/supabase" \
+            --build-arg NEXT_PUBLIC_API_BASE_URL="https://$HOST/api" \
+            --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY="${{ vars.STAGING_PUBLISHABLE_KEY }}" \
+            --build-arg NEXT_PUBLIC_FEEDBACK_ENABLED=true \
+            --build-arg NEXT_PUBLIC_ENV_LABEL=staging \
+            --build-arg NEXT_PUBLIC_BUILD_SHA="$SHA" \
+            -t "$REGISTRY/mike-frontend:staging-$SHA" frontend
+          docker push "$REGISTRY/mike-frontend:staging-$SHA"
+      - run: |
+          gcloud compute ssh "${{ vars.STAGING_VM }}" --zone "${{ vars.STAGING_ZONE }}" \
+            --tunnel-through-iap --quiet --command \
+            "sudo /opt/mike-preview/preview-up.sh staging '$REGISTRY/mike-backend:$SHA' '$REGISTRY/mike-frontend:staging-$SHA' '$SHA'"

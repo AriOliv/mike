@@ -1,0 +1,23 @@
+# RASCUNHO — config do cloudflared na VM mike-staging (tunnel "mike-preview").
+# Não executado. Credenciais do tunnel ficam em /etc/cloudflared/<id>.json (0600),
+# fora do repo.
+#
+# DNS (Cloudflare, proxied/laranja):
+#   staging.clm.avenia.tech     CNAME <tunnel-id>.cfargotunnel.com
+#   *.preview.clm.avenia.tech   CNAME <tunnel-id>.cfargotunnel.com
+# clm.avenia.tech (prod) NÃO muda: continua A record DNS-only para a VM de prod.
+#
+# Cloudflare Access (Zero Trust → Applications → Self-hosted):
+#   app "Mike staging + prévias", domínios staging.clm.avenia.tech e *.preview.clm.avenia.tech
+#   policy Allow: login method Google, emails ending in @avenia.io
+#   policy Service Auth: service token "github-preview-smoke" (só para o smoke do CI)
+#   session duration 24h
+tunnel: mike-preview
+credentials-file: /etc/cloudflared/mike-preview.json
+
+ingress:
+  - hostname: staging.clm.avenia.tech
+    service: http://mike-preview-caddy:80
+  - hostname: "*.preview.clm.avenia.tech"
+    service: http://mike-preview-caddy:80
+  - service: http_status:404
