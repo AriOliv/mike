@@ -13,7 +13,8 @@ vi.mock("../../contracts/contracts.service", () => contracts);
 vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn(async () => undefined) }));
 
 import { analysisDocx, analysisMarkdown, decideAnalysisRedline, exportAnalysis, listRedlineDecisions } from "../contractReview.service";
-import type { AnalysisResult } from "../contractReview.analysis";
+import { withMissingIntake, type AnalysisResult } from "../contractReview.analysis";
+import JSZip from "jszip";
 
 const caller = { userId: "u1", userEmail: "time@example.com" };
 const ID = "11111111-2222-4333-8444-555555555555";
@@ -206,6 +207,20 @@ describe("export", () => {
         expect(md).not.toContain("prazo de 30 dias");
         expect(md).toContain("- Aprovação do founder. (depende de: founder)");
         expect(md).toContain("🟡 *Pontos de atenção*\n- Nenhum.");
+    });
+
+    it("exports the three server-added 'não sei' open points, after the model's, in .md and .docx", async () => {
+        const intake = ["Valor estimado", "Prazo desejado", "Foro"].map((label, i) => ({ key: `k${i}`, label, value: "Não sei", unknown: true }));
+        const withUnknown = withMissingIntake(result, intake);
+        const md = analysisMarkdown("Contrato Exemplo", withUnknown);
+        const lines = md.split("\n");
+        const at = lines.findIndex((l) => l.includes("Aprovação do founder"));
+        expect(lines.slice(at + 1, at + 4).map((l) => l.replace(/^- Pedido sem resposta: "(.*)" \(marcado.*$/, "$1"))).toEqual(["Valor estimado", "Prazo desejado", "Foro"]);
+        const file = await analysisDocx(md);
+        expect(file.subarray(0, 2).toString()).toBe("PK");
+        const xml = (await JSZip.loadAsync(file).then((z) => z.file("word/document.xml")!.async("string")));
+        for (const label of ["Valor estimado", "Prazo desejado", "Foro"]) expect(xml).toContain(label);
+        expect(xml.indexOf("Aprovação do founder")).toBeLessThan(xml.indexOf("Valor estimado"));
     });
 
     it("builds a Word file from it", async () => {

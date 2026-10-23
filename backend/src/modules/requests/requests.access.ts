@@ -82,6 +82,8 @@ export type RequestRow = {
     term_start: string | null;
     term_months: number | null;
     terms_inferred: Record<string, unknown>;
+    /** The kind the checklist was last shown or answered for (to notice a corrected kind). */
+    intake_kind: string | null;
     created_at: string;
     updated_at: string;
 };
@@ -91,7 +93,7 @@ export const REQUEST_COLUMNS =
     "requester_area_source, kind, title, " +
     "counterparty, context, urgency, needed_by, due_at, status, paused_at, paused_seconds, " +
     "assignee_id, assigned_at, assigned_by, summary, triage, delivery, delivered_at, source, intake, intake_completed_at, " +
-    "critical_alert_at, counterparty_email, term_start, term_months, terms_inferred, created_at, updated_at";
+    "critical_alert_at, counterparty_email, term_start, term_months, terms_inferred, intake_kind, created_at, updated_at";
 
 const NOT_FOUND = failure("not_found", "Pedido não encontrado.");
 
