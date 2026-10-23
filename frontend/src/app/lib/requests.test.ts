@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LegalRequest, RequestListItem } from "./mikeApi";
+import type { LegalRequest, RequestListItem, RequestStageStrip } from "./mikeApi";
 import {
     filterQueue,
     formatDate,
     nextAction,
+    positionText,
     requestPlan,
+    sinceText,
+    stageHolderText,
     slaText,
     slaTone,
     sortQueue,
@@ -197,6 +200,43 @@ describe("orchestration plan", () => {
     });
 });
 
+describe("stage strip words", () => {
+    const at = (iso: string) => Date.parse(iso);
+    const base = at("2026-10-20T12:00:00Z");
+
+    it("says how long ago in the units a person thinks in, then a date past a week", () => {
+        expect(sinceText("2026-10-20T11:59:40Z", base)).toBe("agora");
+        expect(sinceText("2026-10-20T11:15:00Z", base)).toBe("há 45 min");
+        expect(sinceText("2026-10-20T09:00:00Z", base)).toBe("há 3 h");
+        expect(sinceText("2026-10-19T09:00:00Z", base)).toBe("ontem");
+        expect(sinceText("2026-10-16T12:00:00Z", base)).toBe("há 4 dias");
+        expect(sinceText("2026-10-05T12:00:00Z", base)).toBe("05/10");
+        expect(sinceText("lixo", base)).toBe("");
+    });
+
+    it("names who has the ball and since when", () => {
+        expect(stageHolderText({ kind: "person", name: "Téo" }, "2026-10-19T09:00:00Z", base)).toBe("com Téo, desde ontem");
+        expect(stageHolderText({ kind: "person", name: "Téo" }, "2026-10-20T09:00:00Z", base)).toBe("com Téo, há 3 h");
+        expect(stageHolderText({ kind: "agent", name: "Agente de triagem" }, "2026-10-20T11:00:00Z", base)).toBe(
+            "com o agente de triagem, há 1 h",
+        );
+        expect(stageHolderText({ kind: "requester", name: "Ana" }, "2026-10-19T09:00:00Z", base)).toBe("aguardando Ana, desde ontem");
+        expect(stageHolderText({ kind: "requester", name: null }, null, base)).toBe("aguardando quem pediu");
+        expect(stageHolderText({ kind: "none", name: null }, "2026-10-19T09:00:00Z", base)).toBe("sem responsável, desde ontem");
+    });
+
+    it("leaves the time out for a request older than the history", () => {
+        expect(stageHolderText({ kind: "person", name: "Téo" }, null, base)).toBe("com Téo");
+        expect(stageHolderText({ kind: "person", name: null }, null, base)).toBe("sem responsável");
+        expect(stageHolderText({ kind: "agent", name: null }, null, base)).toBe("com o agente");
+    });
+
+    it("counts the stage position, and says nothing on the two ends", () => {
+        expect(positionText({ index: 3, of: 5 })).toBe("Etapa 3 de 5");
+        expect(positionText(null)).toBeNull();
+    });
+});
+
 describe("next action", () => {
     const mine = { assignee_id: "u1", assignee_name: "Téo", status: "em_andamento" as const, project_id: "p1" };
 
@@ -238,5 +278,76 @@ describe("next action", () => {
     it("has no next action once the request is closed", () => {
         expect(nextAction(request({ ...mine, status: "entregue" }), "u1", now)).toBeNull();
         expect(nextAction(request({ ...mine, status: "cancelado" }), "u1", now)).toBeNull();
+    });
+});
+
+describe("next action from the server stage", () => {
+    const strip = (stage: RequestStageStrip["stage"], owner: RequestStageStrip["owner"]): RequestStageStrip => ({
+        stage,
+        label: stage,
+        position: null,
+        owner,
+        since: null,
+        strip: [],
+    });
+    const person = { kind: "person" as const, id: "u1", name: "Téo" };
+    const base = { assignee_id: "u1", assignee_name: "Téo", status: "em_andamento" as const, project_id: "p1" };
+
+    it("never contradicts the strip: a checklist open means it is the requester's turn, whatever the status says", () => {
+        const r = request({ ...base, can_decide: true, stage: strip("checklist", { kind: "requester", id: null, name: "Ana" }) });
+        expect(nextAction(r, "u1", now)).toEqual({
+            title: "Aguardando Ana",
+            detail: "falta o checklist do pedido",
+            tone: "wait",
+            action: "checklist",
+        });
+    });
+
+    it("gives the person the task of the stage they hold", () => {
+        for (const [stage, title] of [
+            ["triagem", "Revisar a triagem"],
+            ["analise", "Analisar e decidir"],
+            ["negociacao", "Negociar"],
+            ["assinatura", "Assinar"],
+        ] as const) {
+            expect(nextAction(request({ ...base, stage: strip(stage, person) }), "u1", now)).toMatchObject({
+                title,
+                tone: "mine",
+                action: "review",
+            });
+        }
+    });
+
+    it("has no task of its own in recebido, and none for someone who does not hold the stage", () => {
+        expect(nextAction(request({ ...base, stage: strip("recebido", person) }), "u1", now)).toBeNull();
+        expect(nextAction(request({ ...base, stage: strip("analise", person) }), "u2", now)).toBeNull();
+        expect(nextAction(request({ ...base, stage: strip("analise", { kind: "agent", id: null, name: "Agente" }) }), "u1", now)).toBeNull();
+    });
+
+    it("says it is the requester's turn in any stage when the Legal asked and waits, without the checklist link", () => {
+        const r = request({
+            ...base,
+            status: "aguardando_solicitante",
+            can_decide: true,
+            stage: strip("analise", { kind: "requester", id: null, name: "Ana" }),
+        });
+        expect(nextAction(r, "u1", now)).toEqual({ title: "Aguardando Ana", detail: "o prazo está pausado", tone: "wait", action: null });
+    });
+
+    it("asks the Head to pick an owner when a working stage has none, and nobody else", () => {
+        const none = { kind: "none" as const, id: null, name: null };
+        expect(nextAction(request({ ...base, can_decide: true, stage: strip("analise", none) }), "u9", now)).toMatchObject({
+            tone: "head",
+            action: "assign",
+        });
+        expect(nextAction(request({ ...base, can_decide: false, stage: strip("analise", none) }), "u9", now)).toBeNull();
+    });
+
+    it("has no card on a finished request", () => {
+        expect(nextAction(request({ ...base, stage: strip("concluido", { kind: "none", id: null, name: null }) }), "u1", now)).toBeNull();
+    });
+
+    it("falls back to the status rules when the request carries no stage", () => {
+        expect(nextAction(request(base), "u1", now)).toMatchObject({ title: "Analisar e decidir", tone: "mine" });
     });
 });
