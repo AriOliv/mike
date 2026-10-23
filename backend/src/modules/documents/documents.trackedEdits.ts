@@ -113,6 +113,50 @@ export async function applyTrackedEditsToDocument(params: ApplyParams): Promise<
   }
 }
 
+/**
+ * Writes `bytes` as a new, still INACTIVE version of the document (file + row), inheriting the filename of
+ * the most recent version so renames carry forward. Activation is the caller's job: it must go through
+ * `activateDocumentVersionIfCurrent`, so a write that lost a race can be discarded.
+ */
+export async function createInactiveVersion(
+  db: Db,
+  documentId: string,
+  userId: string,
+  bytes: Buffer,
+): Promise<
+  | { ok: true; versionRowId: string; versionNumber: number; storagePath: string; filename: string }
+  | { ok: false; error: string }
+> {
+  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const versionId = crypto.randomUUID().replace(/-/g, "");
+  const newPath = `documents/${userId}/${documentId}/edits/${versionId}.docx`;
+  await uploadFile(newPath, ab, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  const { data: prevRow } = await db
+    .from("document_versions")
+    .select("filename, created_at")
+    .eq("document_id", documentId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const filename = (prevRow?.filename as string | null)?.trim() || "Untitled document";
+  const { data: versionRow, error: verErr } = await createDocumentVersion(
+    db,
+    {
+      document_id: documentId,
+      storage_path: newPath,
+      source: "assistant_edit",
+      filename,
+      file_type: "docx",
+      size_bytes: bytes.byteLength,
+      page_count: null,
+      content_sha256: contentSha256(bytes),
+    },
+    { activate: false },
+  );
+  if (verErr || !versionRow) return { ok: false, error: "Failed to record document version." };
+  return { ok: true, versionRowId: versionRow.id as string, versionNumber: versionRow.version_number, storagePath: newPath, filename };
+}
+
 async function applyOnce(params: ApplyParams): Promise<ApplyTrackedEditsResult> {
   const { documentId, userId, userEmail, edits, db, reuseVersion } = params;
 
@@ -218,46 +262,12 @@ async function applyOnce(params: ApplyParams): Promise<ApplyTrackedEditsResult> 
       return { ok: false, error: "Failed to update document version. Read the latest version and try again." };
     }
   } else {
-    const versionId = crypto.randomUUID().replace(/-/g, "");
-    newPath = `documents/${userId}/${documentId}/edits/${versionId}.docx`;
-    await uploadFile(
-      newPath,
-      ab,
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    );
-
-    // Inherit the filename from the most recent prior version so
-    // user-applied renames carry forward through further edits. Malformed
-    // legacy rows without a filename get a neutral placeholder, not the
-    // parent document filename. We intentionally do NOT append "[Edited Vn]"
-    // — the version number is surfaced separately as a tag in the UI.
-    const { data: prevRow } = await db
-      .from("document_versions")
-      .select("filename, created_at")
-      .eq("document_id", documentId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const inheritedFilename =
-      (prevRow?.filename as string | null)?.trim() || "Untitled document";
-    versionFilename = inheritedFilename;
-
-    const { data: versionRow, error: verErr } = await createDocumentVersion(db, {
-        document_id: documentId,
-        storage_path: newPath,
-        source: "assistant_edit",
-
-        filename: inheritedFilename,
-        file_type: "docx",
-        size_bytes: editedBytes.byteLength,
-        page_count: null,
-        content_sha256: contentSha256(editedBytes),
-      }, { activate: false });
-    if (verErr || !versionRow) {
-      return { ok: false, error: "Failed to record document version." };
-    }
-    versionRowId = versionRow.id as string;
-    nextVersionNumber = versionRow.version_number;
+    const created = await createInactiveVersion(db, documentId, userId, editedBytes);
+    if (!created.ok) return { ok: false, error: created.error };
+    versionRowId = created.versionRowId;
+    nextVersionNumber = created.versionNumber;
+    newPath = created.storagePath;
+    versionFilename = created.filename;
   }
 
   // Insert one row per change
