@@ -1,0 +1,26 @@
+# Builds backend + frontend images for the GKE staging/preview stack and pushes
+# them to Artifact Registry (southamerica-east1-docker.pkg.dev/<project>/mike).
+#   gcloud builds submit --region southamerica-east1 --config deploy/gke/cloudbuild.yaml \
+#     --substitutions _TAG=$(git rev-parse --short HEAD) .
+substitutions:
+  _REGISTRY: southamerica-east1-docker.pkg.dev/ari-teste-492120/mike
+  _TAG: dev
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+steps:
+  - id: backend
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["-"]
+    args: ["build", "-f", "backend/Dockerfile", "--build-arg", "GIT_SHA=${_TAG}",
+           "-t", "${_REGISTRY}/backend:${_TAG}", "."]
+  - id: frontend
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["-"]
+    args: ["build", "-f", "frontend/Dockerfile", "--build-arg", "GIT_SHA=${_TAG}",
+           "--build-arg", "NEXT_PUBLIC_SENTRY_DISABLED=true",
+           "-t", "${_REGISTRY}/frontend:${_TAG}", "."]
+images:
+  - ${_REGISTRY}/backend:${_TAG}
+  - ${_REGISTRY}/frontend:${_TAG}
+timeout: 2400s

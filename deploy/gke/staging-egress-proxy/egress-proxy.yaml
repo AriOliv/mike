@@ -1,0 +1,123 @@
+# egress-proxy: Squid as a CONNECT-only allowlist proxy. Names, not addresses:
+# the destinations sit behind a CDN, so a fixed ipBlock would break silently.
+#   - HTTPS only (CONNECT to port 443), no ssl-bump: the proxy never sees the
+#     content, it only decides by the hostname the client asks to reach;
+#   - the allowlist is the `allowed.txt` key below. To let a new host through
+#     (e.g. api.notion.com, once the owner approves it) add ONE line there and
+#     review it like any change to this file; everything else stays denied;
+#   - only pods labelled app: backend may reach the proxy (egress-proxy-ingress);
+#     the proxy itself may leave only on TCP 443 and for DNS (allow-egress-from-proxy).
+#     The proxy's own egress to 0.0.0.0/0:443 is wide at the network layer by
+#     necessity (the addresses change); the allowlist is what holds it shut.
+# The backend does NOT use it yet: a client opts in per call
+# (CNPJ_EGRESS_PROXY_URL=http://egress-proxy:3128), it is never the default route.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-proxy-conf
+data:
+  allowed.txt: |
+    # one host per line; a leading dot would also allow subdomains, so none here
+    brasilapi.com.br
+    receitaws.com.br
+  squid.conf: |
+    http_port 3128
+    # HTTPS only, and only to 443
+    acl SSL_ports port 443
+    acl CONNECT method CONNECT
+    acl allowed_hosts dstdomain "/etc/squid/allowed.txt"
+    http_access deny !CONNECT
+    http_access deny CONNECT !SSL_ports
+    http_access allow CONNECT allowed_hosts
+    http_access deny all
+    # no cache, no peers, no forwarded-for: a plain tunnel
+    cache deny all
+    forwarded_for delete
+    via off
+    # no ICMP pinger (the container has no capabilities, by design)
+    pinger_enable off
+    pid_filename /tmp/squid.pid
+    cache_log /dev/stderr
+    access_log stdio:/dev/stdout
+    coredump_dir /tmp
+    # fail fast: a name that is not allowed answers 403 at once
+    connect_timeout 10 seconds
+    shutdown_lifetime 3 seconds
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+spec:
+  selector: { app: egress-proxy }
+  ports: [{ name: http, port: 3128, targetPort: 3128 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: egress-proxy } }
+  template:
+    metadata:
+      labels: { app: egress-proxy }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 31
+        runAsGroup: 31
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: squid
+          image: ubuntu/squid:6.10-24.10_edge
+          args: ["-f", "/etc/squid/squid.conf", "-N"]
+          ports: [{ containerPort: 3128 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            tcpSocket: { port: 3128 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: conf, mountPath: /etc/squid/squid.conf, subPath: squid.conf, readOnly: true }
+            - { name: conf, mountPath: /etc/squid/allowed.txt, subPath: allowed.txt, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: tmp, mountPath: /var/spool/squid, subPath: spool }
+            - { name: tmp, mountPath: /var/run/squid, subPath: run }
+      volumes:
+        - name: conf
+          configMap: { name: egress-proxy-conf }
+        - name: tmp
+          emptyDir: {}
+---
+# only the backend may talk to the proxy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-ingress
+spec:
+  podSelector: { matchLabels: { app: egress-proxy } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: backend } } }]
+      ports: [{ port: 3128, protocol: TCP }]
+---
+# the proxy leaves the namespace on TCP 443 only (DNS is allowed for every pod
+# by allow-egress-dns in ../staging-egress); the hostname allowlist decides what
+# it may actually open
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-from-proxy
+spec:
+  podSelector: { matchLabels: { app: egress-proxy } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+      ports: [{ port: 443, protocol: TCP }]

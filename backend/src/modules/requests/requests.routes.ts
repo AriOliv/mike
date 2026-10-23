@@ -8,11 +8,15 @@ import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
 import {
     getRequestAnalysis,
+    getTerms,
+    setTerms,
     listCriticalAlerts,
     requestAnalysis,
     answerIntake,
     getIntake,
+    getAssignmentRules,
     getIntakeTemplate,
+    setAssignmentRules,
     setIntakeTemplate,
     assignRequest,
     createRequest,
@@ -38,8 +42,20 @@ function body(req: { body?: unknown }): Record<string, unknown> {
     return req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
 }
 
+/**
+ * A failure on its way out. A validation that names a field answers 422 with
+ * it, so the form paints the right field instead of a toast; every other
+ * failure keeps the status of its kind.
+ */
+function fail(res: Response, result: Extract<ServiceResult<unknown>, { ok: false }>): void {
+    if (result.kind === "validation" && result.code?.startsWith("field:")) {
+        return void res.status(422).json({ detail: result.detail, field: result.code.slice("field:".length) });
+    }
+    sendServiceFailure(res, result);
+}
+
 function send<T>(res: Response, result: ServiceResult<T>, status = 200): void {
-    if (!result.ok) return void sendServiceFailure(res, result);
+    if (!result.ok) return void fail(res, result);
     res.status(status).json(result.data);
 }
 
@@ -69,7 +85,7 @@ requestsRouter.post(
     requireAuth,
     asyncRoute(async (req, res) => {
         const result = await createRequest(createServerSupabase(), caller(res), body(req));
-        if (!result.ok) return void sendServiceFailure(res, result);
+        if (!result.ok) return void fail(res, result);
         res.status(result.data.deduplicated ? 200 : 201).json(result.data);
     }),
 );
@@ -84,6 +100,22 @@ requestsRouter.get(
 );
 
 // The organization's intake checklist (before "/:id", which would match it).
+requestsRouter.get(
+    "/assignment-rules",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await getAssignmentRules(createServerSupabase(), caller(res)));
+    }),
+);
+
+requestsRouter.put(
+    "/assignment-rules",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setAssignmentRules(createServerSupabase(), caller(res), body(req)));
+    }),
+);
+
 requestsRouter.get(
     "/intake-template",
     requireAuth,
@@ -113,6 +145,22 @@ requestsRouter.get(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await getIntake(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.get(
+    "/:id/terms",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await getTerms(createServerSupabase(), caller(res), req.params.id));
+    }),
+);
+
+requestsRouter.put(
+    "/:id/terms",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await setTerms(createServerSupabase(), caller(res), req.params.id, body(req)));
     }),
 );
 

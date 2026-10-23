@@ -57,6 +57,20 @@ describe("ContractsPortfolioView", () => {
         expect(screen.getByText("14 de 24 preenchidos")).toBeVisible();
     });
 
+    it("shows the contract type as a label, not the stored key", async () => {
+        render(
+            <ContractsPortfolioView
+                load={async () => ({
+                    status: "ok",
+                    rows: [row({ name: "Prestação — Beta", contract_type: "prestacao_servicos" })],
+                })}
+                today={today}
+            />,
+        );
+        expect(await screen.findByText("Prestação de serviços")).toBeVisible();
+        expect(screen.queryByText("prestacao_servicos")).not.toBeInTheDocument();
+    });
+
     it("re-sorts by name", async () => {
         const user = userEvent.setup();
         const load = async (): Promise<PortfolioLoad> => ({

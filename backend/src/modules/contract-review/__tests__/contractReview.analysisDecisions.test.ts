@@ -95,14 +95,73 @@ describe("decideAnalysisRedline", () => {
         expect(documents.applyTrackedEditsToDocument).not.toHaveBeenCalled();
     });
 
-    it("refuses a stale analysis, a decided redline, an unplaceable change and bad input", async () => {
-        shared.contractDocument.mockResolvedValueOnce({ ...docx, versionId: "v2" });
-        const stale = scriptedDb([
+    const decideR1 = (fake: ReturnType<typeof scriptedDb>) => decideAnalysisRedline(fake.db, caller, "p1", ID, "r1", { decision: "aceito" });
+    const readyDb = () =>
+        scriptedDb([
             { table: "contract_analyses", data: analysis() },
             { table: "contract_analysis_decisions", data: null },
         ]);
-        expect(await decideAnalysisRedline(stale.db, caller, "p1", ID, "r1", { decision: "aceito" })).toMatchObject({ ok: false, kind: "conflict", code: "stale_analysis" });
 
+    it("applies a redline on a NEWER version when its quote is still there once: a decision on another clause is not 'stale'", async () => {
+        // A playbook review (or another redline) already made v2; this redline's quote is untouched in it.
+        shared.contractDocument.mockResolvedValueOnce({ ...docx, versionId: "v2" });
+        const fake = scriptedDb([
+            { table: "contract_analyses", data: analysis() },
+            { table: "contract_analysis_decisions", data: null },
+            { table: "user_profiles", data: { display_name: "Pessoa", email: "time@example.com" } },
+            { table: "contract_analysis_decisions", op: "insert" },
+        ]);
+        expect(await decideR1(fake)).toMatchObject({ ok: true, data: { decision: "aceito" } });
+        // It was applied to the ACTIVE document, whatever version that is.
+        expect(documents.applyTrackedEditsToDocument).toHaveBeenCalledWith(expect.objectContaining({ documentId: "d1" }));
+        fake.done();
+    });
+
+    it("tells the person the quote was changed when it is no longer in the contract, and records nothing", async () => {
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", reason: "not_found" });
+        const fake = readyDb();
+        const decided = await decideR1(fake);
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "analysis_text_changed" });
+        expect(decided).toMatchObject({ detail: "Esse trecho já foi alterado no contrato. Peça uma nova análise para esta cláusula." });
+        expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
+        fake.done();
+    });
+
+    it("does not guess when the quote is in the contract more than once: it says where to go, and records nothing", async () => {
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", reason: "ambiguous" });
+        const fake = readyDb();
+        const decided = await decideR1(fake);
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "analysis_text_ambiguous" });
+        expect(decided).toMatchObject({ detail: "Esse trecho aparece em mais de um lugar do contrato; aplique pela tela de revisão." });
+        expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
+        fake.done();
+    });
+
+    it("keeps the three failures apart: changed, repeated and written-at-the-same-time have different codes", async () => {
+        const codes: string[] = [];
+        for (const outcome of [{ reason: "not_found" }, { reason: "ambiguous" }, { conflict: true }]) {
+            documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", ...outcome });
+            const r = await decideR1(readyDb());
+            if (!r.ok && "code" in r) codes.push(String(r.code));
+        }
+        expect(codes).toEqual(["analysis_text_changed", "analysis_text_ambiguous", "document_busy"]);
+    });
+
+    it("says so, and saves nothing, when the contract was written by someone else at the same time and every retry lost", async () => {
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", conflict: true });
+        const fake = scriptedDb([
+            { table: "contract_analyses", data: analysis() },
+            { table: "contract_analysis_decisions", data: null },
+        ]);
+        const decided = await decideAnalysisRedline(fake.db, caller, "p1", ID, "r1", { decision: "aceito" });
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "document_busy" });
+        expect(decided).toMatchObject({ detail: expect.stringMatching(/não foi gravada/) });
+        // No decision row was written: the person can try again.
+        expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
+        fake.done();
+    });
+
+    it("refuses a decided redline, an unplaceable change and bad input", async () => {
         const decided = scriptedDb([
             { table: "contract_analyses", data: analysis() },
             { table: "contract_analysis_decisions", data: { redline_id: "r1" } },

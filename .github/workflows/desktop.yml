@@ -26,20 +26,20 @@
 name: Desktop (Mac app)
 
 on:
+  # macOS minutes cost 10x on a private repo, so this runs where it matters and
+  # not on every PR: a push to main that touches the app or what it embeds, a
+  # tag (a release), or by hand. A PR no longer runs it; the push to main still
+  # catches a migration or schema change that breaks the app's own runner (the
+  # regression that created this workflow, #505), one commit later.
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - "desktop/**"
-      - "backend/**"
-      - "frontend/**"
-      - "e2e/fixtures/**"
-      - ".github/workflows/desktop.yml"
-  # Include stacked PRs whose base is another feature branch (see #579).
-  pull_request:
-    paths:
-      - "desktop/**"
-      - "backend/**"
-      - "frontend/**"
+      - "backend/migrations/**"
+      - "backend/schema.sql"
+      - "backend/package.json"
+      - "frontend/package.json"
       - "e2e/fixtures/**"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
@@ -48,8 +48,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  group: desktop-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   unit:
