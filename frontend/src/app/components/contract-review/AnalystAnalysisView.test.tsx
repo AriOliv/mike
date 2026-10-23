@@ -132,6 +132,25 @@ describe("AnalystAnalysisView", () => {
         });
     });
 
+    it("marks an open point read from the contract as a suggestion and finds it in the document", () => {
+        const onLocate = vi.fn();
+        const withQuote: AnalystAnalysis = {
+            ...done,
+            result: {
+                ...done.result!,
+                open_points: [
+                    ...done.result!.open_points,
+                    { id: "u_foro", text: "Sem resposta no checklist: foro.", depends_on: "outro", quote: "Fica eleito o foro da comarca de Cidade Fictícia" },
+                ],
+            },
+        };
+        render(<AnalystAnalysisView projectId="p1" analysis={withQuote} onLocate={onLocate} />);
+        const points = screen.getByRole("region", { name: "Pontos abertos" });
+        expect(within(points).getAllByText(/Sugestão: confirmar com quem pediu/)).toHaveLength(1);
+        fireEvent.click(within(points).getByRole("button", { name: "Ver o trecho no documento" }));
+        expect(onLocate).toHaveBeenCalledWith("Fica eleito o foro da comarca de Cidade Fictícia");
+    });
+
     it("reads the redlines without deciding for someone who cannot edit", () => {
         render(<AnalystAnalysisView projectId="p1" analysis={done} />);
         const redlines = screen.getByRole("region", { name: "Sugestões de redline" });
