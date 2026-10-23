@@ -66,7 +66,7 @@ const playbooks = vi.hoisted(() => ({
     },
 }));
 vi.mock("../../playbooks/playbooks.service", () => playbooks);
-const documents = vi.hoisted(() => ({ applyTrackedEditsToDocument: vi.fn(), resolveEdit: vi.fn() }));
+const documents = vi.hoisted(() => ({ applyTrackedEditsToDocument: vi.fn(), resolveEdit: vi.fn(), DOCUMENT_BUSY: "document_busy" }));
 vi.mock("../../documents/documents.service", () => documents);
 const events = vi.hoisted(() => ({ recordCardEvent: vi.fn(async () => 1) }));
 vi.mock("../../contracts/contracts.service", () => events);
@@ -531,6 +531,20 @@ describe("decideReviewClause", () => {
         const db = fakeDb(linked()).db;
         expect(await decideReviewClause(db, caller, "p1", "run-1", "f", { decision: "talvez" })).toMatchObject({ kind: "validation" });
         expect(await decideReviewClause(db, caller, "p1", "run-1", "f", { decision: "editado", edited_text: " " })).toMatchObject({ kind: "validation" });
+    });
+
+    it("a rejection that lost the race to another write says document_busy in Portuguese and records nothing", async () => {
+        playbooks.getPlaybookRunById.mockResolvedValue(RUN);
+        documents.resolveEdit.mockResolvedValue({ ok: false, status: 409, code: "document_busy", detail: "x" });
+        const fake = fakeDb(linked());
+        const decided = await decideReviewClause(fake.db, caller, "p1", "run-1", "f-foro", { decision: "rejeitado" });
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "document_busy" });
+        expect(decided).toMatchObject({ detail: expect.stringMatching(/não foi gravada/) });
+        // Any OTHER failure keeps the generic message and no code: it must not claim a race that did not happen.
+        documents.resolveEdit.mockResolvedValue({ ok: false, detail: "Failed to resolve edit", error: new Error("db") });
+        const other = await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "rejeitado" });
+        expect(other).toMatchObject({ ok: false, kind: "conflict" });
+        expect(other).not.toHaveProperty("code");
     });
 
     it("reports a document that changed, a missing suggestion and a viewer", async () => {

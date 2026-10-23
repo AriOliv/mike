@@ -157,18 +157,22 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
     requestId: string | null;
+    /** The form field a 422 points at, when the server names one. */
+    field: string | null;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
         requestId?: string | null;
+        field?: string | null;
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
         this.requestId = args.requestId ?? null;
+        this.field = args.field ?? null;
     }
 }
 
@@ -308,6 +312,7 @@ async function toApiError(
             detail?: unknown;
             code?: unknown;
             request_id?: unknown;
+            field?: unknown;
         };
         const requestId =
             typeof parsed.request_id === "string"
@@ -342,6 +347,7 @@ async function toApiError(
             status: response.status,
             code,
             requestId,
+            field: typeof parsed.field === "string" ? parsed.field : null,
             // A 4xx whose body carries no usable `detail` is a malformed
             // error response, and it is treated as one. `API error: 409` used
             // to be produced here instead — and because a 4xx message is the
@@ -4748,6 +4754,10 @@ export interface NewRequest {
     needed_by?: string | null;
     document_ids?: string[];
     requester_area?: string;
+    /** Part 2, all optional: the other party's e-mail (kept, never sent to), the start and the term. */
+    counterparty_email?: string;
+    term_start?: string;
+    term_months?: number;
 }
 
 const jsonPost = (body: unknown): RequestInit => ({
@@ -5410,6 +5420,8 @@ export async function decideReviewClause(
     runId: string,
     findingId: string,
     input: { decision: "aceito" | "editado" | "rejeitado" | "desfeito"; edited_text?: string; reason?: string },
+    /** Leaving the page: the browser finishes the request after the tab is gone. */
+    options: { keepalive?: boolean } = {},
 ): Promise<{ decision: ReviewDecision | null; edit: EditAnnotation | null }> {
     return apiRequest(
         contractReviewPath(
@@ -5420,6 +5432,7 @@ export async function decideReviewClause(
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(input),
+            ...(options.keepalive ? { keepalive: true } : {}),
         },
     );
 }
@@ -6006,7 +6019,8 @@ export type McpScope =
     | "painel:read"
     | "pedidos:read"
     | "pedidos:write"
-    | "agente:config";
+    | "agente:config"
+    | "feedback:write";
 
 export interface McpAccessToken {
     id: string;
@@ -6065,4 +6079,31 @@ export interface CnpjRecord {
 /** The company record from the Receita's public data; off (404-like `cnpj_disabled`) until the server switches it on. */
 export async function lookupCnpj(cnpj: string): Promise<CnpjRecord> {
     return apiRequest(`/cnpj/${encodeURIComponent(cnpj.replace(/\D/g, ""))}`);
+}
+
+// ── Algo errado? Conte (feedback no app, doc 13) ────────────────────────────
+
+export interface FeedbackReceipt {
+    number: number;
+    /** "REL-0042": the number the person is given. */
+    label: string;
+    redacted: boolean;
+}
+
+/** Whether the server has the feedback feature on; the entry points hide when not. */
+export async function getFeedbackStatus(): Promise<{ enabled: boolean }> {
+    return apiRequest("/feedback/status");
+}
+
+export async function sendFeedback(body: {
+    kind: "bug" | "feature";
+    body: string;
+    expected?: string;
+    route?: string;
+    app_version?: string;
+    browser?: string;
+    org_id?: string | null;
+    role?: string | null;
+}): Promise<FeedbackReceipt> {
+    return apiRequest("/feedback", jsonInit("POST", body));
 }

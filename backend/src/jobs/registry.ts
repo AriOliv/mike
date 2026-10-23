@@ -4,6 +4,7 @@ import { handleAccountDelete, handleExportBuild, handleMcpRefreshToken } from ".
 import { handleDocumentCleanup, handleDocumentExtractText, markDocumentTextFailed, handleDocumentPrecomputeText, handleConversionConvert, markConversionFailed } from "../modules/documents/documents.service";
 import { handleExtractionExtract, markExtractionJobFailed } from "../modules/tabular/tabular.service";
 import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../modules/memory/memory.service";
+import { FEEDBACK_JOB, handleFeedbackIssue, markFeedbackFailed } from "../modules/feedback/feedback.service";
 import { handleRegulatoryScan } from "../modules/regulatory/regulatory.service";
 import {
   ANALYSIS_START_JOB_KIND,
@@ -35,6 +36,7 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   "document.extract_text": handleDocumentExtractText,
   "memory.consolidate": handleMemoryConsolidation,
   "regulatory.scan": handleRegulatoryScan,
+  [FEEDBACK_JOB]: (db, job) => handleFeedbackIssue(db, job),
   "request.triage": handleRequestTriage,
   "request.notify": (db) => handleRequestNotify(db),
   [RENEWAL_JOB_KIND]: (db) => handleRenewalSweep(db),
@@ -51,6 +53,7 @@ export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {
   "memory.consolidate": markMemoryConsolidationFailed,
   [AUTO_REVIEW_JOB]: markAutoReviewFailed,
   [ANALYST_ANALYSIS_JOB]: markAnalystAnalysisFailed,
+  [FEEDBACK_JOB]: markFeedbackFailed,
 };
 export {
   handleChatTurnAudit,

@@ -24,6 +24,7 @@ import { enqueueDbJob } from "./lib/dbq/enqueue";
 import { runStaleWorkSweep } from "./jobs/maintenance";
 import { startUploadProcessingWorkers } from "./modules/uploads/uploads.service";
 import { startContractMirrors } from "./modules/contracts/contracts.service";
+import { requeuePending } from "./modules/feedback/feedback.service";
 import { enqueueDueRegulatoryScans } from "./modules/regulatory/regulatory.service";
 import { enqueueRenewalSweep } from "./modules/requests/requests.service";
 import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
@@ -52,6 +53,8 @@ let initialSweep: ReturnType<typeof setTimeout> | null = null;
 let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let regulatoryTimer: ReturnType<typeof setInterval> | null = null;
 let renewalTimer: ReturnType<typeof setInterval> | null = null;
+let feedbackTimer: ReturnType<typeof setInterval> | null = null;
+const FEEDBACK_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 
 /** How often to look for regulatory scans due a run (each job dedupes per scan). */
 const REGULATORY_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
@@ -162,6 +165,12 @@ export function startAllWorkers(): void {
     const runRenewalEnqueue = () => void enqueueRenewalSweep(createServerSupabase());
     renewalTimer = setInterval(runRenewalEnqueue, RENEWAL_SWEEP_INTERVAL_MS);
     renewalTimer.unref();
+    // Feedback reports whose job was lost or never queued go back on the queue.
+    feedbackTimer = setInterval(
+        () => void requeuePending(createServerSupabase()).catch((err) => console.error("[feedback-sweep] failed", err instanceof Error ? err.name : "error")),
+        FEEDBACK_SWEEP_INTERVAL_MS,
+    );
+    feedbackTimer.unref();
 
     // Notion / Drive / Calendar mirrors of the contract pipeline. Each is
     // inert unless its credentials are set.
@@ -175,6 +184,7 @@ export async function stopAllWorkers(): Promise<void> {
     if (mcpRefreshTimer) clearInterval(mcpRefreshTimer);
     if (regulatoryTimer) clearInterval(regulatoryTimer);
     if (renewalTimer) clearInterval(renewalTimer);
+    if (feedbackTimer) clearInterval(feedbackTimer);
     regulatoryTimer = null;
     renewalTimer = null;
     initialSweep = null;
