@@ -81,6 +81,7 @@ export type RequestRow = {
     counterparty_email: string | null;
     term_start: string | null;
     term_months: number | null;
+    terms_inferred: Record<string, unknown>;
     created_at: string;
     updated_at: string;
 };
@@ -90,7 +91,7 @@ export const REQUEST_COLUMNS =
     "requester_area_source, kind, title, " +
     "counterparty, context, urgency, needed_by, due_at, status, paused_at, paused_seconds, " +
     "assignee_id, assigned_at, assigned_by, summary, triage, delivery, delivered_at, source, intake, intake_completed_at, " +
-    "critical_alert_at, counterparty_email, term_start, term_months, created_at, updated_at";
+    "critical_alert_at, counterparty_email, term_start, term_months, terms_inferred, created_at, updated_at";
 
 const NOT_FOUND = failure("not_found", "Pedido não encontrado.");
 

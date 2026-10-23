@@ -82,6 +82,7 @@ function newVersionDb(
     activation?: boolean;
   } = {},
 ) {
+  const activated = options.activation !== false;
   const fake = scriptedDb([
     ...initial(),
     { table: "document_versions", data: { filename: "Renamed.docx" } },
@@ -95,6 +96,14 @@ function newVersionDb(
           },
         ]
       : []),
+    // Activation is a conditional UPDATE: it matches only while the version we started from is still active.
+    ...(!options.createFail && !options.editsFail
+      ? [
+          { table: "documents", op: "update", data: activated ? { id: "doc" } : null },
+          // Lost the race (or the document is gone): the new version and its edit rows are thrown away.
+          ...(!activated ? [{ table: "document_edits", op: "delete" }, { table: "documents" }] : []),
+        ]
+      : []),
   ]);
   const rpc = vi.fn(async (name: string, params: Record<string, unknown>) => {
     if (name === "create_document_version") {
@@ -106,9 +115,9 @@ function newVersionDb(
         ? { data: null, error: { message: "version insert failed" } }
         : { data: { id: "version", version_number: 9 }, error: null };
     }
-    expect(name).toBe("activate_document_version");
-    expect(fake.calls.at(-1)?.table).toBe("document_edits");
-    return { data: options.activation !== false, error: null };
+    expect(name).toBe("delete_document_version");
+    expect(activated).toBe(false);
+    return { data: { deleted_version_id: params.p_version_id }, error: null };
   });
   const db = { ...fake.db, rpc } as unknown as Db;
   return { ...fake, db, rpc };
@@ -270,11 +279,13 @@ describe("assistant document-edit lifecycle", () => {
     fake.done();
   });
   it("does not report success if the target was deleted before activation", async () => {
+    // The write lost its activation: it discards what it wrote and starts over, and
+    // the document is gone on the second look, which is a plain error, not a loop.
+    mocks.docAccess.mockResolvedValueOnce({ ok: true, isCreator: false, orgRole: null, projectRole: "editor" });
+    mocks.docAccess.mockResolvedValueOnce({ ok: false });
     const fake = newVersionDb({ activation: false });
-    expect(await run(fake.db)).toEqual({
-      ok: false,
-      error: "Failed to activate document version.",
-    });
+    expect(await run(fake.db)).toEqual({ ok: false, error: "Document not found." });
+    expect(fake.rpc.mock.calls.map((call) => call[0])).toEqual(["create_document_version", "delete_document_version"]);
     fake.done();
   });
   it("reuses the same turn's version with immutable bytes and appends edits without allocating another version", async () => {

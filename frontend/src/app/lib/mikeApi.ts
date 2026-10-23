@@ -157,18 +157,22 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
     requestId: string | null;
+    /** The form field a 422 points at, when the server names one. */
+    field: string | null;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
         requestId?: string | null;
+        field?: string | null;
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
         this.requestId = args.requestId ?? null;
+        this.field = args.field ?? null;
     }
 }
 
@@ -308,6 +312,7 @@ async function toApiError(
             detail?: unknown;
             code?: unknown;
             request_id?: unknown;
+            field?: unknown;
         };
         const requestId =
             typeof parsed.request_id === "string"
@@ -342,6 +347,7 @@ async function toApiError(
             status: response.status,
             code,
             requestId,
+            field: typeof parsed.field === "string" ? parsed.field : null,
             // A 4xx whose body carries no usable `detail` is a malformed
             // error response, and it is treated as one. `API error: 409` used
             // to be produced here instead — and because a 4xx message is the
@@ -4748,6 +4754,10 @@ export interface NewRequest {
     needed_by?: string | null;
     document_ids?: string[];
     requester_area?: string;
+    /** Part 2, all optional: the other party's e-mail (kept, never sent to), the start and the term. */
+    counterparty_email?: string;
+    term_start?: string;
+    term_months?: number;
 }
 
 const jsonPost = (body: unknown): RequestInit => ({
@@ -6045,4 +6055,24 @@ export async function createMcpToken(body: {
 
 export async function revokeMcpToken(id: string): Promise<McpAccessToken> {
     return apiRequest(`/mcp-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── Consulta de CNPJ (L-54) ─────────────────────────────────────────────────
+
+export interface CnpjRecord {
+    cnpj: string;
+    razao_social: string;
+    nome_fantasia: string | null;
+    situacao: string | null;
+    natureza_juridica: string | null;
+    cnae: { codigo: string | null; descricao: string | null };
+    porte: string | null;
+    endereco: string | null;
+    fonte: "cache" | "brasilapi" | "receitaws";
+    consultado_em: string;
+}
+
+/** The company record from the Receita's public data; off (404-like `cnpj_disabled`) until the server switches it on. */
+export async function lookupCnpj(cnpj: string): Promise<CnpjRecord> {
+    return apiRequest(`/cnpj/${encodeURIComponent(cnpj.replace(/\D/g, ""))}`);
 }
