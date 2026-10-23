@@ -5596,6 +5596,8 @@ export interface ContractPortfolioRow {
     verified: number;
     total: number;
     risk: "critico" | "atencao" | "ok" | null;
+    /** Who holds the contract's request, by name. */
+    assignee: string | null;
 }
 
 export interface ContractPortfolio {
