@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ContractAlert } from "@/app/lib/mikeApi";
+import type { ContractAlert, LinkedAmendment } from "@/app/lib/mikeApi";
 
 vi.mock("@/app/contexts/AuthContext", () => ({ useAuth: () => ({ user: { id: "u", email: "Ana@Avenia.io" } }) }));
 const api = vi.hoisted(() => ({
     getContractAlerts: vi.fn(),
+    getContractAmendments: vi.fn(),
     getObligationOwners: vi.fn(),
     updateObligation: vi.fn(),
     downloadObligationIcs: vi.fn(),
@@ -39,8 +40,57 @@ const team = [{ user_id: "b", email: "bia@avenia.io", name: "Bia" }];
 beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
     api.getObligationOwners.mockResolvedValue(team);
+    api.getContractAmendments.mockResolvedValue([]);
     download.downloadBlob.mockReset();
     errors.notifyError.mockReset();
+});
+
+const amendment = (over: Partial<LinkedAmendment> = {}): LinkedAmendment => ({
+    id: "req-1",
+    code: "LEG-0042",
+    title: "Aditivo de prazo",
+    status: "entregue",
+    delivered_at: "2026-11-03T12:00:00Z",
+    term_end: "2028-01-05",
+    ...over,
+});
+
+describe("amendments tied to the contract", () => {
+    it("lists each one with a link to its request, where it stands and the term it sets", async () => {
+        api.getContractAlerts.mockResolvedValue([alert()]);
+        api.getContractAmendments.mockResolvedValue([amendment(), amendment({ id: "req-2", code: "LEG-0050", title: "Aditivo de valor", status: "em_andamento", delivered_at: null, term_end: null })]);
+        render(<ContractAlertsView projectId="p1" />);
+        const section = await screen.findByRole("region", { name: "Aditivos deste contrato" });
+        expect(within(section).getByRole("link", { name: "LEG-0042 · Aditivo de prazo" }).getAttribute("href")).toBe("/pedidos/req-1");
+        expect(within(section).getByText("Entregue em 03/11/2026 · define o fim da vigência em 05/01/2028")).toBeTruthy();
+        expect(within(section).getByRole("link", { name: "LEG-0050 · Aditivo de valor" }).getAttribute("href")).toBe("/pedidos/req-2");
+        expect(within(section).getByText("Em análise")).toBeTruthy();
+        expect(api.getContractAmendments).toHaveBeenCalledWith("p1");
+    });
+
+    it("shows no section when there are none", async () => {
+        api.getContractAlerts.mockResolvedValue([alert()]);
+        render(<ContractAlertsView projectId="p1" />);
+        await screen.findByText("Aviso prévio");
+        expect(screen.queryByRole("region", { name: "Aditivos deste contrato" })).toBeNull();
+    });
+
+    it("shows them even when the contract has no deadline yet", async () => {
+        api.getContractAlerts.mockResolvedValue([]);
+        api.getContractAmendments.mockResolvedValue([amendment({ status: "novo", delivered_at: null, term_end: null })]);
+        render(<ContractAlertsView projectId="p1" />);
+        expect(await screen.findByRole("region", { name: "Aditivos deste contrato" })).toBeTruthy();
+        expect(screen.getByText(/ainda não tem alertas/)).toBeTruthy();
+    });
+
+    it("still lists the deadlines when the amendments cannot be loaded", async () => {
+        api.getContractAlerts.mockResolvedValue([alert()]);
+        api.getContractAmendments.mockRejectedValueOnce(new Error("down"));
+        render(<ContractAlertsView projectId="p1" />);
+        expect(await screen.findByText("Aviso prévio")).toBeTruthy();
+        expect(screen.queryByRole("region", { name: "Aditivos deste contrato" })).toBeNull();
+        expect(screen.queryByRole("alert")).toBeNull();
+    });
 });
 
 describe("ContractAlertsView", () => {

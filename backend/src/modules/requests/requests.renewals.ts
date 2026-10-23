@@ -19,6 +19,7 @@ import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serv
 import { getOrgRole } from "../../lib/access";
 import { loadLegalTeam, NO_LEGAL_TEAM, teamRole, type Caller } from "./requests.access";
 import { createRequest } from "./requests.core";
+import { OPEN_STATUSES } from "./requests.shared";
 import { teamOwner } from "./requests.triage";
 
 export const RENEWAL_JOB_KIND = "request.renewals";
@@ -159,6 +160,20 @@ export async function runRenewalSweep(db: Db, now: Date = new Date()): Promise<R
         const project = card as { name: string; counterparty: string | null; org_id: string | null } | null;
         // Only the team's own contracts: a personal or other organization's card is not its queue.
         if (!project || project.org_id !== team.org_id) {
+            sweep.skipped++;
+            continue;
+        }
+
+        // An amendment already open for this contract is the renewal being handled: no second request.
+        const { data: open, error: openError } = await db
+            .from("legal_requests")
+            .select("id")
+            .eq("parent_project_id", term.project_id)
+            .eq("kind", "aditivo")
+            .in("status", OPEN_STATUSES as unknown as string[])
+            .limit(1);
+        if (openError) throw openError;
+        if ((open ?? []).length > 0) {
             sweep.skipped++;
             continue;
         }

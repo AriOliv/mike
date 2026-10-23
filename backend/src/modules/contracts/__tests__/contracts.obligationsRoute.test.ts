@@ -12,7 +12,7 @@ const contracts = vi.hoisted(() => ({
     listContractAlerts: vi.fn(),
 }));
 vi.mock("../contracts.service", () => contracts);
-const requests = vi.hoisted(() => ({ listLegalTeamMembers: vi.fn(), whoAmI: vi.fn() }));
+const requests = vi.hoisted(() => ({ listLegalTeamMembers: vi.fn(), whoAmI: vi.fn(), listAmendmentsOf: vi.fn() }));
 vi.mock("../../requests/requests.service", () => requests);
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: () => ({}) }));
 vi.mock("../../../middleware/auth", () => ({
@@ -36,6 +36,7 @@ const team = (...emails: string[]) => ({ ok: true, data: emails.map((email) => (
 beforeEach(() => {
     for (const fn of Object.values(contracts)) fn.mockReset().mockResolvedValue({ ok: true, data: {} });
     requests.listLegalTeamMembers.mockReset();
+    requests.listAmendmentsOf.mockReset();
 });
 
 describe("/obligations owners and alerts", () => {
@@ -107,3 +108,20 @@ describe("the contract's alerts", () => {
     });
 });
 
+describe("the amendments tied to a contract", () => {
+    it("lists them for whoever can open the contract", async () => {
+        contracts.listContractAlerts.mockResolvedValue({ ok: true, data: [] });
+        requests.listAmendmentsOf.mockResolvedValue({ ok: true, data: [{ id: "r1", code: "LEG-0001" }] });
+        const res = await request(app).get("/projects/p1/amendments").expect(200);
+        expect(res.body).toEqual([{ id: "r1", code: "LEG-0001" }]);
+        expect(contracts.listContractAlerts).toHaveBeenCalledWith({}, caller, "p1");
+        expect(requests.listAmendmentsOf).toHaveBeenCalledWith({}, "p1");
+    });
+
+    it("answers a contract the caller cannot open exactly like a missing one, and never reads the amendments", async () => {
+        contracts.listContractAlerts.mockResolvedValue({ ok: false, kind: "not_found", detail: "Não encontrei este contrato." });
+        const res = await request(app).get("/projects/p9/amendments").expect(404);
+        expect(JSON.stringify(res.body)).toContain("Não encontrei este contrato.");
+        expect(requests.listAmendmentsOf).not.toHaveBeenCalled();
+    });
+});

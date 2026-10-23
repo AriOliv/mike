@@ -1,20 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, CalendarPlus, Check, Loader2, RotateCcw, X } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, CalendarPlus, Check, FileText, Loader2, RotateCcw, X } from "lucide-react";
 import {
     downloadObligationIcs,
     getContractAlerts,
+    getContractAmendments,
     getObligationOwners,
     updateObligation,
     type ContractAlert,
+    type LinkedAmendment,
     type ObligationOwner,
     type ObligationStatus,
 } from "@/app/lib/mikeApi";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { downloadBlob } from "@/app/lib/downloadDocument";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
-import { dueLabel, KIND_LABEL, sortAlerts, STATUS_LABEL } from "@/app/lib/obligations";
+import { amendmentLine, dueLabel, KIND_LABEL, sortAlerts, STATUS_LABEL } from "@/app/lib/obligations";
 import { ObligationOwnerEditor } from "@/app/components/radar/ObligationOwnerEditor";
 
 const STATUS_STYLE: Record<ObligationStatus, string> = {
@@ -32,18 +35,22 @@ export function ContractAlertsView({ projectId }: { projectId: string }) {
     const me = user?.email?.toLowerCase() ?? null;
     const [alerts, setAlerts] = useState<ContractAlert[] | null>(null);
     const [people, setPeople] = useState<ObligationOwner[]>([]);
+    const [amendments, setAmendments] = useState<LinkedAmendment[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         try {
-            const [mine, team] = await Promise.all([
+            const [mine, team, linked] = await Promise.all([
                 getContractAlerts(projectId),
                 // Not everyone is on the team; they just cannot hand a deadline on.
                 getObligationOwners().catch(() => [] as ObligationOwner[]),
+                // The amendments are a side note: the deadlines load without them.
+                getContractAmendments(projectId).catch(() => [] as LinkedAmendment[]),
             ]);
             setAlerts(sortAlerts(mine));
             setPeople(team);
+            setAmendments(linked);
             setError(null);
         } catch (e) {
             setError(describeError(e, { lang: "pt", action: "carregar os alertas do contrato" }).message);
@@ -93,6 +100,22 @@ export function ContractAlertsView({ projectId }: { projectId: string }) {
                     <AlertCircle className="h-4 w-4 shrink-0" />
                     {error}
                 </div>
+            )}
+            {amendments.length > 0 && (
+                <section aria-label="Aditivos deste contrato" className="mb-4 rounded-xl border border-gray-200 px-4 py-3">
+                    <h3 className="mb-1 text-xs font-medium uppercase text-gray-500">Aditivos ligados</h3>
+                    <ul>
+                        {amendments.map((m) => (
+                            <li key={m.id} className="flex flex-wrap items-center gap-2 py-1 text-sm">
+                                <FileText className="h-3.5 w-3.5 text-gray-400" aria-hidden />
+                                <Link href={`/pedidos/${m.id}`} className="text-gray-900 hover:underline">
+                                    {m.code} · {m.title}
+                                </Link>
+                                <span className="text-xs text-gray-500">{amendmentLine(m)}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </section>
             )}
             {alerts && alerts.length === 0 && (
                 <div className="rounded-xl border border-dashed border-gray-200 px-4 py-12 text-center text-sm text-gray-500">

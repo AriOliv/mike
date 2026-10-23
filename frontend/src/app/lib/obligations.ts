@@ -1,4 +1,7 @@
 import type { Obligation, ObligationKind, ObligationStatus } from "@/app/lib/mikeApi";
+import { brDate } from "@/app/lib/contractsPortfolio";
+import { STATUS_LABEL as REQUEST_STATUS_LABEL } from "@/app/lib/requests";
+import type { RequestStatus } from "@/app/lib/mikeApi";
 
 /** Days until `date` (YYYY-MM-DD) from `today`; negative when overdue. */
 export function daysUntil(date: string, today: Date = new Date()): number {
@@ -60,4 +63,11 @@ export function sortAlerts<T extends { status: ObligationStatus; due_date: strin
     return [...items].sort(
         (a, b) => Number(a.status !== "aberto") - Number(b.status !== "aberto") || a.due_date.localeCompare(b.due_date),
     );
+}
+
+/** One line for an amendment tied to the contract: what it is, where it stands, the term it sets. */
+export function amendmentLine(a: { status: string; delivered_at: string | null; term_end: string | null }): string {
+    const status = REQUEST_STATUS_LABEL[a.status as RequestStatus] ?? a.status;
+    const done = a.status === "entregue" && a.delivered_at ? `${status} em ${brDate(a.delivered_at)}` : status;
+    return a.term_end ? `${done} · define o fim da vigência em ${brDate(a.term_end)}` : done;
 }

@@ -10,7 +10,8 @@
 import type { Db } from "../../lib/supabase";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { loadLegalTeam, NO_LEGAL_TEAM } from "./requests.access";
-import { cleanText } from "./requests.shared";
+import { cleanText, requestCode } from "./requests.shared";
+import { termEnd } from "./requests.terms";
 
 export type ContractChoice = { id: string; name: string; counterparty: string | null };
 
@@ -67,4 +68,53 @@ export async function findContract(db: Db, orgId: string, id: unknown): Promise<
         .is("archived_at", null)
         .maybeSingle();
     return (data as ContractChoice | null) ?? null;
+}
+
+export type LinkedAmendment = {
+    id: string;
+    code: string;
+    title: string;
+    status: string;
+    delivered_at: string | null;
+    /** The term this amendment sets, when it states both start and months; null otherwise. */
+    term_end: string | null;
+};
+
+/**
+ * The amendments tied to a contract, newest first, for that contract's
+ * alerts. Titles and status only: the request's own content stays in the
+ * request. The caller must already be allowed to see the contract.
+ */
+export async function listAmendmentsOf(db: Db, projectId: string): Promise<ServiceResult<LinkedAmendment[]>> {
+    try {
+        const { data, error } = await db
+            .from("legal_requests")
+            .select("id, number, title, status, delivered_at, term_start, term_months")
+            .eq("parent_project_id", projectId)
+            .eq("kind", "aditivo")
+            .order("number", { ascending: false })
+            .limit(50);
+        if (error) throw error;
+        const rows = (data ?? []) as {
+            id: string;
+            number: number;
+            title: string;
+            status: string;
+            delivered_at: string | null;
+            term_start: string | null;
+            term_months: number | null;
+        }[];
+        return ok(
+            rows.map((r) => ({
+                id: r.id,
+                code: requestCode(r.number),
+                title: r.title,
+                status: r.status,
+                delivered_at: r.delivered_at,
+                term_end: termEnd(r.term_start, r.term_months),
+            })),
+        );
+    } catch (error) {
+        return internalFailure(error);
+    }
 }
