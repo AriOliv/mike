@@ -12,7 +12,10 @@ import { readStoredDocumentText } from "../documents/documents.service";
 import { finishAgentRun, recordCardEvent, startAgentRun } from "../contracts/contracts.service";
 import { REQUEST_COLUMNS, type RequestRow } from "./requests.access";
 import {
+    applicableItems,
     effectiveTemplate,
+    parseByKind,
+    parseIntakeTemplate,
     mergeInferred,
     readAnswers,
     type IntakeItem,
@@ -30,13 +33,18 @@ const MAX_TEXT = 60_000;
 /** Room for nine answers with their quotes; at 1500 a small model's JSON came back cut off. */
 const MAX_OUTPUT_TOKENS = 4000;
 
-type Inferred = Record<string, { value: string; quote?: string | null; choice?: "sim" | "nao" | null }>;
+type Inferred = Record<
+    string,
+    { value: string; quote?: string | null; choice?: "sim" | "nao" | null; selected?: string[] }
+>;
 
 function systemPrompt(items: IntakeItem[]): string {
     const list = items
         .map(
             (i) =>
-                `- "${i.key}": ${i.label}${i.kind === "yes_no" ? ` (sim/não${i.detail_label ? `; e ${i.detail_label}` : ""})` : ""}`,
+                `- "${i.key}": ${i.label}${i.kind === "yes_no" ? ` (sim/não${i.detail_label ? `; e ${i.detail_label}` : ""})` : ""}${
+                    i.options ? ` (escolha ${i.kind === "choice" ? "uma" : "uma ou mais"} destas, pelo código: ${i.options.map((o) => `"${o.value}" = ${o.label}`).join("; ")})` : ""
+                }`,
         )
         .join("\n");
     return `Você prepara o checklist de intake de um pedido ao time jurídico, lendo o contrato anexado.
@@ -48,6 +56,7 @@ Regras:
 - Responda SOMENTE o que o contrato diz de forma explícita. Se o contrato não responde a pergunta, deixe-a de fora.
 - Nunca responda o que só quem pediu sabe: se aprovou, se concorda com a proposta, a intenção comercial.
 - Para cada resposta, copie em "quote" o trecho LITERAL do contrato de onde ela saiu: a menor frase que prova a resposta (até 200 caracteres), sem alterar uma palavra.
+- Perguntas de escolha: "value" é o código da opção (ou os códigos separados por vírgula, se puder mais de uma), nunca um texto livre.
 - Perguntas de sim/não: "choice" é "sim" ou "nao", e "value" é a resposta curta com o detalhe ("Sim. As duas partes trocam informações sobre clientes.").
 - Português do Brasil, objetivo. Valores e datas como estão no contrato.
 - Além das perguntas, leia os dados do contrato em "terms", cada um só se o contrato disser de forma explícita, com o mesmo "quote" literal: "counterparty" (nome da outra parte, não a Avenia nem empresa do grupo), "term_start" (data de início da vigência, como AAAA-MM-DD) e "term_months" (prazo em meses, só o número; converta anos em meses).
@@ -144,10 +153,21 @@ export function parsePrefill(
             dropped += 1;
             continue;
         }
+        const item = items.find((i) => i.key === key)!;
+        let selected: string[] | undefined;
+        if (item.kind === "choice" || item.kind === "multi_choice") {
+            const codes = new Set((item.options ?? []).map((o) => o.value));
+            selected = [...new Set(value.split(",").map((v) => v.trim()))].filter((v) => codes.has(v));
+            if (selected.length === 0 || (item.kind === "choice" && selected.length > 1)) {
+                dropped += 1;
+                continue;
+            }
+        }
         inferred[key] = {
             value,
             quote,
             choice: a.choice === "sim" || a.choice === "nao" ? a.choice : null,
+            ...(selected ? { selected } : {}),
         };
     }
     return { inferred, dropped, unparsed: false };
@@ -218,8 +238,21 @@ export async function handleIntakePrefill(
     if (!row || !row.project_id) return { skipped: "missing" };
     if (row.status === "entregue" || row.status === "cancelado") return { skipped: "closed" };
 
-    const { data: team } = await db.from("legal_teams").select("intake_template").eq("org_id", row.org_id).maybeSingle();
-    const template = effectiveTemplate((team as { intake_template?: unknown } | null)?.intake_template);
+    const { data: team } = await db
+        .from("legal_teams")
+        .select("intake_template, intake_by_kind")
+        .eq("org_id", row.org_id)
+        .maybeSingle();
+    const teamRow = team as { intake_template?: unknown; intake_by_kind?: unknown } | null;
+    const own = parseIntakeTemplate(teamRow?.intake_template);
+    // Only this kind's questions are put to the model, and not the ones that are
+    // the requester's own ("o que você quer saber", the contract an amendment changes).
+    const template = applicableItems(
+        effectiveTemplate(teamRow?.intake_template),
+        own.ok && own.items.length ? "org" : "padrao",
+        row.kind,
+        parseByKind(teamRow?.intake_by_kind),
+    ).filter((i) => !i.no_unknown && i.kind !== "contract");
     const stored = readAnswers(row.intake);
     const open = template.filter((i) => !stored[i.key]);
     const termsOpen = !row.counterparty || !row.term_start || row.term_months == null;

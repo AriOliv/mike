@@ -59,6 +59,7 @@ export {
     type Stage,
     type StageStrip,
 } from "./requests.stages";
+export { searchContracts, type ContractChoice } from "./requests.parent";
 export { handleIntakePrefill, parsePrefill, PREFILL_JOB_KIND } from "./requests.prefill";
 export {
     enqueueRenewalSweep,

@@ -53,7 +53,7 @@ import {
 import { parseTerms, termEnd, type Terms } from "./requests.terms";
 import { buildStrip, loadStageHistory, syncStage, type StageRow, type StageStrip } from "./requests.stages";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
-import { loadTemplate, queueIntakePrefill } from "./requests.checklist";
+import { forKind, loadTemplate, queueIntakePrefill } from "./requests.checklist";
 import { applyAssignmentRules } from "./requests.rules";
 import { applyAnswers, intakeStatus } from "./requests.intake";
 
@@ -395,6 +395,7 @@ export async function createRequest(
             requester_area: area.area,
             requester_area_source: area.source,
             kind: valid.kind,
+            intake_kind: valid.kind,
             title: valid.title,
             counterparty: valid.counterparty,
             context: valid.context,
@@ -462,12 +463,18 @@ export async function createRequest(
 
     // Checklist answers given on the form count as the requester's; the
     // intake agent then reads the attached contract for what is still open.
+    // A kind with nothing required (an organization's own lists may have none)
+    // has nothing to wait for: the checklist is closed at once.
+    const kindItems = forKind(await loadTemplate(db, team.org_id), row.kind);
+    if (intakeStatus(kindItems, {}).complete) {
+        await db.from("legal_requests").update({ intake_completed_at: new Date().toISOString() }).eq("id", row.id);
+    }
     if (input.intake && typeof input.intake === "object") {
         try {
-            const template = await loadTemplate(db, team.org_id);
-            const applied = applyAnswers(template.items, {}, { answers: input.intake }, new Date().toISOString());
+            const items = forKind(await loadTemplate(db, team.org_id), row.kind);
+            const applied = applyAnswers(items, {}, { answers: input.intake }, new Date().toISOString());
             if (applied.ok && applied.changed.length) {
-                const complete = intakeStatus(template.items, applied.answers).complete;
+                const complete = intakeStatus(items, applied.answers).complete;
                 await db
                     .from("legal_requests")
                     .update({ intake: applied.answers, ...(complete ? { intake_completed_at: new Date().toISOString() } : {}) })

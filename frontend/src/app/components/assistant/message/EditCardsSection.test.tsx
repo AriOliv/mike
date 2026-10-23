@@ -6,7 +6,10 @@ const { resolveDocumentEdit } = vi.hoisted(() => ({
     resolveDocumentEdit: vi.fn(),
 }));
 
-vi.mock("@/app/lib/mikeApi", () => ({ resolveDocumentEdit }));
+vi.mock("@/app/lib/mikeApi", async (original) => ({
+    ...(await original<typeof import("@/app/lib/mikeApi")>()),
+    resolveDocumentEdit,
+}));
 
 const annotation = {
     edit_id: "edit-1",
@@ -97,4 +100,30 @@ describe("EditCardsSection", () => {
             ).toBeEnabled();
         },
     );
+
+    it("says in Portuguese, with the server's reason, when a bulk accept loses the race", async () => {
+        resolveDocumentEdit.mockRejectedValueOnce(
+            Object.assign(new Error("O contrato foi alterado por outra pessoa ao mesmo tempo. Sua decisão não foi gravada; tente de novo."), {
+                status: 409,
+                code: "document_busy",
+            }),
+        );
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const onError = vi.fn();
+        render(
+            <EditCardsSection
+                pending={[{ annotation, filename: "agreement.docx" }]}
+                filenameByDocId={new Map([["document-1", "agreement.docx"]])}
+                cards={[<div key="one">First change</div>, <div key="two">Second change</div>]}
+                resolvedCount={0}
+                onViewClick={vi.fn()}
+                onError={onError}
+            />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
+        await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+        const { message } = onError.mock.calls[0][0];
+        expect(message).toMatch(/^Não consegui salvar a aceitação: O contrato foi alterado por outra pessoa/);
+        expect(message).not.toMatch(/Couldn't|reverted/);
+    });
 });

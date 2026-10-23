@@ -31,6 +31,7 @@ import {
     estimateUsage,
     normalizeAnalysis,
     parseAnalysisAnswer,
+    unknownSuggestions,
     withMissingIntake,
     type AnalysisResult,
     type DroppedCitation,
@@ -113,7 +114,13 @@ export function cleanIntake(value: unknown): IntakeAnswer[] | null {
         const answer = typeof item.value === "string" ? item.value.trim().slice(0, 2_000) : "";
         if (!key || !label) return null;
         if (!answer) continue;
-        out.push({ key, label, value: answer, source: typeof item.source === "string" ? item.source.slice(0, 40) : null });
+        out.push({
+            key,
+            label,
+            value: answer,
+            source: typeof item.source === "string" ? item.source.slice(0, 40) : null,
+            ...(item.unknown === true ? { unknown: true } : {}),
+        });
     }
     return out;
 }
@@ -304,7 +311,7 @@ export async function handleAnalystAnalysis(db: Db, job: DbJob): Promise<Record<
         }
         const partial = missing.length ? { missing } : undefined;
         const { result, dropped } = normalizeAnalysis(value, documentText, yardstick?.findings ?? []);
-        const final = { ...withMissingIntake(result, row.intake ?? []), ...(partial && { partial }) };
+        const final = { ...withMissingIntake(result, row.intake ?? [], unknownSuggestions(value, row.intake ?? [], documentText)), ...(partial && { partial }) };
         if (dropped.length)
             // Counts only: the quotes are contract text.
             console.warn(`[analysis] ${row.id}: ${dropped.length} citation(s) not found in the document were dropped`);

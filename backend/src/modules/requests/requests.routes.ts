@@ -19,6 +19,7 @@ import {
     getRenewalSettings,
     setRenewalSettings,
     setAssignmentRules,
+    searchContracts,
     setIntakeTemplate,
     assignRequest,
     createRequest,
@@ -115,6 +116,15 @@ requestsRouter.put(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await setAssignmentRules(createServerSupabase(), caller(res), body(req)));
+    }),
+);
+
+// Contracts of the Mike to tie an amendment to (before "/:id").
+requestsRouter.get(
+    "/contracts",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await searchContracts(createServerSupabase(), req.query.q));
     }),
 );
 
