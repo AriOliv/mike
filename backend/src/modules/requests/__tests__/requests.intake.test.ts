@@ -29,6 +29,8 @@ import {
     parsePrefill,
     setIntakeTemplate,
 } from "../requests.service";
+import { parseTermsInferred } from "../requests.prefill";
+import { readDate, readMonths } from "../requests.terms";
 import { applyAnswers, intakeStatus, mergeInferred, normalizeAnswer, parseIntakeTemplate } from "../requests.intake";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -119,6 +121,11 @@ function withDocument(w: ReturnType<typeof world>, requestId: string) {
         created_at: "2026-10-20T10:00:00Z",
     });
 }
+
+/** A valid answer for every question of the generic checklist, by kind. */
+const ALL_ANSWERS = Object.fromEntries(
+    DEFAULT_INTAKE_TEMPLATE.map((i) => [i.key, i.kind === "yes_no" ? "não" : i.kind === "date" ? "na assinatura" : "Validação técnica"]),
+);
 
 const REQUIRED = DEFAULT_INTAKE_TEMPLATE.filter((i) => i.required).map((i) => i.key);
 const ready = () => ({ revision: "r1", status: "ready", text: CONTRACT, textless_page_count: 0 });
@@ -383,7 +390,7 @@ describe("the intake agent", () => {
                 },
             }),
         );
-        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 3, dropped: 1 });
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 3, terms: 0, dropped: 1 });
         // The model is asked only about what is still open, and reads as the team.
         const prompt = (llm.completeText.mock.calls[0][0] as { systemPrompt: string }).systemPrompt;
         expect(prompt).not.toContain('"contraparte"');
@@ -444,7 +451,7 @@ describe("the intake agent", () => {
         withDocument(w, id);
         vi.spyOn(console, "error").mockImplementation(() => undefined);
         llm.completeText.mockResolvedValue("Desculpe, não consigo.");
-        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 0, dropped: 0, unparsed: true });
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 0, terms: 0, dropped: 0, unparsed: true });
         expect((llm.completeText.mock.calls[0][0] as { maxTokens: number }).maxTokens).toBeGreaterThanOrEqual(4000);
         expect(w.table("agent_runs").at(-1)).toMatchObject({ status: "succeeded", output: { filled: [], dropped: 0, unparsed: true } });
     });
@@ -472,5 +479,107 @@ describe("the intake agent", () => {
         expect(await state()).toBe("concluido");
         const answered = await answerIntake(w.db, REQUESTER, id, { answers: { contraparte: "Nuvem" } });
         expect(answered.ok && answered.data.prefill).toBe("concluido");
+    });
+});
+
+describe("the contract's terms read by the intake agent", () => {
+    const WITH_TERMS = `${CONTRACT}
+Cláusula 13. O prazo de vigência é de 24 (vinte e quatro) meses.
+Cláusula 14. Contratada: Nuvem Fictícia S.A.`;
+    const reply = (terms: Record<string, unknown>) => JSON.stringify({ answers: {}, terms });
+
+    it("reads dates and terms the way a person writes them, and refuses what it cannot normalize", () => {
+        expect(readDate("2026-11-12")).toBe("2026-11-12");
+        expect(readDate("12/11/2026")).toBe("2026-11-12");
+        expect(readDate("1º de novembro de 2026")).toBe("2026-11-01");
+        expect(readDate("12 de Março de 2027")).toBe("2027-03-12");
+        for (const bad of ["breve", "30/02/2026", "1 de novembr de 2026", "2026-13-01", ""]) expect(readDate(bad)).toBeNull();
+        expect(readMonths("24")).toBe(24);
+        expect(readMonths("12 meses")).toBe(12);
+        expect(readMonths("2 anos")).toBe(24);
+        expect(readMonths("1 mês")).toBe(1);
+        for (const bad of ["indeterminado", "0", "700", "1,5 anos", "doze"]) expect(readMonths(bad)).toBeNull();
+    });
+
+    it("keeps a term only with the contract's own words behind it", () => {
+        const read = parseTermsInferred(
+            reply({
+                counterparty: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A." },
+                term_start: { value: "1º de novembro de 2026", quote: "Vigência a partir de 1º de novembro de 2026." },
+                term_months: { value: 24, quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+            }),
+            WITH_TERMS,
+        );
+        expect(read.dropped).toBe(0);
+        expect(read.terms).toEqual({
+            counterparty: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A." },
+            term_start: { value: "2026-11-01", quote: "Vigência a partir de 1º de novembro de 2026." },
+            term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+        });
+    });
+
+    it("drops a term with an invented quote, no quote, or a value it cannot read, and counts it", () => {
+        const read = parseTermsInferred(
+            reply({
+                counterparty: { value: "Outra Empresa", quote: "trecho que não existe no contrato" },
+                term_start: { value: "em breve", quote: "Vigência a partir de 1º de novembro de 2026." },
+                term_months: { value: "24" },
+            }),
+            WITH_TERMS,
+        );
+        expect(read.terms).toEqual({});
+        expect(read.dropped).toBe(3);
+    });
+
+    it("says nothing for a reply without terms, a broken one, or entries that are not objects", () => {
+        expect(parseTermsInferred('{"answers": {}}', WITH_TERMS)).toEqual({ terms: {}, dropped: 0 });
+        expect(parseTermsInferred("não sei", WITH_TERMS)).toEqual({ terms: {}, dropped: 0 });
+        expect(parseTermsInferred(reply({ counterparty: "x", term_start: null, term_months: { value: "" } }), WITH_TERMS)).toEqual({ terms: {}, dropped: 0 });
+    });
+
+    it("stores them apart from what the requester typed, only where the form was left empty", async () => {
+        const w = world();
+        const id = await newRequest(w, { counterparty: "Nuvem (como a Ana escreveu)", term_months: 6 });
+        withDocument(w, id);
+        text.read.mockReturnValue({ revision: "r1", status: "ready", text: WITH_TERMS, textless_page_count: 0 });
+        llm.completeText.mockResolvedValue(
+            reply({
+                counterparty: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A." },
+                term_start: { value: "2026-11-01", quote: "Vigência a partir de 1º de novembro de 2026." },
+                term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+            }),
+        );
+        const out = await handleIntakePrefill(w.db, { payload: { request_id: id } });
+        expect(out).toMatchObject({ terms: 1 });
+        const row = w.table("legal_requests").find((r) => r.id === id)!;
+        // what the person typed is untouched; only the empty start was filled
+        expect(row).toMatchObject({ counterparty: "Nuvem (como a Ana escreveu)", term_months: 6, term_start: null });
+        expect(row.terms_inferred).toEqual({ term_start: { value: "2026-11-01", quote: "Vigência a partir de 1º de novembro de 2026." } });
+    });
+
+    it("still reads the terms when every checklist question is already answered", async () => {
+        const w = world();
+        const id = await newRequest(w);
+        const answered = await answerIntake(w.db, REQUESTER, id, { answers: ALL_ANSWERS });
+        expect(answered.ok && answered.data.complete).toBe(true);
+        withDocument(w, id);
+        text.read.mockReturnValue({ revision: "r1", status: "ready", text: WITH_TERMS, textless_page_count: 0 });
+        llm.completeText.mockResolvedValue(reply({ term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" } }));
+        const out = await handleIntakePrefill(w.db, { payload: { request_id: id } });
+        expect(out).toMatchObject({ terms: 1 });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.terms_inferred).toEqual({
+            term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+        });
+    });
+
+    it("does not call the model at all once the checklist and the terms are all in", async () => {
+        const w = world();
+        const id = await newRequest(w, { counterparty: "Nuvem", term_start: "2026-11-01", term_months: 12 });
+        withDocument(w, id);
+        const answered = await answerIntake(w.db, REQUESTER, id, { answers: ALL_ANSWERS });
+        expect(answered.ok && answered.data.complete).toBe(true);
+        llm.completeText.mockClear();
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ skipped: "answered" });
+        expect(llm.completeText).not.toHaveBeenCalled();
     });
 });

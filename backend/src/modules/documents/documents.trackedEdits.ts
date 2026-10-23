@@ -14,7 +14,9 @@ import type { Db } from "../../lib/supabase";
 import { profileAttributionName } from "../../lib/userLookup";
 import {
   activateDocumentVersion,
+  activateDocumentVersionIfCurrent,
   createDocumentVersion,
+  discardDocumentVersion,
   updateDocumentVersion,
 } from "./documents.lifecycle";
 
@@ -34,7 +36,7 @@ export async function loadCurrentVersionBytes(
   return { bytes: Buffer.from(raw), storage_path: active.storage_path };
 }
 
-export async function applyTrackedEditsToDocument(params: {
+type ApplyParams = {
   documentId: string;
   userId: string;
   /**
@@ -59,7 +61,9 @@ export async function applyTrackedEditsToDocument(params: {
     versionNumber: number;
     storagePath: string;
   };
-}): Promise<
+};
+
+export type ApplyTrackedEditsResult =
   | {
       ok: true;
       version_id: string;
@@ -69,8 +73,47 @@ export async function applyTrackedEditsToDocument(params: {
       annotations: EditAnnotation[];
       errors: { index: number; reason: string }[];
     }
-  | { ok: false; error: string }
-> {
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Another write to the same document won the race and every retry lost
+       * too. Nothing was saved: the caller must say so, never swallow it.
+       */
+      conflict?: true;
+    };
+
+/** Tries, then retries on a lost race: the first attempt plus this many more. */
+const MAX_CONFLICT_RETRIES = 5;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Applies tracked edits as a new active version of the document.
+ *
+ * Two writers on one document used to read the same active version and the
+ * last to activate erased the other's edit. The write now activates only if
+ * the version it started from is still the active one (see
+ * `activateDocumentVersionIfCurrent`); the loser discards what it wrote and
+ * starts over from the winner's version, so every edit lands on top of the
+ * previous one. After MAX_CONFLICT_RETRIES lost races it returns `conflict`,
+ * which is an error the person sees, not a silent loss.
+ */
+export async function applyTrackedEditsToDocument(params: ApplyParams): Promise<ApplyTrackedEditsResult> {
+  for (let attempt = 0; ; attempt++) {
+    const result = await applyOnce(params);
+    if (result.ok || !result.conflict) return result;
+    if (attempt >= MAX_CONFLICT_RETRIES)
+      return {
+        ok: false,
+        conflict: true,
+        error: "The document was changed by someone else at the same time. Nothing was saved; try again.",
+      };
+    // A little jitter so writers that collided do not collide again in step.
+    await sleep(20 * (attempt + 1) + Math.floor(Math.random() * 30));
+  }
+}
+
+async function applyOnce(params: ApplyParams): Promise<ApplyTrackedEditsResult> {
   const { documentId, userId, userEmail, edits, db, reuseVersion } = params;
 
   const { data: doc } = await db
@@ -241,9 +284,24 @@ export async function applyTrackedEditsToDocument(params: {
     return { ok: false, error: "Failed to record edits." };
   }
 
-  const activation = await activateDocumentVersion(db, documentId, versionRowId);
-  if (activation.error || !activation.activated) {
-    return { ok: false, error: "Failed to activate document version." };
+  // A turn-scoped reuse rewrote the active version in place, and that write is already
+  // serialized by its own expectedStoragePath check. A NEW version must become active only
+  // if nobody activated another one since we read this document.
+  if (reuseVersion) {
+    const activation = await activateDocumentVersion(db, documentId, versionRowId);
+    if (activation.error || !activation.activated) {
+      return { ok: false, error: "Failed to activate document version." };
+    }
+  } else {
+    const activation = await activateDocumentVersionIfCurrent(db, documentId, versionRowId, activeVersion.id);
+    if (activation.error) return { ok: false, error: "Failed to activate document version." };
+    if (!activation.activated) {
+      // Lost the race: another write activated a version after we read ours.
+      // Discard this one (its edit rows, its row, its file) and let the caller start over.
+      await db.from("document_edits").delete().eq("version_id", versionRowId);
+      await discardDocumentVersion(db, documentId, versionRowId, userId);
+      return { ok: false, error: "Document changed during the edit.", conflict: true };
+    }
   }
 
   const annotations: EditAnnotation[] = insertedEdits.map(
