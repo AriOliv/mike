@@ -7,7 +7,7 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
 import { resolveWorkspaceFilter, sendWorkspaceFailure } from "../../lib/workspace";
-import { listLegalTeamMembers, whoAmI } from "../requests/requests.service";
+import { listAmendmentsOf, listLegalTeamMembers, whoAmI } from "../requests/requests.service";
 import {
     askAcervo,
     createWatchedFolder,
@@ -221,6 +221,19 @@ projectContractRouter.get(
     requireAuth,
     asyncRoute(async (req, res) => {
         send(res, await listContractAlerts(createServerSupabase(), caller(res), req.params.projectId));
+    }),
+);
+
+// The amendments tied to this contract (a request's "contrato original").
+projectContractRouter.get(
+    "/amendments",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const db = createServerSupabase();
+        // Seeing the contract is what allows seeing the amendments tied to it.
+        const seen = await listContractAlerts(db, caller(res), req.params.projectId);
+        if (!seen.ok) return void sendServiceFailure(res, seen);
+        send(res, await listAmendmentsOf(db, req.params.projectId));
     }),
 );
 
