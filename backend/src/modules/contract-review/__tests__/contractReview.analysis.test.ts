@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
     analysisCounts,
     analysisPrompt,
+    SECTION_LIMITS,
     ANALYSIS_NOTICE,
     estimateUsage,
     parseAnalysisAnswer,
@@ -144,9 +145,29 @@ describe("parseAnalysisAnswer", () => {
         });
     });
 
-    it("tells a cut-off answer from one that is not JSON at all", () => {
-        // Repaired, a cut-off answer is valid JSON missing its last sections.
-        expect(parseAnalysisAnswer(JSON.stringify(whole).slice(0, 60))).toEqual({ ok: false, reason: "incomplete_answer" });
+    it("keeps what came whole from a cut-off answer and lists the sections that did not", () => {
+        const text = JSON.stringify({
+            ...whole,
+            critical: [{ title: "a", quote: "x" }, { title: "b", quote: "y" }],
+            attention: [{ title: "c", quote: "z" }, { title: "d", quote: "w" }],
+        });
+        // Stops in the middle of the second attention item, before favorable.
+        const cut = text.slice(0, text.indexOf('"title":"d"') + 6);
+        const parsed = parseAnalysisAnswer(cut);
+        expect(parsed).toMatchObject({ ok: true, value: { critical: [{ title: "a" }, { title: "b" }], attention: [{ title: "c" }] } });
+        if (parsed.ok) expect(parsed.missing).toEqual(["attention", "favorable", "redlines", "compliance", "open_points"]);
+    });
+
+    it("tells an answer without a summary, or that is not JSON at all", () => {
+        expect(parseAnalysisAnswer(JSON.stringify(whole).slice(0, 20))).toEqual({ ok: false, reason: "incomplete_answer" });
         expect(parseAnalysisAnswer("Desculpe, não consigo.")).toEqual({ ok: false, reason: "invalid_json" });
+    });
+});
+
+describe("analysisPrompt size limits", () => {
+    it("asks for a short answer: item limits per section and short quotes", () => {
+        const prompt = analysisPrompt({ documentText: "Contrato.", documentName: "c.docx", intake: [], playbook: null });
+        expect(prompt).toContain(`no máximo ${SECTION_LIMITS.critical} itens em critical`);
+        expect(prompt).toContain("até 250 caracteres");
     });
 });
