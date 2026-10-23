@@ -357,7 +357,13 @@ export function ContractReviewWorkspace({
                     applyDecision(runId, clause.id, result.decision, result.edit);
                     setDocRevision((n) => n + 1);
                 } catch (error) {
-                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
+                    // A refusal (a conflict, a slow server) says so and offers to send the same
+                    // decision again: the person never has to find the point and decide twice.
+                    notifyError(error, {
+                        lang: "pt",
+                        action: "registrar a decisão",
+                        onRetry: () => void commit(clause, input),
+                    });
                 } finally {
                     setOptimistic((current) => without(current, clause.id));
                     setBusy((id) => (id === clause.id ? null : id));
@@ -485,7 +491,11 @@ export function ContractReviewWorkspace({
                     const result = await decideReviewClause(projectId, runId, clause.id, input);
                     applyDecision(runId, clause.id, result.decision, result.edit);
                 } catch (error) {
-                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
+                    notifyError(error, {
+                        lang: "pt",
+                        action: "registrar a decisão",
+                        onRetry: () => void commit(clause, input),
+                    });
                 } finally {
                     setOptimistic((current) => without(current, clause.id));
                 }

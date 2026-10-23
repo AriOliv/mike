@@ -241,6 +241,41 @@ describe("ContractReviewWorkspace", () => {
         expect(within(decided).getByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
     });
 
+    it("offers Tentar de novo when the server refuses a decision, and sends the same one again", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const decided = { decision: "aceito" as const, edited_text: null, reason: null, decided_by: "você", decided_at: "t" };
+        let recorded = false;
+        // As the real server: once the decision is recorded, the review carries it.
+        api.getContractReview.mockImplementation(async () => ({
+            ...REVIEW,
+            clauses: REVIEW.clauses.map((c) => (recorded && c.id === "foro" ? { ...c, decision: decided } : c)),
+        }));
+        api.decideReviewClause
+            .mockRejectedValueOnce(Object.assign(new Error("O documento mudou desde a revisão."), { status: 409 }))
+            .mockImplementation(async () => {
+                recorded = true;
+                return { decision: decided, edit: null };
+            });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(errors.notifyError).toHaveBeenCalledTimes(1));
+        const [, options] = errors.notifyError.mock.calls[0];
+        expect(options).toMatchObject({ lang: "pt", action: "registrar a decisão" });
+        expect(typeof options.onRetry).toBe("function");
+        // The card is back to open (nothing was recorded), and Tentar de novo sends it again.
+        expect(within((await screen.findAllByRole("article"))[0]).getByRole("button", { name: /Aceitar/ })).toBeInTheDocument();
+        await act(async () => {
+            await options.onRetry();
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(2));
+        expect(api.decideReviewClause).toHaveBeenLastCalledWith("p1", "run-1", "foro", { decision: "aceito" });
+        expect(await screen.findByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
+    });
+
     describe("leaving the page inside the undo window", () => {
         async function decideOne() {
             vi.useFakeTimers({ shouldAdvanceTime: true });
