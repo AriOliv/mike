@@ -9,7 +9,7 @@
 
 import { cleanText } from "./requests.shared";
 
-export const INTAKE_KINDS = ["text", "long_text", "yes_no", "date", "money", "choice", "multi_choice"] as const;
+export const INTAKE_KINDS = ["text", "long_text", "yes_no", "date", "money", "choice", "multi_choice", "contract"] as const;
 export type IntakeKind = (typeof INTAKE_KINDS)[number];
 
 export type IntakeItem = {
@@ -35,6 +35,8 @@ export type IntakeAnswer = {
     detail?: string;
     /** For choice and multi_choice: the option values picked. */
     selected?: string[];
+    /** For a "contract" question: the Mike contract picked (its card). Absent when typed ("não está no Mike"). */
+    project_id?: string;
     /** The requester said "não sei": an explicit button, never read from the text. */
     unknown?: true;
     source: "requester" | "inferred";
@@ -112,7 +114,7 @@ export const DEFAULT_INTAKE_TEMPLATE: readonly IntakeItem[] = [
     {
         key: "contrato_original",
         label: "Qual é o contrato original?",
-        kind: "text",
+        kind: "contract",
         required: true,
         hint: "Nome do contrato, ou \"não está no Mike, vou anexar\".",
     },
@@ -260,6 +262,7 @@ export function readAnswers(stored: unknown): IntakeAnswers {
             ...(typeof a.detail === "string" && a.detail ? { detail: a.detail } : {}),
             ...(Array.isArray(a.selected) ? { selected: a.selected.filter((v): v is string => typeof v === "string") } : {}),
             ...(a.unknown === true ? { unknown: true as const } : {}),
+            ...(typeof a.project_id === "string" && a.project_id ? { project_id: a.project_id } : {}),
             source: a.source === "inferred" ? "inferred" : "requester",
             confirmed: a.confirmed === true,
             ...(typeof a.quote === "string" && a.quote ? { quote: a.quote } : {}),
@@ -389,7 +392,8 @@ export function applyAnswers(
         }
         const normalized = normalizeAnswer(item, value.value, value.detail);
         if (!normalized.ok) return normalized;
-        next[key] = { ...normalized.answer, source: "requester", confirmed: true, updated_at: now };
+        const picked = item.kind === "contract" && typeof value.project_id === "string" ? { project_id: value.project_id } : {};
+        next[key] = { ...normalized.answer, ...picked, source: "requester", confirmed: true, updated_at: now };
         changed.push(key);
     }
     const confirm = Array.isArray(input.confirm) ? input.confirm.filter((k): k is string => typeof k === "string") : [];

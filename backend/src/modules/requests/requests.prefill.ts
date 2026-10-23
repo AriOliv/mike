@@ -245,14 +245,14 @@ export async function handleIntakePrefill(
         .maybeSingle();
     const teamRow = team as { intake_template?: unknown; intake_by_kind?: unknown } | null;
     const own = parseIntakeTemplate(teamRow?.intake_template);
-    // Only this kind's questions are put to the model, and not the one that is
-    // the requester's own ("o que você quer saber").
+    // Only this kind's questions are put to the model, and not the ones that are
+    // the requester's own ("o que você quer saber", the contract an amendment changes).
     const template = applicableItems(
         effectiveTemplate(teamRow?.intake_template),
         own.ok && own.items.length ? "org" : "padrao",
         row.kind,
         parseByKind(teamRow?.intake_by_kind),
-    ).filter((i) => !i.no_unknown);
+    ).filter((i) => !i.no_unknown && i.kind !== "contract");
     const stored = readAnswers(row.intake);
     const open = template.filter((i) => !stored[i.key]);
     const termsOpen = !row.counterparty || !row.term_start || row.term_months == null;

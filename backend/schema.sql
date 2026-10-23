@@ -12202,6 +12202,21 @@ alter table public.legal_requests
   add column if not exists intake_kind text;
 
 
+-- Migration date: 2026-10-23 (20261023_99_request_parent_contract.sql)
+--
+-- An amendment or renewal request points at the contract it changes (U-05).
+-- parent_project_id is that contract's card: what ties the amendment to the
+-- term and the renewal the obligations track. It is kept when the card goes
+-- (set null), like the request itself.
+
+alter table public.legal_requests
+  add column if not exists parent_project_id uuid references public.projects(id) on delete set null;
+
+create index if not exists legal_requests_parent_project_idx
+  on public.legal_requests (parent_project_id)
+  where parent_project_id is not null;
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12393,5 +12408,6 @@ insert into public.schema_migrations (filename) values
   ('20261023_95_request_terms_inferred.sql'),
   ('20261023_96_feedback_reports.sql'),
   ('20261023_97_feedback_names_verdict.sql'),
-  ('20261023_98_intake_by_kind.sql')
+  ('20261023_98_intake_by_kind.sql'),
+  ('20261023_99_request_parent_contract.sql')
 on conflict (filename) do nothing;
