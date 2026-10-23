@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
     createRequest: vi.fn(),
     getRequestRole: vi.fn(),
+    lookupCnpj: vi.fn(),
     uploadStandaloneDocument: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", () => api);
-vi.mock("@/app/lib/userFacingError", () => ({ notifyError: vi.fn() }));
+vi.mock("@/app/lib/userFacingError", async (orig) => ({ ...(await orig<typeof import("@/app/lib/userFacingError")>()), notifyError: vi.fn() }));
 
 import { RequestForm } from "./RequestForm";
 
@@ -64,5 +65,30 @@ describe("RequestForm", () => {
         fireEvent.submit(document.getElementById("request-form")!);
         await waitFor(() => expect(api.createRequest).toHaveBeenCalled());
         expect(screen.queryByText("De qual área você é?")).not.toBeInTheDocument();
+    });
+
+    it("looks up a typed CNPJ and puts the company name in the field", async () => {
+        api.getRequestRole.mockResolvedValue({ configured: true, role: "requester", area: "Comercial", areas });
+        api.lookupCnpj.mockResolvedValue({ razao_social: "EMPRESA FICTICIA LTDA", situacao: "ATIVA", cnae: { descricao: "Software" } });
+        render(<RequestForm open onClose={vi.fn()} onCreated={vi.fn()} />);
+        const field = await screen.findByPlaceholderText(/Empresa ou pessoa/);
+        expect(screen.queryByRole("button", { name: "Buscar CNPJ" })).toBeNull();
+        fireEvent.change(field, { target: { value: "11.222.333/0001-81" } });
+        fireEvent.click(screen.getByRole("button", { name: "Buscar CNPJ" }));
+        await waitFor(() => expect((field as HTMLInputElement).value).toBe("EMPRESA FICTICIA LTDA"));
+        expect(api.lookupCnpj).toHaveBeenCalledWith("11.222.333/0001-81");
+        expect(screen.getByText("Receita: ATIVA · Software")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Buscar CNPJ" })).toBeNull();
+    });
+
+    it("says so, and keeps what was typed, when the lookup is not on", async () => {
+        api.getRequestRole.mockResolvedValue({ configured: true, role: "requester", area: "Comercial", areas });
+        api.lookupCnpj.mockRejectedValue(Object.assign(new Error("off"), { code: "cnpj_disabled", status: 503 }));
+        render(<RequestForm open onClose={vi.fn()} onCreated={vi.fn()} />);
+        const field = await screen.findByPlaceholderText(/Empresa ou pessoa/);
+        fireEvent.change(field, { target: { value: "11222333000181" } });
+        fireEvent.click(screen.getByRole("button", { name: "Buscar CNPJ" }));
+        expect(await screen.findByText(/ainda não está ligada/)).toBeInTheDocument();
+        expect((field as HTMLInputElement).value).toBe("11222333000181");
     });
 });

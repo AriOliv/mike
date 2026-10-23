@@ -1299,6 +1299,16 @@ create table if not exists public.mcp_confirmations (
 create index if not exists idx_mcp_confirmations_expires
   on public.mcp_confirmations(expires_at);
 
+create table if not exists public.cnpj_lookups (
+  cnpj text primary key check (cnpj ~ '^[0-9]{14}$'),
+  payload jsonb not null,
+  fetched_at timestamptz not null default now()
+);
+
+alter table public.cnpj_lookups enable row level security;
+revoke all on public.cnpj_lookups from anon, authenticated;
+grant select, insert, update, delete on public.cnpj_lookups to service_role;
+
 alter table public.mcp_confirmations enable row level security;
 revoke all on public.mcp_confirmations from anon, authenticated;
 -- delete too: schema.sql's blanket service_role grant gives it, and fresh
@@ -12231,5 +12241,6 @@ insert into public.schema_migrations (filename) values
   ('20261022_98_obligation_owner.sql'),
   ('20261023_91_assignment_rules.sql'),
   ('20261023_92_request_stages.sql'),
+  ('20261023_93_cnpj_lookups.sql'),
   ('20261023_94_request_contract_terms.sql')
 on conflict (filename) do nothing;
