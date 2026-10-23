@@ -347,7 +347,7 @@ export default function PedidosPage() {
             </TableScrollArea>
 
             {openId && data ? (
-                <RequestPanel requestId={openId} team={data.team} onClose={() => openPanel(null)} onChanged={load} />
+                <RequestPanel requestId={openId} team={data.team} userId={user?.id ?? null} onClose={() => openPanel(null)} onChanged={load} />
             ) : null}
             {form}
         </div>
