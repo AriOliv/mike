@@ -175,6 +175,66 @@ describe("HomeView", () => {
         expect(screen.getAllByText(/Agente de revisão revisou NDA Polaris.docx com 3 fontes/).length).toBeGreaterThan(0);
     });
 
+    describe("a long queue", () => {
+        const many = (n: number) =>
+            Array.from({ length: n }, (_, i) =>
+                review({
+                    id: `r${i + 1}`,
+                    project_id: `p${i + 1}`,
+                    filename: `Contrato ${String(i + 1).padStart(2, "0")}.pdf`,
+                    assignee_email: "duda@avenia.io",
+                }),
+            );
+
+        it("draws only the first rows and says how many there are, with the way to the rest", async () => {
+            api.getHomeSummary.mockResolvedValue(summary(many(21)));
+            render(<HomeView />);
+            await screen.findByText("Contrato 01.pdf");
+            const list = screen.getByRole("list", { name: "Revisões" });
+            expect(within(list).getAllByRole("listitem")).toHaveLength(8);
+            expect(screen.queryByText("Contrato 09.pdf")).not.toBeInTheDocument();
+            expect(screen.getByText(/Mostrando 8 de 21\./)).toBeInTheDocument();
+            expect(screen.getByRole("link", { name: "Ver todos os contratos (21)" })).toHaveAttribute("href", "/contratos");
+        });
+
+        it("keeps the notice deadlines and the activity after the table in the page, not over it", async () => {
+            api.getHomeSummary.mockResolvedValue(summary(many(25)));
+            render(<HomeView />);
+            await screen.findByText("Contrato 01.pdf");
+            const table = screen.getByRole("region", { name: "Revisões" });
+            const deadlines = screen.getByRole("region", { name: "Prazos de aviso" });
+            // Both sections are in normal flow: nothing is absolutely placed or sticky, and the
+            // table's box has a ceiling and clips what is inside it.
+            expect(table.compareDocumentPosition(deadlines) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            for (const el of [table, deadlines]) {
+                expect(el.className).not.toMatch(/\b(absolute|fixed|sticky)\b/);
+            }
+            const box = within(table).getByRole("list", { name: "Revisões" }).closest("div[class*='max-h']");
+            expect(box).not.toBeNull();
+            expect(box!.className).toMatch(/overflow-hidden/);
+            expect(box!.className).toMatch(/max-h-\[min\(30rem,65vh\)\]/);
+        });
+
+        it("says nothing about the rest when the queue fits", async () => {
+            api.getHomeSummary.mockResolvedValue(summary(many(8)));
+            render(<HomeView />);
+            await screen.findByText("Contrato 08.pdf");
+            expect(screen.queryByText(/Mostrando/)).not.toBeInTheDocument();
+            expect(screen.queryByRole("link", { name: /Ver todos os contratos/ })).not.toBeInTheDocument();
+        });
+
+        it("counts the whole queue in the tabs and keeps j/k and the search on all of it", async () => {
+            api.getHomeSummary.mockResolvedValue(summary(many(21)));
+            render(<HomeView />);
+            await screen.findByText("Contrato 01.pdf");
+            expect(screen.getByRole("button", { name: "Todas (21)" })).toBeInTheDocument();
+            fireEvent.click(screen.getByRole("button", { name: "Todas (21)" }));
+            fireEvent.change(screen.getByLabelText("Buscar revisões"), { target: { value: "Contrato 20" } });
+            expect(await screen.findByText("Contrato 20.pdf")).toBeInTheDocument();
+            expect(screen.queryByText(/Mostrando/)).not.toBeInTheDocument();
+        });
+    });
+
     it("filters the queue by a counter and clears it from the empty state", async () => {
         api.getHomeSummary.mockResolvedValue(summary([review({ assignee_email: null })]));
         render(<HomeView />);

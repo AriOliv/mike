@@ -55,6 +55,42 @@ export function fichaProgress(row: Pick<PortfolioRow, "filled" | "total">): stri
     return `${row.filled} de ${row.total} preenchidos`;
 }
 
+const CONTRACT_TYPE_LABELS: Record<string, string> = {
+    nda: "NDA",
+    prestacao_servicos: "Prestação de serviços",
+    msa: "MSA",
+    pedido_sow: "Pedido / SOW",
+    licenca_saas: "Licença SaaS",
+    saas: "SaaS",
+    licenca: "Licença de software",
+    parceria: "Parceria",
+    parceria_comercial: "Parceria comercial",
+    indicacao_rebate: "Indicação e rebate",
+    parceiro_bancario_baas: "Parceiro bancário / BaaS",
+    arranjo_psp_adquirencia: "PSP e adquirência",
+    liquidez_otc_cambio: "Liquidez, OTC e câmbio",
+    custodia_cripto: "Custódia cripto",
+    cliente_api_plataforma: "Cliente de API / plataforma",
+    locacao: "Locação",
+    prestador_pj: "Prestador PJ",
+    mutuo_emprestimo: "Mútuo e empréstimo",
+    carta_intencao_mou: "Carta de intenção / MOU",
+    procuracao: "Procuração",
+    tratamento_dados: "Tratamento de dados",
+    aditivo: "Aditivo",
+    distrato: "Distrato",
+    outro: "Outro",
+};
+
+/** The contract type as a person reads it, never the stored key ("prestacao_servicos"). */
+export function contractTypeLabel(type: string | null): string {
+    if (!type) return "—";
+    const known = CONTRACT_TYPE_LABELS[type];
+    if (known) return known;
+    const words = type.replace(/_/g, " ").trim();
+    return words ? words.charAt(0).toUpperCase() + words.slice(1) : "—";
+}
+
 /** Formats YYYY-MM-DD as dd/mm/aaaa without shifting the day across time zones. */
 export function brDate(isoDate: string | null): string {
     if (!isoDate) return "—";

@@ -195,6 +195,20 @@ describe("ContractReviewWorkspace", () => {
         await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" }));
     });
 
+    it("says how many attention points are left, and points to the export when none is", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        const status = await screen.findByRole("status");
+        expect(status).toHaveTextContent("Falta 1 de 1 ponto de atenção");
+        expect(screen.getByRole("progressbar", { name: "Pontos de atenção tratados" })).toHaveAttribute("aria-valuenow", "0");
+        expect(within(status).queryByRole("button", { name: "Exportar .docx" })).not.toBeInTheDocument();
+
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Tudo tratado"));
+        expect(screen.getByRole("progressbar", { name: "Pontos de atenção tratados" })).toHaveAttribute("aria-valuenow", "1");
+        expect(within(screen.getByRole("status")).getByRole("button", { name: "Exportar .docx" })).toBeEnabled();
+    });
+
     it("undoes a decision from the toast without touching the document", async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
         render(<ContractReviewWorkspace {...props()} />);

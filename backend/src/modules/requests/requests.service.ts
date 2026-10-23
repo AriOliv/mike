@@ -35,6 +35,7 @@ export {
     setIntakeTemplate,
     type RequestIntake,
 } from "./requests.checklist";
+export { parseTerms, termEnd, MAX_TERM_MONTHS, MIN_TERM_MONTHS } from "./requests.terms";
 export {
     applyAssignmentRules,
     getAssignmentRules,

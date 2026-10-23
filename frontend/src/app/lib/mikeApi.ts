@@ -4598,6 +4598,43 @@ export interface RequestParticipant {
     revoked_at: string | null;
 }
 
+export type RequestStage =
+    | "recebido"
+    | "triagem"
+    | "checklist"
+    | "analise"
+    | "negociacao"
+    | "assinatura"
+    | "concluido";
+export type StageOwnerKind = "agent" | "person" | "requester" | "none";
+export type StageOwner = { kind: StageOwnerKind; id: string | null; name: string | null };
+export type StageStripEntry = {
+    stage: RequestStage;
+    label: string;
+    state: "concluida" | "atual" | "pendente";
+    owner: StageOwner | null;
+    since: string | null;
+};
+/** Team view of a request's spine: where it is, with whom and since when. */
+export type RequestStageStrip = {
+    stage: RequestStage;
+    label: string;
+    /** "etapa 3 de 5": null on the two ends, which do not count. */
+    position: { index: number; of: number } | null;
+    owner: StageOwner;
+    /** Null on a request older than the history: leave "desde" out. */
+    since: string | null;
+    strip: StageStripEntry[];
+};
+export type RequestStageRow = {
+    stage: RequestStage;
+    owner_kind: StageOwnerKind;
+    owner_name: string | null;
+    entered_at: string;
+    left_at: string | null;
+    note: string | null;
+};
+
 export interface RequestTriage {
     kind?: RequestKind;
     kind_changed?: boolean;
@@ -4653,6 +4690,10 @@ export interface LegalRequest {
     participants?: RequestParticipant[];
     source?: { channel?: string; permalink?: string };
     can_decide?: boolean;
+    /** Team view: the spine, from the stage catalogue. */
+    stage?: RequestStageStrip;
+    /** Team view: the stages it went through, oldest first. */
+    stages?: RequestStageRow[];
     /** Team view: the intake checklist closed. */
     intake_completed_at?: string | null;
     /** Team view: the analysis found a critical risk and the Head was alerted. */
@@ -5461,6 +5502,8 @@ export interface AnalysisResult {
         term_termination_penalties: string;
     };
     open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro" }[];
+    /** Set when the model's answer was cut off and these sections could not be recovered. */
+    partial?: { missing: string[] };
 }
 export interface AnalystAnalysis {
     id: string;
