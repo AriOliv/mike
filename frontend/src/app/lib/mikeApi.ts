@@ -5514,7 +5514,7 @@ export interface AnalysisResult {
         governing_law_forum: string;
         term_termination_penalties: string;
     };
-    open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro" }[];
+    open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro"; quote?: string; span?: { start: number; end: number } | null }[];
     /** Set when the model's answer was cut off and these sections could not be recovered. */
     partial?: { missing: string[] };
 }

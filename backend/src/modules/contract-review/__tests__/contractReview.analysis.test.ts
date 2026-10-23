@@ -7,6 +7,7 @@ import {
     estimateUsage,
     parseAnalysisAnswer,
     normalizeAnalysis,
+    unknownSuggestions,
     withMissingIntake,
 } from "../contractReview.analysis";
 
@@ -121,9 +122,31 @@ describe("withMissingIntake and estimateUsage", () => {
         expect(out.open_points.slice(n).map((p) => p.id)).toEqual(["u_valor", "u_foro"]);
         expect(out.open_points[n].text).toContain("Valor estimado");
         const prompt = analysisPrompt({ documentText: CONTRACT, documentName: "c.pdf", intake, playbook: null });
-        expect(prompt).toContain("- Valor estimado: NÃO SEI (não assuma resposta)");
+        expect(prompt).toContain("- [valor] Valor estimado: NÃO SEI (não assuma resposta)");
         expect(prompt).toContain("- Prazo desejado: 12 meses");
         expect(prompt).toContain("não a repita em open_points");
+    });
+
+    it("shows the contract's literal answer to a 'não sei' as a suggestion to confirm, never invented", () => {
+        const intake = [
+            { key: "foro", label: "Foro", value: "Não sei", unknown: true },
+            { key: "valor", label: "Valor estimado", value: "Não sei", unknown: true },
+            { key: "prazo", label: "Prazo", value: "12 meses" },
+        ];
+        const real = "Fica eleito o foro da Comarca de São Paulo.";
+        const suggestions = unknownSuggestions(
+            { unknown_suggestions: [{ key: "foro", quote: real }, { key: "valor", quote: "trecho inventado que não existe no contrato" }, { key: "prazo", quote: real }] },
+            intake,
+            CONTRACT,
+        );
+        expect([...suggestions.keys()]).toEqual(["foro"]);
+        const { result } = normalizeAnalysis(answer, CONTRACT);
+        const points = withMissingIntake(result, intake, suggestions).open_points.slice(result.open_points.length);
+        expect(points[0]).toMatchObject({ id: "u_foro", quote: real });
+        expect(points[0].text).toContain("confirmar com quem pediu");
+        expect(points[1].text).toContain("Confirmar antes de fechar");
+        expect(points[1].quote).toBeUndefined();
+        expect(analysisPrompt({ documentText: CONTRACT, documentName: "c.pdf", intake, playbook: null })).toContain("- [foro] Foro: NÃO SEI");
     });
 
     it("estimates tokens and cost from characters and the model family's list price", () => {
