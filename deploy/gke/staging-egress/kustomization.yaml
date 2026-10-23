@@ -1,0 +1,6 @@
+# Egress allowlist for the namespace with real contracts (staging only; the
+# preview keeps open egress). See egress.yaml.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - egress.yaml

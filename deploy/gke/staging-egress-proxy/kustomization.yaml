@@ -1,0 +1,8 @@
+# Outbound allowlist proxy for the namespace with real contracts (staging only).
+# The default-deny egress (../staging-egress) stays; this adds ONE way out, by
+# NAME, for destinations behind a CDN whose addresses change (no ipBlock).
+# See egress-proxy.yaml. The preview keeps open egress and does not list this.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - egress-proxy.yaml

@@ -1,0 +1,55 @@
+# GoTrue. Signup is closed: the seed job creates the demo users through the
+# admin API. Google SSO stays off in staging until a dedicated OAuth client
+# exists (the edge already restricts access to @avenia.io through IAP).
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth
+spec:
+  selector: { app: auth }
+  ports: [{ name: http, port: 9999, targetPort: 9999 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: auth } }
+  template:
+    metadata: { labels: { app: auth } }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: gotrue
+          image: supabase/gotrue:v2.189.0
+          ports: [{ containerPort: 9999 }]
+          envFrom: [{ configMapRef: { name: mike-env } }]
+          env:
+            - { name: GOTRUE_API_HOST, value: 0.0.0.0 }
+            - { name: GOTRUE_API_PORT, value: "9999" }
+            - { name: API_EXTERNAL_URL, value: "$(PUBLIC_URL)/supabase" }
+            - { name: GOTRUE_SITE_URL, value: "$(PUBLIC_URL)" }
+            - { name: GOTRUE_URI_ALLOW_LIST, value: "$(PUBLIC_URL)/**" }
+            - { name: GOTRUE_DB_DRIVER, value: postgres }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: POSTGRES_PASSWORD } }
+            - { name: GOTRUE_DB_DATABASE_URL, value: "postgres://supabase_auth_admin:$(DB_PASSWORD)@db:5432/postgres" }
+            - name: GOTRUE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: JWT_SECRET } }
+            - { name: GOTRUE_JWT_EXP, value: "3600" }
+            - { name: GOTRUE_JWT_AUD, value: authenticated }
+            - { name: GOTRUE_JWT_DEFAULT_GROUP_NAME, value: authenticated }
+            - { name: GOTRUE_JWT_ADMIN_ROLES, value: service_role }
+            - { name: GOTRUE_PASSWORD_MIN_LENGTH, value: "10" }
+            - { name: GOTRUE_DISABLE_SIGNUP, value: "true" }
+            - { name: GOTRUE_EXTERNAL_EMAIL_ENABLED, value: "true" }
+            - { name: GOTRUE_EXTERNAL_PHONE_ENABLED, value: "false" }
+            - { name: GOTRUE_EXTERNAL_GOOGLE_ENABLED, value: "false" }
+            - { name: GOTRUE_MAILER_AUTOCONFIRM, value: "true" }
+          readinessProbe:
+            httpGet: { path: /health, port: 9999 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }

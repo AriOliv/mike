@@ -1,0 +1,9 @@
+# The MCP endpoint of the preview (fictitious data) reachable by MCP clients
+# that cannot pass IAP (Claude Code, Codex, a test script): /mcp goes straight
+# to the backend, outside IAP, and the Mike access token is the only auth
+# (docs/product/09-mcp-integral.md §9). Preview only: staging keeps everything
+# behind IAP, so this component is never listed in overlays/staging.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - mcp.yaml
