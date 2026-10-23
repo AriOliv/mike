@@ -19,7 +19,7 @@ function Marker({ state }: { state: StageStripEntry["state"] }) {
             aria-hidden="true"
             className={cn(
                 "h-2 w-2 shrink-0 rounded-full",
-                state === "atual" ? "bg-blue-600 ring-2 ring-blue-200" : "border border-gray-300 bg-white",
+                state === "atual" ? "bg-blue-600 ring-2 ring-blue-200" : "border border-gray-400 bg-white",
             )}
         />
     );
