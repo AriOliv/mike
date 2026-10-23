@@ -309,10 +309,12 @@ describe("HomeView", () => {
         await act(async () => assigned.actions[0].onClick());
         expect(api.updateContractReview).toHaveBeenLastCalledWith("r1", { assignee_email: "duda@avenia.io" });
 
+        // The shortcuts read the list through a ref that an effect refreshes after the accept and
+        // the assign above; under CI load the key can land a tick before it, so wait for the result.
         fireEvent.keyDown(window, { key: "j" });
-        expect(nav.replace).toHaveBeenLastCalledWith("?doc=r2", { scroll: false });
+        await waitFor(() => expect(nav.replace).toHaveBeenLastCalledWith("?doc=r2", { scroll: false }));
         fireEvent.keyDown(window, { key: "Escape" });
-        expect(nav.replace).toHaveBeenLastCalledWith("/", { scroll: false });
+        await waitFor(() => expect(nav.replace).toHaveBeenLastCalledWith("/", { scroll: false }));
     });
 
     it("retries a failed review and reports a failed accept", async () => {
