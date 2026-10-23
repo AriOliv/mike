@@ -53,6 +53,7 @@ import {
 import { buildStrip, loadStageHistory, syncStage, type StageRow, type StageStrip } from "./requests.stages";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
 import { loadTemplate, queueIntakePrefill } from "./requests.checklist";
+import { applyAssignmentRules } from "./requests.rules";
 import { applyAnswers, intakeStatus } from "./requests.intake";
 
 export const TRIAGE_JOB_KIND = "request.triage";
@@ -414,6 +415,8 @@ export async function createRequest(
             payload: { due: dueAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) },
         },
     ]);
+    // Fixed rules first: they name the owner without a model. The triage still runs and suggests the rest.
+    await applyAssignmentRules(db, row);
     try {
         await enqueueDbJob(db, {
             kind: TRIAGE_JOB_KIND,
@@ -834,6 +837,7 @@ export async function assignRequest(
     const updated = await updateRow(db, row.id, {
         assignee_id: assigneeId,
         assigned_at: assigneeId ? new Date().toISOString() : null,
+        assigned_by: assigneeId ? "person" : null,
         status,
     });
     if (!updated.ok) return updated;

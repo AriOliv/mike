@@ -143,13 +143,74 @@ describe("handleAnalystAnalysis", () => {
         expect(fake.calls[3].payload).toMatchObject({ status: "done" });
     });
 
-    it("asks once more after a cut-off answer, and counts both calls", async () => {
-        llm.completeText.mockResolvedValueOnce(modelAnswer.slice(0, 300));
+    // A long fictitious answer cut where the output cap would stop it: whole
+    // critical and attention sections, then the favorable one half written.
+    const longCutOff = () => {
+        const item = (n: number) => ({ title: `Item ${n}`, quote: "pagará multa de 50% do valor total", clause: "cl. 5.1", rationale: "Texto ".repeat(200) });
+        const full = JSON.stringify({
+            executive_summary: { text: "Serviços.", object: "Serviços", parties: ["A", "B"], value: null },
+            critical: Array.from({ length: 6 }, (_, n) => item(n)),
+            attention: Array.from({ length: 6 }, (_, n) => item(n + 10)),
+            favorable: Array.from({ length: 4 }, (_, n) => item(n + 20)),
+            redlines: [], compliance: {}, open_points: [],
+        });
+        return full.slice(0, full.indexOf('"title":"Item 22"') + 12);
+    };
+
+    it("keeps a cut-off answer's whole items and asks only for the sections that are missing", async () => {
+        llm.completeText.mockResolvedValueOnce(longCutOff());
+        llm.completeText.mockResolvedValueOnce(
+            JSON.stringify({
+                favorable: [],
+                redlines: [{ clause: "cl. 5.1", from: "multa de 50% do valor total", to: "multa de 10% do saldo", why: "Proporção." }],
+                compliance: { data_protection: "ok", confidentiality: "", governing_law_forum: "", term_termination_penalties: "" },
+                open_points: [{ text: "Aprovação do founder.", depends_on: "founder" }],
+            }),
+        );
         const fake = runScript();
         await handleAnalystAnalysis(fake.db, job());
         expect(llm.completeText).toHaveBeenCalledTimes(2);
-        expect(llm.completeText.mock.calls[1][0].user).toContain("a resposta anterior veio cortada");
-        expect(fake.calls[3].payload).toMatchObject({ status: "done", usage: { calls: 2 } });
+        const second = llm.completeText.mock.calls[1][0];
+        expect(second.maxTokens).toBeLessThan(16_000);
+        expect(second.user).toContain("favorable, redlines, compliance, open_points");
+        const done = fake.calls[3].payload as Record<string, any>;
+        expect(done.status).toBe("done");
+        expect(done.result.critical).toHaveLength(6);
+        expect(done.result.attention).toHaveLength(6);
+        expect(done.result.redlines).toHaveLength(1);
+        expect(done.result.partial).toBeUndefined();
+    });
+
+    it("marks the analysis partial when the missing sections do not come either", async () => {
+        llm.completeText.mockResolvedValueOnce(longCutOff());
+        llm.completeText.mockResolvedValueOnce("{ cortado");
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        const done = fake.calls[3].payload as Record<string, any>;
+        expect(done.status).toBe("done");
+        expect(done.result.critical).toHaveLength(6);
+        expect(done.result.partial.missing).toEqual(["favorable", "redlines", "compliance", "open_points"]);
+        expect(contracts.finishAgentRun).toHaveBeenCalledWith(
+            expect.anything(),
+            "run1",
+            expect.objectContaining({ status: "succeeded", output: expect.objectContaining({ partial: done.result.partial.missing }) }),
+        );
+    });
+
+    it("stops before a call once the analysis has spent its cap, and records why", async () => {
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "0.10");
+        llm.completeText.mockImplementation(async (params: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            params.onUsage?.({ inputTokens: 25_000, outputTokens: 16_000 });
+            return "Desculpe, não consigo.";
+        });
+        const fake = runScript();
+        await expect(handleAnalystAnalysis(fake.db, job(1))).rejects.toThrow("cost_cap");
+        expect(llm.completeText).toHaveBeenCalledTimes(1);
+        const failed = fake.calls[3].payload as Record<string, any>;
+        expect(failed).toMatchObject({ status: "failed", usage: { calls: 1, failure: "cost_cap" } });
+        expect(failed.error).toContain("teto de custo");
+        llm.completeText.mockReset();
+        llm.completeText.mockResolvedValue(modelAnswer);
     });
 
     it("fails for good after two bad answers, keeping the reason and what the calls spent", async () => {

@@ -1,0 +1,56 @@
+# One-shot: load schema.sql on an empty database, apply pending migrations with
+# backend/scripts/migrate.sh (ledger in public.schema_migrations), add the
+# @avenia.io domain guard, grant service_role. Same logic as compose db-init.
+# The SQL comes from the backend image (it ships /app/schema.sql, /app/migrations
+# and /app/scripts/migrate.sh), so the schema always matches the deployed code.
+# Re-run safe: scripts/deploy.sh deletes and recreates it on every rollout.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-init
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata: { labels: { app: db-init } }
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      initContainers:
+        - name: sql-from-backend-image
+          image: mike-backend
+          command: ["sh", "-c", "cp -r /app/schema.sql /app/migrations /app/scripts/migrate.sh /work/"]
+          volumeMounts: [{ name: work, mountPath: /work }]
+          resources: { requests: { cpu: 100m, memory: 128Mi } }
+      containers:
+        - name: migrate
+          image: supabase/postgres:17.6.1.136
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -e
+              export DB="postgres://postgres:${PGPASSWORD}@db:5432/postgres"
+              export DATABASE_URL="$DB" MIGRATIONS_DIR=/work/migrations
+              until psql "$DB" -tAc "select to_regclass('auth.users')" | grep -q auth; do
+                echo "waiting for auth schema (GoTrue migrations)..."; sleep 3;
+              done
+              if ! psql "$DB" -tAc "select to_regclass('public.user_profiles')" | grep -q user_profiles; then
+                psql "$DB" -v ON_ERROR_STOP=1 -f /work/schema.sql
+              fi
+              bash /work/migrate.sh up
+              psql "$DB" -v ON_ERROR_STOP=1 -f /sql/domain-guard.sql
+              psql "$DB" -c "grant usage on schema public to service_role;
+                grant all privileges on all tables in schema public to service_role;
+                grant all privileges on all sequences in schema public to service_role;
+                notify pgrst, 'reload schema';"
+          env:
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: POSTGRES_PASSWORD } }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: sql, mountPath: /sql }
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+      volumes:
+        - { name: work, emptyDir: {} }
+        - { name: sql, configMap: { name: db-extra-sql } }

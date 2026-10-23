@@ -19,6 +19,7 @@ import {
     startAgentRun,
 } from "../contracts/contracts.service";
 import { REQUEST_COLUMNS, type RequestRow } from "./requests.access";
+import { applyAssignmentRules, reloadAfterRules } from "./requests.rules";
 import { syncStage } from "./requests.stages";
 import {
     KIND_LABELS,
@@ -340,6 +341,7 @@ export async function handleRequestTriage(
     if (autoAssign) {
         patch.assignee_id = assignee!.user_id;
         patch.assigned_at = new Date().toISOString();
+        patch.assigned_by = "triage";
     }
     const { error: updateError } = await db.from("legal_requests").update(patch).eq("id", row.id);
     if (updateError) {
@@ -386,7 +388,11 @@ export async function handleRequestTriage(
             .eq("id", row.project_id);
     }
 
-    await syncStage(db, { ...row, ...patch } as RequestRow, "triagem feita pelo agente");
+    // The agent may have just read the area a rule asks about.
+    if (fillArea && !autoAssign) {
+        await applyAssignmentRules(db, { ...row, requester_area: readArea, kind, assigned_by: row.assigned_by });
+    }
+    await syncStage(db, await reloadAfterRules(db, { ...row, ...patch } as RequestRow), "triagem feita pelo agente");
 
     await finishAgentRun(db, runId, {
         status: "succeeded",
