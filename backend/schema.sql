@@ -1068,6 +1068,18 @@ create index if not exists idx_obligations_user_due
 create index if not exists idx_obligations_project
   on public.obligations(project_id);
 
+-- A deadline with an owner and its own warning lead time (20261022_98).
+alter table public.obligations
+  add column if not exists owner_email text,
+  add column if not exists alert_days integer not null default 30;
+alter table public.obligations
+  drop constraint if exists obligations_alert_days_check;
+alter table public.obligations
+  add constraint obligations_alert_days_check check (alert_days between 0 and 365);
+create index if not exists idx_obligations_owner_due
+  on public.obligations(lower(owner_email), due_date)
+  where owner_email is not null and done = false;
+
 -- AI contract analysis: structured review whose every item quotes the clause
 -- it came from, so a finding can be traced back to the document text.
 create table if not exists public.dossiers (
@@ -12010,6 +12022,30 @@ from public.legal_requests r
 left join public.projects p on p.id = r.project_id
 where not exists (select 1 from public.legal_request_stages s where s.request_id = r.id);
 
+-- Migration date: 2026-10-23 (20261023_94_request_contract_terms.sql)
+--
+-- Part 2 of asking the legal team, "the contract" (U-05, U-07, U-08): the
+-- other party's e-mail, when the contract starts and for how many months.
+-- The end date is computed from the two (term_end), never stored.
+--
+-- counterparty_email is only kept, for the external validation by link
+-- (U-16) that comes later. Nothing is sent to that address; it stays out of
+-- notifications, the card's activity and the MCP tools.
+--
+-- All three are optional: a request without a contract file (an NDA, a
+-- question) leaves them empty.
+
+alter table public.legal_requests
+  add column if not exists counterparty_email text,
+  add column if not exists term_start date,
+  add column if not exists term_months integer;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_term_months_check;
+alter table public.legal_requests
+  add constraint legal_requests_term_months_check
+    check (term_months is null or (term_months >= 1 and term_months <= 600));
+
 
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
@@ -12192,6 +12228,8 @@ insert into public.schema_migrations (filename) values
   ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
   ('20261022_97_card_events_cascade.sql'),
+  ('20261022_98_obligation_owner.sql'),
   ('20261023_91_assignment_rules.sql'),
-  ('20261023_92_request_stages.sql')
+  ('20261023_92_request_stages.sql'),
+  ('20261023_94_request_contract_terms.sql')
 on conflict (filename) do nothing;

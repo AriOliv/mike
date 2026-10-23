@@ -194,7 +194,10 @@ describe("HomeView", () => {
             expect(await screen.findByText(/Mostrando 8 de 21\./)).toBeInTheDocument();
             const list = screen.getByRole("list", { name: "Revisões" });
             await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(8));
-            expect(screen.queryByText("Contrato 09.pdf")).not.toBeInTheDocument();
+            // Only inside the table: the same name can appear elsewhere on the page (the greeting,
+            // the activity), and this is about what the table draws.
+            expect(within(list).queryByText("Contrato 09.pdf")).not.toBeInTheDocument();
+            expect(within(list).getByText("Contrato 08.pdf")).toBeInTheDocument();
             expect(await screen.findByRole("link", { name: "Ver todos os contratos (21)" })).toHaveAttribute("href", "/contratos");
         });
 

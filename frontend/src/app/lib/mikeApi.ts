@@ -4598,6 +4598,43 @@ export interface RequestParticipant {
     revoked_at: string | null;
 }
 
+export type RequestStage =
+    | "recebido"
+    | "triagem"
+    | "checklist"
+    | "analise"
+    | "negociacao"
+    | "assinatura"
+    | "concluido";
+export type StageOwnerKind = "agent" | "person" | "requester" | "none";
+export type StageOwner = { kind: StageOwnerKind; id: string | null; name: string | null };
+export type StageStripEntry = {
+    stage: RequestStage;
+    label: string;
+    state: "concluida" | "atual" | "pendente";
+    owner: StageOwner | null;
+    since: string | null;
+};
+/** Team view of a request's spine: where it is, with whom and since when. */
+export type RequestStageStrip = {
+    stage: RequestStage;
+    label: string;
+    /** "etapa 3 de 5": null on the two ends, which do not count. */
+    position: { index: number; of: number } | null;
+    owner: StageOwner;
+    /** Null on a request older than the history: leave "desde" out. */
+    since: string | null;
+    strip: StageStripEntry[];
+};
+export type RequestStageRow = {
+    stage: RequestStage;
+    owner_kind: StageOwnerKind;
+    owner_name: string | null;
+    entered_at: string;
+    left_at: string | null;
+    note: string | null;
+};
+
 export interface RequestTriage {
     kind?: RequestKind;
     kind_changed?: boolean;
@@ -4653,6 +4690,10 @@ export interface LegalRequest {
     participants?: RequestParticipant[];
     source?: { channel?: string; permalink?: string };
     can_decide?: boolean;
+    /** Team view: the spine, from the stage catalogue. */
+    stage?: RequestStageStrip;
+    /** Team view: the stages it went through, oldest first. */
+    stages?: RequestStageRow[];
     /** Team view: the intake checklist closed. */
     intake_completed_at?: string | null;
     /** Team view: the analysis found a critical risk and the Head was alerted. */
@@ -5170,7 +5211,31 @@ export interface Obligation {
     done: boolean;
     note: string | null;
     source_quote: string | null;
+    /** Who looks after the deadline and is warned; null = whoever created it. */
+    owner_email: string | null;
+    /** Days before the due date when the warning starts. */
+    alert_days: number;
     projects?: { name: string; counterparty: string | null; lane: string | null } | null;
+}
+
+/** A deadline whose warning window is open for the caller; negative = overdue. */
+export interface ObligationAlert extends Obligation {
+    days_left: number;
+}
+
+export async function getObligationAlerts(): Promise<ObligationAlert[]> {
+    return apiRequest("/obligations/alerts");
+}
+
+/** A person who can own a deadline: the legal team. */
+export interface ObligationOwner {
+    user_id: string;
+    email: string;
+    name: string;
+}
+
+export async function getObligationOwners(): Promise<ObligationOwner[]> {
+    return apiRequest("/obligations/owners");
 }
 
 export async function getObligations(params?: {
@@ -5192,6 +5257,8 @@ export async function createObligation(input: {
     mark?: ObligationMark;
     project_id?: string | null;
     note?: string | null;
+    owner_email?: string | null;
+    alert_days?: number;
 }): Promise<Obligation> {
     return apiRequest("/obligations", {
         method: "POST",
@@ -5202,7 +5269,15 @@ export async function createObligation(input: {
 
 export async function updateObligation(
     id: string,
-    patch: { done?: boolean; title?: string; due_date?: string; mark?: ObligationMark; note?: string | null },
+    patch: {
+        done?: boolean;
+        title?: string;
+        due_date?: string;
+        mark?: ObligationMark;
+        note?: string | null;
+        owner_email?: string | null;
+        alert_days?: number;
+    },
 ): Promise<Obligation> {
     return apiRequest(`/obligations/${id}`, {
         method: "PATCH",
