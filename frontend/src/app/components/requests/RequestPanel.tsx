@@ -34,6 +34,7 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { showToast } from "@/app/components/ui/toast";
 import { RequestConversation } from "./RequestConversation";
 import { RequestIntakeSection } from "./IntakeChecklist";
+import { RequestTermsSection } from "./RequestTermsSection";
 import { CriticalAlertBanner } from "./CriticalAlerts";
 import { AnalystAnalysisView } from "@/app/components/contract-review/AnalystAnalysisView";
 import { ExternalChip } from "./ExternalChip";
@@ -333,6 +334,10 @@ export function RequestPanel({
                             onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
                         />
                     )}
+
+                    <Section title="O contrato">
+                        <RequestTermsSection requestId={r.id} reloadKey={reloadKey} onChanged={onChanged} />
+                    </Section>
 
                     <Section title="Checklist do pedido" id="checklist-do-pedido">
                         <RequestIntakeSection

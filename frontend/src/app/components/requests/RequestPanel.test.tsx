@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestPanel } from "./RequestPanel";
 
-const state = vi.hoisted(() => ({ getRequest: vi.fn(), getCardActivity: vi.fn() }));
+const state = vi.hoisted(() => ({ getRequest: vi.fn(), getCardActivity: vi.fn(), getRequestTerms: vi.fn() }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
     assignRequest: vi.fn(),
@@ -10,6 +10,7 @@ vi.mock("@/app/lib/mikeApi", () => ({
     deliverRequest: vi.fn(),
     getCardActivity: state.getCardActivity,
     getRequest: state.getRequest,
+    getRequestTerms: state.getRequestTerms,
     inviteRequestParticipant: vi.fn(),
     postRequestMessage: vi.fn(),
     requestContractAnalysis: vi.fn(),
@@ -61,6 +62,8 @@ describe("RequestPanel: sua tarefa", () => {
         state.getRequest.mockReset();
         state.getCardActivity.mockReset();
         state.getCardActivity.mockResolvedValue([]);
+        // The terms section loads on its own; these tests are about the card and the strip.
+        state.getRequestTerms.mockRejectedValue(new Error("not under test"));
     });
 
     it("pins the signed-in person's task above the fields, with a link to the document", async () => {
@@ -77,6 +80,29 @@ describe("RequestPanel: sua tarefa", () => {
         const card = await screen.findByRole("region", { name: "Sua tarefa" });
         expect(card).toHaveTextContent("Escolher quem pega este pedido");
         expect(screen.getByRole("button", { name: "Escolher responsável" })).toBeInTheDocument();
+    });
+
+    it("shows the contract's terms between the summary and the checklist, and survives their failing to load", async () => {
+        state.getRequest.mockResolvedValue(request());
+        state.getRequestTerms.mockResolvedValue({
+            counterparty: "Delta TI",
+            counterparty_email: null,
+            term_start: "2026-11-12",
+            term_months: 12,
+            term_end: "2027-11-11",
+            inferred: {},
+            can_answer: true,
+        });
+        render(<RequestPanel requestId="r1" team={team} userId="u1" onClose={() => {}} onChanged={() => {}} />);
+        expect(await screen.findByRole("heading", { name: "O contrato" })).toBeInTheDocument();
+        expect(await screen.findByText("11/11/2027")).toBeInTheDocument();
+    });
+
+    it("keeps the rest of the panel when the terms cannot be loaded", async () => {
+        state.getRequest.mockResolvedValue(request());
+        state.getRequestTerms.mockRejectedValue(new Error("down"));
+        render(<RequestPanel requestId="r1" team={team} userId="u1" onClose={() => {}} onChanged={() => {}} />);
+        expect(await screen.findByRole("region", { name: "Sua tarefa" })).toBeInTheDocument();
     });
 
     it("shows nothing when the task belongs to someone else", async () => {
