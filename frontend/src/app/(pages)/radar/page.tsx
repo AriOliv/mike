@@ -34,10 +34,10 @@ const MARK_LABELS: Record<ObligationMark, string> = {
 // Deadlines are grouped by how soon they land, which is how a legal team
 // actually triages them — not by calendar month.
 const BUCKETS = [
-    { key: "overdue", label: "Overdue", max: -1 },
-    { key: "30", label: "Next 30 days", max: 30 },
-    { key: "90", label: "31–90 days", max: 90 },
-    { key: "later", label: "Later", max: Infinity },
+    { key: "overdue", label: "Vencidos", max: -1 },
+    { key: "30", label: "Próximos 30 dias", max: 30 },
+    { key: "90", label: "31 a 90 dias", max: 90 },
+    { key: "later", label: "Mais adiante", max: Infinity },
 ] as const;
 
 function daysUntil(date: string): number {
@@ -57,6 +57,7 @@ export default function RadarPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [view, setView] = useState<"list" | "calendar">("list");
+    const VIEW_LABELS = { list: "Lista", calendar: "Calendário" } as const;
 
     const load = useCallback(async () => {
         try {
@@ -71,7 +72,7 @@ export default function RadarPage() {
             setPeople(team);
             setError(null);
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Não foi possível carregar os prazos.");
+            setError(e instanceof Error ? e.message : "Não consegui carregar os prazos.");
         } finally {
             setLoading(false);
         }
@@ -105,7 +106,7 @@ export default function RadarPage() {
         } catch (e) {
             setItems(previous);
             setAlerts(previousAlerts);
-            setError(e instanceof Error ? e.message : "Não foi possível atualizar o prazo.");
+            setError(e instanceof Error ? e.message : "Não consegui atualizar o prazo.");
         }
     }
 
@@ -123,13 +124,13 @@ export default function RadarPage() {
                 <button
                     key={v}
                     onClick={() => setView(v)}
-                    className={`rounded-md px-2.5 py-1 text-xs capitalize transition-colors ${
+                    className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
                         view === v
                             ? "bg-gray-900 text-white"
                             : "border border-gray-200 text-gray-600 hover:bg-gray-50"
                     }`}
                 >
-                    {v}
+                    {VIEW_LABELS[v]}
                 </button>
             ))}
         </div>
@@ -138,7 +139,7 @@ export default function RadarPage() {
     if (view === "calendar") {
         return (
             <div className="flex h-full flex-col">
-                <PageHeader>Radar</PageHeader>
+                <PageHeader>Prazos</PageHeader>
                 {viewToggle}
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     <RadarCalendar />
@@ -149,7 +150,7 @@ export default function RadarPage() {
 
     return (
         <div className="flex h-full flex-col">
-            <PageHeader>Radar</PageHeader>
+            <PageHeader>Prazos</PageHeader>
             {viewToggle}
 
             {error && (
@@ -175,7 +176,7 @@ export default function RadarPage() {
                                 <li key={a.id} className="flex items-center gap-2 text-sm">
                                     <button
                                         onClick={() => void markDone(a)}
-                                        title="Dar baixa"
+                                        title="Marcar como feito"
                                         className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-gray-400 bg-white text-transparent hover:border-emerald-500 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-900"
                                     >
                                         <Check className="h-3 w-3" />
@@ -203,7 +204,7 @@ export default function RadarPage() {
 
                 {items.length === 0 && (
                     <div className="rounded-xl border border-dashed border-gray-200 px-4 py-12 text-center text-sm text-gray-400">
-                        Nenhum prazo por vir. As obrigações extraídas dos contratos aparecem aqui.
+                        Nenhum prazo à vista. As obrigações extraídas dos contratos aparecem aqui.
                     </div>
                 )}
 
@@ -229,7 +230,7 @@ export default function RadarPage() {
                                     >
                                         <button
                                             onClick={() => void markDone(item)}
-                                            title="Dar baixa"
+                                            title="Marcar como feito"
                                             className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-gray-300 text-transparent transition hover:border-emerald-500 hover:text-emerald-600"
                                         >
                                             <Check className="h-3 w-3" />

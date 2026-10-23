@@ -1,0 +1,68 @@
+# Public edge: Google global external Application LB (Gateway API) with IAP.
+# Avenia policy: public services terminate at a managed HTTPS LB; IAP restricts
+# who passes (roles/iap.httpsResourceAccessor granted to domain:avenia.io only,
+# on this backend service — scripts/grant-iap.sh). Only the frontend is routed;
+# it proxies /api to the backend in-cluster. Overlays patch hostnames, the
+# reserved address and the pre-shared certificates.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mike-edge
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        options:
+          networking.gke.io/pre-shared-certs: CERTS_PLACEHOLDER
+    - name: http
+      protocol: HTTP
+      port: 80
+  addresses:
+    - type: NamedAddress
+      value: ADDRESS_PLACEHOLDER
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mike
+spec:
+  parentRefs: [{ name: mike-edge, sectionName: https }]
+  rules:
+    - backendRefs: [{ name: frontend, port: 3000 }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-to-https
+spec:
+  parentRefs: [{ name: mike-edge, sectionName: http }]
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect: { scheme: https, statusCode: 301 }
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: frontend-iap
+spec:
+  targetRef: { group: "", kind: Service, name: frontend }
+  default:
+    timeoutSec: 300
+    iap:
+      enabled: true
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: frontend-hc
+spec:
+  targetRef: { group: "", kind: Service, name: frontend }
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck: { requestPath: /login, port: 3000 }

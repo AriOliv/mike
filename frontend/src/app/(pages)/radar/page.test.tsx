@@ -8,7 +8,6 @@ vi.mock("@/app/components/ui/toast", () => ({ showToast: vi.fn() }));
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: { id: "u", email: "Ana@Example.com" } }),
 }));
-vi.mock("@/app/components/radar/RadarCalendar", () => ({ RadarCalendar: () => <div>calendar</div> }));
 vi.mock("@/app/components/shared/PageHeader", () => ({
     PageHeader: ({ children }: { children: React.ReactNode }) => <h1>{children}</h1>,
 }));
@@ -117,7 +116,7 @@ describe("Radar page", () => {
         api.updateObligation.mockResolvedValue(ob({ done: true }));
         render(<RadarPage />);
         const block = await screen.findByRole("region", { name: "Pedem sua atenção" });
-        fireEvent.click(within(block).getByTitle("Dar baixa"));
+        fireEvent.click(within(block).getByTitle("Marcar como feito"));
         await waitFor(() => expect(api.updateObligation).toHaveBeenCalledWith("o1", { done: true }));
     });
 
@@ -163,7 +162,7 @@ describe("Radar page", () => {
         api.updateObligation.mockResolvedValue(ob({ done: true }));
         render(<RadarPage />);
         await screen.findByRole("region", { name: "Pedem sua atenção" });
-        fireEvent.click(screen.getAllByTitle("Dar baixa")[1]);
+        fireEvent.click(screen.getAllByTitle("Marcar como feito")[1]);
         await waitFor(() => expect(screen.queryByRole("region", { name: "Pedem sua atenção" })).toBeNull());
         expect(api.updateObligation).toHaveBeenCalledWith("o1", { done: true });
     });
@@ -174,7 +173,7 @@ describe("Radar page", () => {
         api.updateObligation.mockRejectedValueOnce(new Error("offline"));
         render(<RadarPage />);
         await screen.findByText("Aviso de não renovação");
-        fireEvent.click(screen.getByTitle("Dar baixa"));
+        fireEvent.click(screen.getByTitle("Marcar como feito"));
         expect(await screen.findByText("offline")).toBeTruthy();
         expect(screen.getByText("Aviso de não renovação")).toBeTruthy();
     });
@@ -197,13 +196,38 @@ describe("Radar page", () => {
         api.getObligations.mockResolvedValue([]);
         api.getObligationAlerts.mockResolvedValue([]);
         render(<RadarPage />);
-        expect(await screen.findByText(/Nenhum prazo por vir/)).toBeTruthy();
+        expect(await screen.findByText(/Nenhum prazo à vista/)).toBeTruthy();
     });
 
-    it("shows the load error", async () => {
-        api.getObligations.mockRejectedValueOnce(new Error("sem rede"));
+    it("groups the deadlines by how soon they land, with the marks in Portuguese", async () => {
+        api.getObligations.mockResolvedValue([
+            ob({ id: "a", title: "Prazo a", due_date: day(-2) }),
+            ob({ id: "b", title: "Prazo b", due_date: day(0), mark: "tarefa" }),
+            ob({ id: "c", title: "Prazo c", due_date: day(7), mark: "recorrente" }),
+            ob({ id: "d", title: "Prazo d", due_date: day(45) }),
+            ob({ id: "e", title: "Prazo e", due_date: day(200) }),
+        ]);
         api.getObligationAlerts.mockResolvedValue([]);
         render(<RadarPage />);
-        expect(await screen.findByText("sem rede")).toBeTruthy();
+        expect(await screen.findByRole("heading", { name: "Prazos" })).toBeInTheDocument();
+        expect(screen.getByText(/^Vencidos · 1$/)).toBeInTheDocument();
+        expect(screen.getByText(/^Próximos 30 dias · 2$/)).toBeInTheDocument();
+        expect(screen.getByText(/^31 a 90 dias · 1$/)).toBeInTheDocument();
+        expect(screen.getByText(/^Mais adiante · 1$/)).toBeInTheDocument();
+        expect(screen.getAllByText("crítico").length).toBeGreaterThan(0);
+        expect(screen.getByText("tarefa")).toBeInTheDocument();
+        expect(screen.getByText("recorrente")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Lista" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Calendário" })).toBeInTheDocument();
+    });
+
+    it("switches to the calendar with Portuguese weekday labels", async () => {
+        api.getObligations.mockResolvedValue([]);
+        api.getObligationAlerts.mockResolvedValue([]);
+        render(<RadarPage />);
+        fireEvent.click(await screen.findByRole("button", { name: "Calendário" }));
+        expect(await screen.findByText("sáb")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Hoje" })).toBeInTheDocument();
+        expect(screen.getByLabelText("Mês anterior")).toBeInTheDocument();
     });
 });

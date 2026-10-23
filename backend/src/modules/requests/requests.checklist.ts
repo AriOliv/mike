@@ -30,6 +30,8 @@ import {
     type IntakeStatus,
 } from "./requests.intake";
 import { PREFILL_JOB_KIND } from "./requests.prefill";
+import { applyAssignmentRules, reloadAfterRules } from "./requests.rules";
+import { syncStage } from "./requests.stages";
 
 /**
  * The job kind requests.analysis.ts handles. Named here, not imported, so the
@@ -190,6 +192,9 @@ export async function answerIntake(
     }
     // The checklist just closed: the contract's analysis runs for the team.
     if (closing && row.project_id) await enqueueAnalysis(db, row.id);
+    // The checklist may carry the contract value a rule is waiting for.
+    if (closing) await applyAssignmentRules(db, updated);
+    await syncStage(db, closing ? await reloadAfterRules(db, updated) : updated, closing ? "checklist fechado" : null);
     return ok(view(updated, template, true, prefill));
 }
 
