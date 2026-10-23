@@ -81,6 +81,8 @@ export type ApplyTrackedEditsResult =
        * too. Nothing was saved: the caller must say so, never swallow it.
        */
       conflict?: true;
+      /** The edit's `find` is not in the document (`not_found`) or is in it more than once (`ambiguous`). */
+      reason?: "not_found" | "ambiguous";
     };
 
 /** Tries, then retries on a lost race: the first attempt plus this many more. */
@@ -226,6 +228,7 @@ async function applyOnce(params: ApplyParams): Promise<ApplyTrackedEditsResult> 
       error:
         errors[0]?.reason ??
         "No edits could be applied. Refine context_before/context_after and retry.",
+      ...(errors[0]?.code && { reason: errors[0].code }),
     };
   }
 
