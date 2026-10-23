@@ -104,7 +104,7 @@ export function analysisPrompt(args: {
     playbook: { name: string; findings: RuleFinding[] } | null;
 }): string {
     const intake = args.intake.length
-        ? args.intake.map((a) => `- ${a.label}: ${a.value}`).join("\n")
+        ? args.intake.map((a) => (a.unknown ? `- ${a.label}: NÃO SEI (não assuma resposta)` : `- ${a.label}: ${a.value}`)).join("\n")
         : "(o checklist de intake não foi preenchido; trate o que faltar como ponto aberto)";
     const yardstick = args.playbook
         ? `\nRÉGUA: o playbook "${args.playbook.name}" da organização já julgou este contrato. Use esses julgamentos: um item sobre uma regra leva o rule_id dela, e regra inaceitável ou obrigatória ausente é risco crítico; regra a revisar é ponto de atenção; regra aceitável pode ser ponto favorável.\n${JSON.stringify(
@@ -121,6 +121,7 @@ Regras invioláveis:
 - NUNCA invente cláusula ou trecho. Todo risco, ponto de atenção e ponto favorável cita TEXTUALMENTE um trecho do contrato (até 250 caracteres, copiado sem alterar; o trecho mais curto que identifica a cláusula), com o número da cláusula quando houver.
 - Redline: "from" é o trecho original exato; "to" é a redação completa que o substitui.
 - Ponto aberto é o que depende de informação externa: jurídico interno, founder, contraparte ou due diligence.
+- Resposta marcada NÃO SEI no intake: não assuma valor e não a repita em open_points, o sistema já registra esse ponto aberto.
 - Seja conciso, a resposta tem teto de tamanho: no máximo ${SECTION_LIMITS.critical} itens em critical, ${SECTION_LIMITS.attention} em attention, ${SECTION_LIMITS.favorable} em favorable, ${SECTION_LIMITS.redlines} em redlines e ${SECTION_LIMITS.open_points} em open_points (os mais relevantes, do mais grave ao menos). "rationale" e "why" com no máximo 2 frases curtas; "suggestion" com 1 frase; em redline, "from" e "to" só a cláusula alterada, não o artigo inteiro.
 
 CHECKLIST DE INTAKE (contexto do pedido):
@@ -354,16 +355,19 @@ export function normalizeAnalysis(
     };
 }
 
-/** An open point that the intake checklist was not filled, added when the analysis ran without it. */
+/** Open points the server adds itself, after the model's: no checklist, or answers marked "não sei". */
 export function withMissingIntake(result: AnalysisResult, intake: IntakeAnswer[]): AnalysisResult {
-    if (intake.length) return result;
-    return {
-        ...result,
-        open_points: [
-            { id: "o0", text: "Checklist de intake não preenchido: a análise não considerou o contexto do pedido.", depends_on: "outro" },
-            ...result.open_points,
-        ],
-    };
+    const added: OpenPoint[] = intake.length
+        ? intake
+              .filter((a) => a.unknown === true)
+              .map((a) => ({
+                  id: `u_${a.key.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40)}`,
+                  text: `Pedido sem resposta: "${a.label.slice(0, 200)}" (marcado como não sei). Confirmar antes de fechar.`,
+                  depends_on: "outro" as const,
+              }))
+        : [{ id: "o0", text: "Checklist de intake não preenchido: a análise não considerou o contexto do pedido.", depends_on: "outro" }];
+    if (!added.length) return result;
+    return { ...result, open_points: [...result.open_points, ...added] };
 }
 
 // List prices in US$ per million tokens (input, output), by model family.

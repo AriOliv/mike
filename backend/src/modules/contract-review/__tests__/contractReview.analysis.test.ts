@@ -100,8 +100,30 @@ describe("analysisPrompt", () => {
 describe("withMissingIntake and estimateUsage", () => {
     it("adds an open point only when the intake is empty", () => {
         const { result } = normalizeAnalysis(answer, CONTRACT);
-        expect(withMissingIntake(result, [])).toMatchObject({ open_points: [{ id: "o0", depends_on: "outro" }, {}, {}] });
+        const n = result.open_points.length;
+        const none = withMissingIntake(result, []);
+        expect(none.open_points).toHaveLength(n + 1);
+        expect(none.open_points[n]).toMatchObject({ id: "o0", depends_on: "outro" });
         expect(withMissingIntake(result, [{ key: "a", label: "A", value: "b" }])).toBe(result);
+    });
+
+    it("appends one server open point per 'não sei' answer, after the model's, and marks them in the prompt", () => {
+        const { result } = normalizeAnalysis(answer, CONTRACT);
+        const intake = [
+            { key: "prazo", label: "Prazo desejado", value: "12 meses" },
+            { key: "valor", label: "Valor estimado", value: "Não sei", unknown: true },
+            { key: "foro", label: "Foro", value: "Não sei", unknown: true },
+            { key: "x", label: "Falso", value: "Não sei", unknown: "true" as unknown as boolean },
+        ];
+        const out = withMissingIntake(result, intake);
+        const n = result.open_points.length;
+        expect(out.open_points.slice(0, n)).toEqual(result.open_points);
+        expect(out.open_points.slice(n).map((p) => p.id)).toEqual(["u_valor", "u_foro"]);
+        expect(out.open_points[n].text).toContain("Valor estimado");
+        const prompt = analysisPrompt({ documentText: CONTRACT, documentName: "c.pdf", intake, playbook: null });
+        expect(prompt).toContain("- Valor estimado: NÃO SEI (não assuma resposta)");
+        expect(prompt).toContain("- Prazo desejado: 12 meses");
+        expect(prompt).toContain("não a repita em open_points");
     });
 
     it("estimates tokens and cost from characters and the model family's list price", () => {
