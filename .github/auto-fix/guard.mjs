@@ -5,6 +5,11 @@
 //
 // Sem dependências, para rodar em `node` puro no runner.
 
+// ESPELHO: o repositório privado (aol-tech/saul-feedback, auto-fix/redact-check.mjs, `checkRepro`) recusa tudo o
+// que `parsePayload` abaixo recusa, para o fluxo privado nunca registrar "enviado" de um repro que este lado barra
+// em silêncio. O alinhamento é de DIREÇÃO (o privado é igual ou mais rígido). Quem acrescentar uma regra aqui deve
+// acrescentá-la lá, com a entrada em test/hardening.test.mjs: os repositórios são separados e nenhum teste detecta
+// sozinho que um dos lados ganhou uma regra.
 export const REL = /^REL-\d{4,}$/;
 const MAX_REPRO = 6000;
 

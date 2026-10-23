@@ -51,6 +51,14 @@ Provado numa bancada local com o `claude` 2.1.309 real contra um **servidor de m
 
 **Antes de ligar**, rode o canário `REL-9999` de verdade (dispatch com o repro-canário). Se vazar, é bloqueio total.
 
+## Pré-condição: o diretório de trabalho não pode ficar sob uma raiz negada
+
+O `deny` nega `//proc`, `//sys`, `//etc`, `//run`, `//var` e `//root`. Se o diretório de trabalho ou o `RUNNER_TEMP` ficassem sob uma delas, o agente **não leria o próprio código** (o cliente nega pelo prefixo). No runner hospedado do GitHub eles ficam em `/home/runner/work`, sem conflito. Num runner **self-hosted** com o trabalho sob `/var` ou `/run`, o fluxo falharia calado (patch vazio). Foi o que aconteceu na bancada em macOS, onde o `mktemp` cai em `/var/folders`: os controles positivos falharam, que é para isso que existem. `/home` e `/tmp` **não** são negados inteiros pelo mesmo motivo.
+
+## Como repetir a prova
+
+`bash .github/auto-fix/bench/run.sh` (precisa do `claude` 2.1.309; sem rede nem chave real). Ver `bench/README.md`. Não roda no CI.
+
 ## Regras do fluxo
 
 1. O agente só lê e edita. Sem terminal, rede, tarefas, MCP, comandos nem leitura de `.git`, `.claude`, `.github`, `/proc`.

@@ -48,18 +48,31 @@ test("o agente só lê e edita arquivos: sem Bash, sem rede, sem tarefas, config
     assert.match(agent, /--disable-slash-commands/);
     assert.match(agent, /--permission-mode dontAsk/);
     assert.ok(!/--allowedTools[^\n]*Bash/.test(agent), "nenhuma permissão de Bash");
-    assert.match(agent, /"deny": \["Bash", "WebFetch", "WebSearch", "Task"/);
-    for (const denied of ["Read(./.git/**)", "Read(./.claude/**)", "Read(./.github/**)", "Edit(./.git/**)", "Edit(./.claude/**)", "Edit(./.github/**)"]) assert.ok(agent.includes(denied), denied);
-    // caminho ABSOLUTO se escreve com duas barras; com uma só a regra é relativa e não bloqueia nada
+    // o settings.json é gerado por um passo Python: o deny começa pelas ferramentas que o agente nunca pode ter
+    const deny = agent.slice(agent.indexOf("deny = ["), agent.indexOf("allow = ["));
+    for (const tool of ["Bash", "WebFetch", "WebSearch", "Task", "NotebookEdit", "Grep", "Glob"]) assert.ok(deny.includes(`"${tool}"`), `${tool} no deny`);
+    const allow = agent.slice(agent.indexOf("allow = ["), agent.indexOf("with open(os.environ"));
+    for (const tool of ["Bash", "WebFetch", "WebSearch", "Task", "Grep", "Glob", "Write"]) assert.ok(!allow.includes(`"${tool}`), `${tool} fora do allow`);
+    for (const denied of ["Edit(./.git/**)", "Edit(./.claude/**)", "Edit(./.github/**)"]) assert.ok(agent.includes(`"${denied}"`), denied);
+    // O passo que escreve o settings.json monta os caminhos absolutos de $HOME e $RUNNER_TEMP DE VERDADE (duas
+    // barras: com uma só a regra é relativa e não bloqueia nada), em vez de supor /home/runner.
     for (const root of ["proc", "sys", "etc", "run", "var", "root"]) {
         assert.ok(agent.includes(`"Read(//${root}/**)"`), `Read(//${root}/**)`);
         assert.ok(!agent.includes(`"Read(/${root}/**)"`), `/${root} com uma barra só não bloqueia`);
     }
-    // /home e /tmp NÃO entram: o diretório de trabalho do runner mora em /home/runner/work, e negá-lo cega o agente
-    assert.ok(!agent.includes("//home") && !agent.includes("//tmp"), "negar /home ou /tmp bloquearia o próprio código");
-    // Grep e Glob: nunca liberados, e negados
-    assert.ok(!/"allow": \[[^\]]*(Grep|Glob)/.test(agent));
-    assert.match(agent, /"deny": \[[^\]]*"Grep", "Glob"/);
+    // o que há de sensível DENTRO do HOME e do runner, nomeado (decisão do Legal Manager e do Quill)
+    for (const sensitive of [".ssh/**", ".config/**", ".gitconfig", ".netrc", ".aws/**", ".docker/**", ".npmrc", ".npm/**", ".cache/**"]) {
+        assert.ok(agent.includes(`f"Read({home}/${sensitive})"`), `HOME/${sensitive}`);
+    }
+    assert.ok(agent.includes('f"Read({temp}/**)"'), "RUNNER_TEMP (settings, prompt e repro do runner)");
+    assert.match(agent, /HOME_DENY="\/\$HOME" TEMP_DENY="\/\$RUNNER_TEMP"/);
+    // /home e /tmp NÃO são negados inteiros: o diretório de trabalho do runner mora em /home/runner/work, e negá-lo cega o agente
+    assert.ok(!agent.includes('"Read(//home/**)"') && !agent.includes('"Read(//tmp/**)"'), "negar /home ou /tmp inteiros bloquearia o próprio código");
+    // dentro do diretório de trabalho o padrão é LER o que não está no deny: os sensíveis do checkout são nomeados
+    for (const inside of ["./.git/**", "./.claude/**", "./.github/**", "./**/.env", "./**/.env.*", "./**/*.pem", "./**/*.key", "./**/.npmrc", "./**/.netrc"]) {
+        assert.ok(agent.includes(`"Read(${inside})"`), `work/${inside}`);
+    }
+    // Grep e Glob: negados e fora do allow (verificado acima, no settings.json que o passo gera)
     // edita só o código do app
     assert.match(agent, /"Edit\(\.\/backend\/src\/\*\*\)"/);
     assert.ok(!/"Edit\(\.\/\*\*\)"/.test(agent));
