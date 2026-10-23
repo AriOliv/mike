@@ -373,6 +373,29 @@ const PRICES: [RegExp, number, number][] = [
     [/opus/i, 15, 75],
 ];
 
+/** List price (input, output) in US$ per million tokens for the model's family; null when unknown. */
+export function priceOf(model: string): { input: number; output: number } | null {
+    const price = PRICES.find(([pattern]) => pattern.test(model));
+    return price ? { input: price[1], output: price[2] } : null;
+}
+
+/** Fewest output tokens worth starting a call for: below this it would only come back cut off. */
+export const MIN_CALL_OUTPUT_TOKENS = 1_500;
+
+/**
+ * The output tokens a call may ask for so that the whole analysis stays inside
+ * its cap: what is left of the budget, less the (conservatively estimated)
+ * input of this call, at the output price. `null` price means no limit known;
+ * a result under MIN_CALL_OUTPUT_TOKENS means the call should not start.
+ */
+export function outputBudget(model: string, spentUsd: number, capUsd: number, inputChars: number, wanted: number): number {
+    const price = priceOf(model);
+    if (!price) return wanted;
+    const inputCost = (Math.ceil(inputChars / 3) / 1e6) * price.input;
+    const room = Math.floor(((capUsd - spentUsd - inputCost) / price.output) * 1e6);
+    return Math.min(wanted, room);
+}
+
 /**
  * Tokens as the provider reported them, else from characters (≈4 per token,
  * which undercounts Portuguese), at the list price of the model's family;
@@ -380,7 +403,7 @@ const PRICES: [RegExp, number, number][] = [
  */
 export function estimateUsage(
     model: string,
-    calls: { input: number; output: number; reported?: { inputTokens: number; outputTokens: number } | null }[],
+    calls: { input: number; output: number; maxTokens?: number; reported?: { inputTokens: number; outputTokens: number } | null }[],
 ) {
     const input = calls.reduce((sum, call) => sum + (call.reported ? call.reported.inputTokens : Math.round(call.input / 4)), 0);
     const output = calls.reduce((sum, call) => sum + (call.reported ? call.reported.outputTokens : Math.round(call.output / 4)), 0);
@@ -393,6 +416,16 @@ export function estimateUsage(
         output_tokens: output,
         estimated_cost_usd: cost === null ? null : Math.round(cost * 10_000) / 10_000,
         estimated: calls.some((call) => !call.reported),
+        per_call: calls.map((call) => {
+            const i = call.reported ? call.reported.inputTokens : Math.round(call.input / 4);
+            const o = call.reported ? call.reported.outputTokens : Math.round(call.output / 4);
+            return {
+                input_tokens: i,
+                output_tokens: o,
+                max_tokens: call.maxTokens ?? null,
+                estimated_cost_usd: price ? Math.round(((i / 1e6) * price[1] + (o / 1e6) * price[2]) * 10_000) / 10_000 : null,
+            };
+        }),
     };
 }
 

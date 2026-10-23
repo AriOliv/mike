@@ -181,6 +181,29 @@ describe("handleAnalystAnalysis", () => {
         expect(done.result.partial).toBeUndefined();
     });
 
+    it("makes the cap real: the second call asks only for what the budget still pays, and each call is recorded", async () => {
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "0.40");
+        // Sonnet 3/15: 25k in + ~16k out = 0.075 + 0.24 = 0.315 on the first call.
+        llm.completeText.mockImplementationOnce(async (p: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            p.onUsage?.({ inputTokens: 25_000, outputTokens: 16_000 });
+            return longCutOff();
+        });
+        llm.completeText.mockImplementationOnce(async (p: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void; maxTokens: number; user: string }) => {
+            // Input as the provider would count it for this prompt (~3.5 characters per token in Portuguese).
+            p.onUsage?.({ inputTokens: Math.round(p.user.length / 3.5), outputTokens: p.maxTokens });
+            return "{ cortado";
+        });
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        const second = llm.completeText.mock.calls[1][0];
+        expect(second.maxTokens).toBeLessThan(8_000);
+        const done = fake.calls[3].payload as Record<string, any>;
+        expect(done.usage.estimated_cost_usd).toBeLessThanOrEqual(0.4);
+        expect(done.usage.per_call).toHaveLength(2);
+        expect(done.usage.per_call[0]).toMatchObject({ input_tokens: 25_000, output_tokens: 16_000, max_tokens: 16_000 });
+        expect(done.usage.per_call[1].max_tokens).toBe(second.maxTokens);
+    });
+
     it("marks the analysis partial when the missing sections do not come either", async () => {
         llm.completeText.mockResolvedValueOnce(longCutOff());
         llm.completeText.mockResolvedValueOnce("{ cortado");
