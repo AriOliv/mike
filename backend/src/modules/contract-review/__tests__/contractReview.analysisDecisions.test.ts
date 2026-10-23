@@ -117,7 +117,7 @@ describe("decideAnalysisRedline", () => {
         ]);
         const decided = await decideAnalysisRedline(fake.db, caller, "p1", ID, "r1", { decision: "aceito" });
         expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "document_busy" });
-        if (!decided.ok) expect(decided.detail).toMatch(/não foi gravada/);
+        expect(decided).toMatchObject({ detail: expect.stringMatching(/não foi gravada/) });
         // No decision row was written: the person can try again.
         expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
         fake.done();
