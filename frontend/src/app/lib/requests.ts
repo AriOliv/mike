@@ -102,6 +102,44 @@ export function slaTone(sla: RequestSla): "default" | "atencao" | "critico" {
     return "default";
 }
 
+export type NextAction = {
+    /** What is waiting, in a few words ("Analisar e decidir"). */
+    title: string;
+    /** Why or until when ("vence em 2 d"). */
+    detail: string;
+    /** "mine" is the signed-in person's task; "wait" is somebody else's turn. */
+    tone: "mine" | "head" | "wait";
+    /** The button: open the document, or pick the owner. */
+    action: "review" | "assign" | null;
+};
+
+/**
+ * The next thing the signed-in person has to do on this request, or null when
+ * nothing is theirs. Read from what the panel already has (status, owner,
+ * triage), so it holds until the stage catalogue lands.
+ */
+export function nextAction(request: LegalRequest, userId: string | null, now: number = Date.now()): NextAction | null {
+    if (request.status === "entregue" || request.status === "cancelado") return null;
+    if (request.status === "aguardando_solicitante") {
+        const who = request.requester_name ?? request.requester_email;
+        return { title: `Aguardando ${who}`, detail: "o prazo está pausado", tone: "wait", action: null };
+    }
+    if (!request.assignee_id) {
+        return request.can_decide
+            ? { title: "Escolher quem pega este pedido", detail: slaText(request.sla, request.due_at, now), tone: "head", action: "assign" }
+            : null;
+    }
+    if (userId && request.assignee_id === userId) {
+        return {
+            title: "Analisar e decidir",
+            detail: slaText(request.sla, request.due_at, now),
+            tone: "mine",
+            action: request.project_id ? "review" : null,
+        };
+    }
+    return null;
+}
+
 /** dd/mm/aaaa in São Paulo time. */
 export function formatDate(iso: string): string {
     return new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
