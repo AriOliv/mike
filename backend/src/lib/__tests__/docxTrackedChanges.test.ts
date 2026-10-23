@@ -225,7 +225,7 @@ describe("applyTrackedEdits", () => {
         ]);
         expect(result.changes).toEqual([]);
         expect(result.errors).toEqual([
-            { index: 0, reason: expect.stringContaining("Could not locate") },
+            { index: 0, code: "not_found", reason: expect.stringContaining("Could not locate") },
         ]);
         // The document itself is returned intact.
         await expect(extractDocxBodyText(result.bytes)).resolves.toBe(
@@ -240,7 +240,7 @@ describe("applyTrackedEdits", () => {
         ]);
         expect(result.changes).toEqual([]);
         expect(result.errors).toEqual([
-            { index: 0, reason: expect.stringContaining("Ambiguous match") },
+            { index: 0, code: "ambiguous", reason: expect.stringContaining("Ambiguous match") },
         ]);
     });
 

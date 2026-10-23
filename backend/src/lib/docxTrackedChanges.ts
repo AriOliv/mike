@@ -75,6 +75,8 @@ export interface AppliedChange {
 export interface EditError {
     index: number;
     reason: string;
+    /** Why the `find` could not be placed, for callers that must tell a person (never match on `reason`). */
+    code?: "not_found" | "ambiguous";
 }
 
 export interface ApplyTrackedEditsResult {
@@ -908,6 +910,7 @@ export async function applyTrackedEdits(
         if (!selected) {
             errors.push({
                 index: editIdx,
+                code: sawAmbiguous ? "ambiguous" : "not_found",
                 reason: sawAmbiguous
                     ? `Ambiguous match for find="${truncate(find, 80)}". Add longer context_before / context_after so the anchor is unique.`
                     : `Could not locate find="${truncate(find, 80)}" in the document. Re-read the document and copy context verbatim (including punctuation & whitespace).`,
