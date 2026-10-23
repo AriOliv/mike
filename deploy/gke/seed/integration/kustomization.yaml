@@ -13,3 +13,4 @@ configMapGenerator:
       - extra-revisao.sql
       - extra-zz-painel.sql
       - extra-zzz-time.sql
+      - extra-zzzz-checklist.sql
