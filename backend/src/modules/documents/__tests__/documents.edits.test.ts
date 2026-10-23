@@ -81,7 +81,7 @@ const run = (db: Parameters<typeof resolveEdit>[5]) =>
 // the active one. Each case scripts that sequence: read edit, read document, (inline text/cleanup reads),
 // the new version's lookup of the previous filename, the activation, then the edit's status.
 const versionRpc = (over: Partial<Record<string, unknown>> = {}) =>
-  vi.fn(async (name: string) => {
+  vi.fn(async (name: string, _args?: Record<string, unknown>) => {
     if (name in over) return over[name];
     if (name === "create_document_version") return { data: { id: "v2", version_number: 3 }, error: null };
     if (name === "delete_document_version") return { data: { deleted_version_id: "v2" }, error: null };
