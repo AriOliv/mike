@@ -40,7 +40,7 @@ export const FEEDBACK_TOOLS: AnyMcpTool[] = [
             },
         },
         async handler(ctx, input) {
-            const raw = { kind: input.tipo, body: input.descricao, expected: input.esperado, route: input.rota, role: ctx.role, org_id: ctx.workspace && ctx.workspace !== "personal" ? ctx.workspace : null };
+            const raw = { kind: input.tipo, body: input.descricao, expected: input.esperado, route: input.rota, org_id: ctx.workspace && ctx.workspace !== "personal" ? ctx.workspace : null };
             const parsed = parseReport(raw);
             if (!parsed.ok) return parsed;
             const r = await submitReport(ctx.db, ctx.caller, raw, { kind: "agent", client: ctx.clientName });

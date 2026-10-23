@@ -32,9 +32,22 @@ export function redact(input: string): Redaction {
     return { text, found };
 }
 
-/** A route without query or fragment, and with ids kept out of the log. */
+/**
+ * Every character a reader may take as the end of a line, plus the controls that hide text: C0 (including
+ * \n, \r and tab), DEL, C1 (including NEL, U+0085), line separator U+2028 and paragraph separator U+2029.
+ * The issue body is read line by line (the triage looks for "- Papel: ..."), so a value that carries one of
+ * these can start a line of its own and say what the server did not.
+ */
+export const LINE_BREAKS_AND_CONTROLS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g;
+
+/** One line of plain text: breaks and controls become a space, the ends are trimmed. */
+export function oneLine(value: string): string {
+    return value.replace(LINE_BREAKS_AND_CONTROLS, " ").trim();
+}
+
+/** A route without query or fragment, on one line, and with ids kept out of the log. */
 export function cleanRoute(route: unknown): string | null {
     if (typeof route !== "string") return null;
-    const path = route.split(/[?#]/)[0].trim().slice(0, 200);
+    const path = oneLine(route.split(/[?#]/)[0]).slice(0, 200);
     return path.startsWith("/") ? path : null;
 }

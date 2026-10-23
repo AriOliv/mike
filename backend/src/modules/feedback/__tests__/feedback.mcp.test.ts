@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const audit = vi.hoisted(() => ({ recordAudit: vi.fn(async () => undefined) }));
 vi.mock("../../../lib/audit", () => audit);
+// The server derives the role; here nobody is on the legal team.
+const requests = vi.hoisted(() => ({ whoAmI: vi.fn(async () => ({ ok: true, data: { configured: false, role: "requester", area: null, areas: [] } })) }));
+vi.mock("../../requests/requests.service", () => requests);
 const queue = vi.hoisted(() => ({ enqueueDbJob: vi.fn(async () => ({ id: "j", deduped: false })) }));
 vi.mock("../../../lib/dbq/enqueue", () => queue);
 
@@ -51,5 +54,16 @@ describe("mike_feedback_reportar", () => {
         expect((done.content as { text: string }[])[0].text).toMatch(/^Relato REL-\S+ enviado ao time de tecnologia \(dados pessoais foram apagados/);
         expect(db.tables.feedback_reports).toHaveLength(1);
         expect(db.tables.feedback_reports[0]).toMatchObject({ source: "agent", client: "claude-code", body: "Erro com [e-mail] no pedido", route: "/pedidos" });
+    });
+
+    it("the role in the stored report is the server's, never the one the MCP context carries ('no team' reads 'team' there)", async () => {
+        // The MCP context says role 'team' (testContext's default, and what a token gets when no legal team is
+        // configured). The report must still be stored as what the server derives: requester.
+        const input = { tipo: "bug", descricao: "O botão Salvar não responde" };
+        const first = await runTool(tool, ctx({ role: "team" }), input);
+        const token = (first.structuredContent as { confirm_token: string }).confirm_token;
+        await runTool(tool, ctx({ role: "team" }), { ...input, [CONFIRM_FIELD]: token });
+        expect(db.tables.feedback_reports[0]).toMatchObject({ source: "agent", role: "requester" });
+        expect(requests.whoAmI).toHaveBeenCalled();
     });
 });

@@ -52,12 +52,44 @@ export function nameWords(names: readonly (string | null | undefined)[]): Set<st
     return out;
 }
 
-/** True when the text uses a word from the names, or a whole multi-word name, ignoring accents and case. */
-export function mentionsAny(text: string, names: readonly (string | null | undefined)[]): boolean {
+/**
+ * Corporate forms and small words that are written in capitals in a company name but mean nothing alone:
+ * "ME" (microempresa) is also the pronoun "me", so a counterparty "Padaria do Zé ME" would turn every
+ * report that says "não me deixa salvar" sensitive. Found by running real-looking names through
+ * shortNames, not by guessing.
+ */
+const NOT_A_NAME = new Set(["me", "epp", "eireli", "mei", "sa", "ss", "cia", "ltd", "inc", "llc", "gmbh", "bv", "nv", "ag", "co", "de", "da", "do", "das", "dos", "em", "na", "no", "um", "uma", "por", "com", "sem", "ao", "as", "os", "ou", "eu", "se", "te", "ele", "ela", "nos", "vos", "seu", "sua", "que"]);
+
+/**
+ * Short counterparty names ("XP", "BTG", "B3", "3M"): two or three letters, in capitals or with a digit.
+ * Only from counterparties, which are company names; a file title or a contract name is not read this way
+ * (it would make "de" or "em" a name). Lower-case small words ("de", "do", "e") never count.
+ */
+export function shortNames(counterparties: readonly (string | null | undefined)[]): Set<string> {
+    const out = new Set<string>();
+    for (const c of counterparties) {
+        if (!c) continue;
+        for (const raw of c.replace(/\.[a-z0-9]{2,5}$/i, "").split(/[^A-Za-z0-9]+/)) {
+            if (raw.length < 2 || raw.length > 3) continue;
+            if (/^\d+$/.test(raw)) continue;
+            const w = norm(raw);
+            if (NOT_A_NAME.has(w)) continue;
+            if (/[0-9]/.test(raw) || raw === raw.toUpperCase()) out.add(w);
+        }
+    }
+    return out;
+}
+
+/**
+ * True when the text uses a word from the names, a short counterparty name, or a whole multi-word name,
+ * ignoring accents and case. `counterparties` is the subset of `names` that are company names.
+ */
+export function mentionsAny(text: string, names: readonly (string | null | undefined)[], counterparties: readonly (string | null | undefined)[] = []): boolean {
     const hay = ` ${norm(text).replace(/[^a-z0-9]+/g, " ").trim()} `;
     const hayWords = new Set(hay.split(" ").filter(Boolean));
-    for (const w of nameWords(names)) if (hayWords.has(w)) return true;
-    for (const n of names) {
+    for (const w of nameWords([...names, ...counterparties])) if (hayWords.has(w)) return true;
+    for (const w of shortNames(counterparties)) if (hayWords.has(w)) return true;
+    for (const n of [...names, ...counterparties]) {
         if (!n) continue;
         // A whole name counts only when it carries a word that identifies: "Termo de Adesão" is
         // made of common words, so it says nothing even when the report repeats it letter by letter.
@@ -71,43 +103,82 @@ export function mentionsAny(text: string, names: readonly (string | null | undef
 const PAGE = 1000;
 const MAX_ROWS = 20_000;
 
-/** Names of the org's contracts and counterparties, and of its documents' files. */
-async function loadNames(db: Db, orgId: string | null, userId: string): Promise<string[]> {
+/** The base is larger than the check can read: a partial list must never answer "names-clear". */
+export class NamesCeilingError extends Error {
+    constructor() {
+        super("names ceiling reached");
+        this.name = "NamesCeilingError";
+    }
+}
+
+type Scope = { orgId: string | null; userId: string };
+export type LoadedNames = { names: string[]; counterparties: string[] };
+
+/** Every page of a query, up to the ceiling; reaching it with the last page still full is an error, not a result. */
+async function paged<T>(page: (from: number) => PromiseLike<{ data: unknown; error: unknown }>): Promise<T[]> {
+    const rows: T[] = [];
+    for (let from = 0; from < MAX_ROWS; from += PAGE) {
+        const { data, error } = await page(from);
+        if (error) throw error;
+        const got = (data ?? []) as T[];
+        rows.push(...got);
+        if (got.length < PAGE) return rows;
+    }
+    throw new NamesCeilingError();
+}
+
+/** Names of one space's contracts and counterparties, and of its documents' files. */
+async function loadSpace(db: Db, { orgId, userId }: Scope): Promise<LoadedNames> {
     const names: string[] = [];
+    const counterparties: string[] = [];
     // The org's space, or, in a personal space, what this person made: never another org's.
-    for (let from = 0; from < MAX_ROWS; from += PAGE) {
+    const projects = await paged<{ name: string | null; counterparty: string | null }>((from) => {
         const q = db.from("projects").select("name, counterparty");
-        const { data, error } = await (orgId ? q.eq("org_id", orgId) : q.eq("user_id", userId).is("org_id", null)).range(from, from + PAGE - 1);
-        if (error) throw error;
-        for (const r of (data ?? []) as { name: string | null; counterparty: string | null }[]) names.push(r.name ?? "", r.counterparty ?? "");
-        if ((data ?? []).length < PAGE) break;
+        return (orgId ? q.eq("org_id", orgId) : q.eq("user_id", userId).is("org_id", null)).range(from, from + PAGE - 1);
+    });
+    for (const r of projects) {
+        names.push(r.name ?? "");
+        counterparties.push(r.counterparty ?? "");
     }
-    // Files of those documents, through their versions.
-    const docIds: string[] = [];
-    for (let from = 0; from < MAX_ROWS; from += PAGE) {
+    const documents = await paged<{ id: string }>((from) => {
         const q = db.from("documents").select("id");
-        const { data, error } = await (orgId ? q.eq("org_id", orgId) : q.eq("user_id", userId).is("org_id", null)).range(from, from + PAGE - 1);
-        if (error) throw error;
-        for (const r of (data ?? []) as { id: string }[]) docIds.push(r.id);
-        if ((data ?? []).length < PAGE) break;
-    }
-    for (let i = 0; i < docIds.length; i += 200) {
-        const { data, error } = await db.from("document_versions").select("filename").in("document_id", docIds.slice(i, i + 200));
+        return (orgId ? q.eq("org_id", orgId) : q.eq("user_id", userId).is("org_id", null)).range(from, from + PAGE - 1);
+    });
+    for (let i = 0; i < documents.length; i += 200) {
+        const { data, error } = await db.from("document_versions").select("filename").in("document_id", documents.slice(i, i + 200).map((d) => d.id));
         if (error) throw error;
         for (const r of (data ?? []) as { filename: string | null }[]) names.push(r.filename ?? "");
     }
-    return names;
+    return { names, counterparties };
+}
+
+/** Every organization the person belongs to (not deleted), then their personal space. */
+async function authorSpaces(db: Db, userId: string): Promise<Scope[]> {
+    const { data, error } = await db
+        .from("org_members")
+        .select("org_id, organizations!inner(id)")
+        .is("organizations.deleted_at", null)
+        .eq("user_id", userId);
+    if (error) throw error;
+    const orgs = [...new Set(((data ?? []) as { org_id: string }[]).map((r) => r.org_id))];
+    return [...orgs.map((orgId) => ({ orgId, userId })), { orgId: null, userId }];
 }
 
 /**
- * The verdict for an already-redacted report. Any failure to read the base
- * is `sensitive`: the safe side, and the one that keeps the auto-fix away.
+ * The verdict for an already-redacted report. It compares with the names of EVERY space the author can
+ * report from (all their organizations and their personal space), not only the one the report names:
+ * a person in several organizations may report from any of them. Any failure to read the base, and a base
+ * too large to read whole, is `sensitive`: the safe side, and the one that keeps the auto-fix away.
  */
-export async function namesVerdict(db: Db, orgId: string | null, userId: string, texts: readonly string[]): Promise<NamesVerdict> {
+export async function namesVerdict(db: Db, userId: string, texts: readonly string[]): Promise<NamesVerdict> {
     try {
-        const names = await loadNames(db, orgId, userId);
-        const joined = texts.join("\n");
-        return mentionsAny(joined, names) ? "sensitive" : "names-clear";
+        const all: LoadedNames = { names: [], counterparties: [] };
+        for (const scope of await authorSpaces(db, userId)) {
+            const one = await loadSpace(db, scope);
+            all.names.push(...one.names);
+            all.counterparties.push(...one.counterparties);
+        }
+        return mentionsAny(texts.join("\n"), all.names, all.counterparties) ? "sensitive" : "names-clear";
     } catch {
         return "sensitive";
     }

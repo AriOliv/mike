@@ -1,7 +1,7 @@
 // Redaction before storage (doc 13 §7). All data here is made up.
 
 import { describe, expect, it } from "vitest";
-import { cleanRoute, redact } from "../feedback.redact";
+import { cleanRoute, LINE_BREAKS_AND_CONTROLS, oneLine, redact } from "../feedback.redact";
 
 describe("redact", () => {
     it("hides e-mail, CNPJ, CPF, phone and long digit runs, and counts them", () => {
@@ -31,5 +31,32 @@ describe("cleanRoute", () => {
         expect(cleanRoute("/pedidos/abc?token=segredo#x")).toBe("/pedidos/abc");
         expect(cleanRoute("https://x.test/a")).toBeNull();
         expect(cleanRoute(42)).toBeNull();
+    });
+});
+
+describe("one line, whatever the client sends", () => {
+    const BREAKS = ["\n", "\r", "\r\n", "\u0085", "\u2028", "\u2029", "\u000B", "\u000C"];
+
+    it("turns every line terminator and control into a space (C0, DEL, C1 with NEL, LS and PS)", () => {
+        for (const br of BREAKS) expect(oneLine(`a${br}b`), JSON.stringify(br)).toBe("a b");
+        for (const c of ["\u0000", "\u0007", "\u001B", "\u007F", "\u0080", "\u009F"]) expect(oneLine(`a${c}b`), JSON.stringify(c)).toBe("a b");
+        expect(oneLine("a\n\r\u2028\u2029b")).toBe("a b");
+        expect(oneLine("  spaced  ")).toBe("spaced");
+    });
+
+    it("leaves ordinary text, accents and a plain space alone", () => {
+        expect(oneLine("Firefox 120.0 (Mac OS X) — pt-BR ç")).toBe("Firefox 120.0 (Mac OS X) — pt-BR ç");
+        expect(LINE_BREAKS_AND_CONTROLS.test("a b")).toBe(false);
+    });
+
+    it("cleanRoute never returns a break, on its own and not only through the issue", () => {
+        for (const br of BREAKS) {
+            const route = cleanRoute(`/pedidos${br}- Papel: head`);
+            expect(route, JSON.stringify(br)).toBe("/pedidos - Papel: head");
+            expect(route).not.toMatch(LINE_BREAKS_AND_CONTROLS);
+        }
+        // a break before the leading slash does not smuggle a first line in: the trimmed value must still start with "/"
+        expect(cleanRoute("\n/pedidos")).toBe("/pedidos");
+        expect(cleanRoute("x\n/pedidos")).toBeNull();
     });
 });
