@@ -78,9 +78,13 @@ export async function installationToken(cfg: GithubConfig, call: GithubCall = gi
     return cached.token;
 }
 
+/** Labels already ensured in this process, by repo: the answer is remembered so a report does not pay for it again. */
+const ensured = new Map<string, Set<string>>();
+
 export function resetGithubCache() {
     cached = null;
     repoChecked = null;
+    ensured.clear();
 }
 
 export type IssueInput = { title: string; body: string; labels: string[] };
@@ -99,10 +103,60 @@ async function assertPrivate(cfg: GithubConfig, token: string, call: GithubCall)
     repoChecked = cfg.repo;
 }
 
+/**
+ * Makes sure each label exists before the issue names it, and returns the ones that do. The App may not be
+ * allowed to create labels (it has Issues: Read and write), and a label that does not exist could make GitHub
+ * refuse the whole issue; a report must never be lost for that. 201 (created) and 422 (already exists) both
+ * mean the label is there. Anything else, or a network error, means it could not be ensured: that label is left
+ * out, quietly, and the issue goes without it (the organization is also in the text, "- Espaço: ...").
+ *
+ * Leaving a label out is always the safe side: no `names-clear` means the auto-fix does not open, no `role:*`
+ * means the author does not count as head or team, and `sensitive` missing still leaves `names-clear` missing.
+ * A label is never replaced by another one.
+ */
+async function ensureLabels(cfg: GithubConfig, token: string, labels: readonly string[], call: GithubCall): Promise<{ ok: string[]; missing: string[] }> {
+    const known = ensured.get(cfg.repo) ?? new Set<string>();
+    ensured.set(cfg.repo, known);
+    const ok: string[] = [];
+    const missing: string[] = [];
+    for (const name of new Set(labels)) {
+        if (known.has(name)) {
+            ok.push(name);
+            continue;
+        }
+        let there = false;
+        try {
+            const r = await call("POST", `/repos/${cfg.repo}/labels`, token, { name });
+            there = r.status === 201 || r.status === 422;
+        } catch {
+            there = false;
+        }
+        if (there) {
+            known.add(name);
+            ok.push(name);
+        } else {
+            missing.push(name);
+        }
+    }
+    return { ok, missing };
+}
+
+/**
+ * Labels that only say where a report came from. The ones that DECIDE (`names-clear`, `sensitive`, `role:*`) are
+ * never in this set: dropping one would change what the report means, and a retry must not do that.
+ */
+const INFORMATIVE = /^org:/;
+
 export async function createIssue(cfg: GithubConfig, input: IssueInput, call: GithubCall = githubCall): Promise<CreatedIssue> {
     const token = await installationToken(cfg, call);
     await assertPrivate(cfg, token, call);
-    const r = await call("POST", `/repos/${cfg.repo}/issues`, token, input);
+    const { ok } = await ensureLabels(cfg, token, input.labels, call);
+    const file = (labels: string[]) => call("POST", `/repos/${cfg.repo}/issues`, token, { ...input, labels });
+    let r = await file(ok);
+    // GitHub may still answer 422 to an issue over a label it said exists (it may not be visible yet): the report
+    // is not lost over it. ONE retry, without the informative labels (the organization is also in the text,
+    // "- Espaço: ..."), and only when there were any to take out; never without a label that decides.
+    if (r.status === 422 && ok.some((l) => INFORMATIVE.test(l))) r = await file(ok.filter((l) => !INFORMATIVE.test(l)));
     const j = r.json as { number?: number; node_id?: string } | null;
     if (r.status !== 201 || !j?.number || !j.node_id) throw new Error(`github issue ${r.status}`);
     return { number: j.number, nodeId: j.node_id };

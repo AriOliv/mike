@@ -18,7 +18,7 @@ const names = vi.hoisted(() => ({ namesVerdict: vi.fn(async () => "names-clear")
 vi.mock("../feedback.names", async (orig) => ({ ...(await orig<typeof import("../feedback.names")>()), ...names }));
 
 import { NonRetryableJobError } from "../../../lib/dbq/runner";
-import { appJwt, githubConfig, resetGithubCache, type GithubCall } from "../feedback.github";
+import { appJwt, createIssue, githubConfig, resetGithubCache, type GithubCall } from "../feedback.github";
 import { handleFeedbackIssue, issueFor, label, parseReport, requeuePending, submitReport } from "../feedback.reports";
 
 const caller = { userId: "u1", userEmail: "ana@exemplo.test" };
@@ -311,6 +311,7 @@ describe("the issue job", () => {
             calls.push(`${method} ${path}`);
             if (path.endsWith("/access_tokens")) return { status: 201, json: { token: "tok", expires_at: new Date(Date.now() + 3_600_000).toISOString() } };
             if (path === "/repos/aol-tech/saul-feedback") return { status: 200, json: { private: privateRepo } };
+            if (path.endsWith("/labels")) return { status: 422, json: {} }; // every label already exists
             if (path.endsWith("/issues")) return { status: 201, json: { number: 9, node_id: "I_9" } };
             if (path === "/graphql") return { status: 200, json: { data: { organization: { projectV2: { id: "P1" } }, addProjectV2ItemById: { item: { id: "it" } } } } };
             return { status: 404, json: null };
@@ -360,6 +361,7 @@ describe("the issue job", () => {
         const call: GithubCall = async (method, path, _t, body) => {
             if (path.endsWith("/access_tokens")) return { status: 201, json: { token: "tok", expires_at: new Date(Date.now() + 3_600_000).toISOString() } };
             if (path === "/repos/aol-tech/saul-feedback") return { status: 200, json: { private: true } };
+            if (path.endsWith("/labels")) return { status: 422, json: {} }; // every label already exists
             if (path.endsWith("/issues")) return sent.push(body as { labels: string[] }), { status: 201, json: { number: 9, node_id: "I_9" } };
             return { status: 200, json: { data: {} } };
         };
@@ -430,5 +432,150 @@ describe("requeuePending", () => {
         const fake = scriptedDb([{ table: "feedback_reports", data: [{ id: "a" }, { id: "b" }] }]);
         expect(await requeuePending(fake.db)).toBe(2);
         expect(queue.enqueueDbJob).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("the issue is filed even when a label cannot be ensured", () => {
+    // A fake GitHub. `labelStatus` is what POST /labels answers for each label (201 created, 422 already exists,
+    // 403 no permission, ...); `issueStatus` is what POST /issues answers, given the labels it was sent.
+    type Fake = { calls: { method: string; path: string; body?: unknown }[]; call: GithubCall };
+    const fake = (opts: { labelStatus?: (name: string) => number; issueStatus?: (labels: string[]) => number; repoPrivate?: boolean } = {}): Fake => {
+        const calls: Fake["calls"] = [];
+        const call: GithubCall = async (method, path, _token, body) => {
+            calls.push({ method, path, body });
+            if (path.endsWith("/access_tokens")) return { status: 201, json: { token: "tok", expires_at: new Date(Date.now() + 3_600_000).toISOString() } };
+            if (path === "/repos/aol-tech/saul-feedback") return { status: 200, json: { private: opts.repoPrivate ?? true } };
+            if (path === "/repos/aol-tech/saul-feedback/labels" && method === "POST") return { status: (opts.labelStatus ?? (() => 201))((body as { name: string }).name), json: {} };
+            if (path === "/repos/aol-tech/saul-feedback/issues") {
+                const status = (opts.issueStatus ?? (() => 201))((body as { labels: string[] }).labels);
+                return { status, json: status === 201 ? { number: 9, node_id: "I_9" } : { message: "Validation Failed" } };
+            }
+            return { status: 404, json: null };
+        };
+        return { calls, call };
+    };
+    const cfg = () => githubConfig(process.env)!;
+    const input = (labels: string[]) => ({ title: "[REL-0042][bug] x", body: "corpo\n- Espaço: avenia", labels });
+    const issueCalls = (f: Fake) => f.calls.filter((c) => c.path.endsWith("/issues"));
+    const created = (f: Fake) => f.calls.filter((c) => c.path.endsWith("/labels")).map((c) => (c.body as { name: string }).name);
+
+    it("ensures each label first; a 422 (already exists) is fine and the issue goes out with every label", async () => {
+        const f = fake({ labelStatus: () => 422 });
+        const r = await createIssue(cfg(), input(["bug", "role:team", "names-clear", "org:avenia"]), f.call);
+        expect(r).toMatchObject({ number: 9 });
+        expect(created(f)).toEqual(["bug", "role:team", "names-clear", "org:avenia"]);
+        // every label was ensured BEFORE the issue was created
+        const firstIssue = f.calls.findIndex((c) => c.path.endsWith("/issues"));
+        expect(f.calls.slice(0, firstIssue).filter((c) => c.path.endsWith("/labels"))).toHaveLength(4);
+        expect(issueCalls(f)).toHaveLength(1);
+        expect((issueCalls(f)[0].body as { labels: string[] }).labels).toEqual(["bug", "role:team", "names-clear", "org:avenia"]);
+    });
+
+    it("a label that did not exist is created, and then used", async () => {
+        const f = fake({ labelStatus: (n) => (n === "org:avenia" ? 201 : 422) });
+        await createIssue(cfg(), input(["bug", "org:avenia"]), f.call);
+        expect((issueCalls(f)[0].body as { labels: string[] }).labels).toContain("org:avenia");
+    });
+
+    it("when the App may not create labels (403), the issue is still filed, without the org label, and the org goes in the text", async () => {
+        const f = fake({ labelStatus: (n) => (n.startsWith("org:") ? 403 : 422) });
+        const r = await createIssue(cfg(), input(["bug", "role:team", "names-clear", "org:avenia"]), f.call);
+        expect(r).toMatchObject({ number: 9 });
+        const sent = issueCalls(f);
+        expect(sent).toHaveLength(1);
+        expect((sent[0].body as { labels: string[] }).labels).toEqual(["bug", "role:team", "names-clear"]);
+        // the org survives where a person reads it: the text already carries "- Espaço: ..."
+        expect((sent[0].body as { body: string }).body).toContain("- Espaço: avenia");
+    });
+
+    it("never refuses the issue for a label: even when NO label can be ensured, it is filed", async () => {
+        for (const status of [403, 404, 500, 502]) {
+            const f = fake({ labelStatus: () => status });
+            const r = await createIssue(cfg(), input(["bug", "org:avenia"]), f.call);
+            expect(r, String(status)).toMatchObject({ number: 9 });
+            expect(issueCalls(f)).toHaveLength(1);
+        }
+    });
+
+    it("a label call that throws (network) does not stop the issue either", async () => {
+        const f = fake();
+        const call: GithubCall = async (m, p, t, b) => {
+            if (p.endsWith("/labels") && m === "POST") throw new Error("socket hang up");
+            return f.call(m, p, t, b);
+        };
+        expect(await createIssue(cfg(), input(["bug", "org:avenia"]), call)).toMatchObject({ number: 9 });
+    });
+
+    it("if GitHub still answers 422 over a label it said exists, it retries ONCE without the informative org label and keeps every label that decides", async () => {
+        // org:avenia was ensured (422 = exists) but GitHub rejects the issue while it carries it (not visible yet)
+        const f = fake({ labelStatus: () => 422, issueStatus: (l) => (l.includes("org:avenia") ? 422 : 201) });
+        const r = await createIssue(cfg(), input(["bug", "role:team", "names-clear", "org:avenia"]), f.call);
+        expect(r).toMatchObject({ number: 9 });
+        expect(issueCalls(f).map((c) => (c.body as { labels: string[] }).labels)).toEqual([
+            ["bug", "role:team", "names-clear", "org:avenia"],
+            ["bug", "role:team", "names-clear"],
+        ]);
+    });
+
+    it("never retries WITHOUT a label that decides: a 422 over names-clear or role:* is not 'fixed' by dropping it", async () => {
+        const f = fake({ labelStatus: () => 422, issueStatus: (l) => (l.includes("names-clear") ? 422 : 201) });
+        await expect(createIssue(cfg(), input(["bug", "role:team", "names-clear"]), f.call)).rejects.toThrow("github issue 422");
+        // no informative label to take out => no second attempt, and certainly not one without the verdict
+        expect(issueCalls(f)).toHaveLength(1);
+    });
+
+    it("retries at most ONCE: a 422 that survives the retry is an error, never a loop", async () => {
+        const f = fake({ labelStatus: () => 422, issueStatus: () => 422 });
+        await expect(createIssue(cfg(), input(["bug", "org:avenia"]), f.call)).rejects.toThrow("github issue 422");
+        expect(issueCalls(f)).toHaveLength(2);
+        // and with nothing informative to take out there is no retry at all
+        resetGithubCache();
+        const g = fake({ labelStatus: () => 422, issueStatus: () => 422 });
+        await expect(createIssue(cfg(), input(["bug", "role:team"]), g.call)).rejects.toThrow("github issue 422");
+        expect(issueCalls(g)).toHaveLength(1);
+    });
+
+    it("the labels sent with the issue have no repeats either", async () => {
+        const f = fake({ labelStatus: () => 422 });
+        await createIssue(cfg(), input(["bug", "bug", "role:team", "bug", "role:team"]), f.call);
+        expect((issueCalls(f)[0].body as { labels: string[] }).labels).toEqual(["bug", "role:team"]);
+    });
+
+    it("the labels that decide (names-clear, sensitive, role:*) are NEVER dropped silently into a wrong verdict: a missing one reads as the safe side", async () => {
+        // role:team cannot be ensured: the issue goes out WITHOUT it, which the triage reads as 'no role' (not head, not team).
+        const f = fake({ labelStatus: (n) => (n === "role:team" ? 403 : 422) });
+        await createIssue(cfg(), input(["bug", "role:team", "names-clear"]), f.call);
+        const labels = (issueCalls(f)[0].body as { labels: string[] }).labels;
+        expect(labels).not.toContain("role:team");
+        expect(labels).toContain("names-clear");
+        // and nothing was invented: no role label, and not a stronger one
+        expect(labels.filter((l) => l.startsWith("role:"))).toEqual([]);
+    });
+
+    it("does not send the same label twice, and keeps the repo-private check", async () => {
+        const f = fake({ labelStatus: () => 422 });
+        await createIssue(cfg(), input(["bug", "bug", "org:avenia"]), f.call);
+        expect(created(f)).toEqual(["bug", "org:avenia"]);
+        // the repo check and the labels already ensured are remembered per process: start the next case clean
+        resetGithubCache();
+        const priv = fake({ repoPrivate: false });
+        await expect(createIssue(cfg(), input(["bug"]), priv.call)).rejects.toMatchObject({ name: "FeedbackRepoNotPrivate" });
+        expect(issueCalls(priv)).toHaveLength(0);
+        expect(priv.calls.some((c) => c.path.endsWith("/labels"))).toBe(false);
+    });
+
+    it("does not ensure the same label again on the next report (the answer is remembered)", async () => {
+        const f = fake({ labelStatus: () => 422 });
+        await createIssue(cfg(), input(["bug", "org:avenia"]), f.call);
+        const first = created(f).length;
+        expect(first).toBe(2); // the first report DID ensure both (else "zero the second time" would prove nothing)
+        await createIssue(cfg(), input(["bug", "org:avenia"]), f.call);
+        expect(created(f).length).toBe(first);
+        // a label that was NOT ensured is tried again next time (it may have been created since)
+        resetGithubCache();
+        const g = fake({ labelStatus: () => 403 });
+        await createIssue(cfg(), input(["org:avenia"]), g.call);
+        await createIssue(cfg(), input(["org:avenia"]), g.call);
+        expect(created(g)).toEqual(["org:avenia", "org:avenia"]);
     });
 });
