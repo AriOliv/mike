@@ -69,6 +69,14 @@ describe("describeError", () => {
         }
     });
 
+    it("keeps the server's sentence for the two analysis 409s", () => {
+        for (const code of ["analysis_text_changed", "analysis_text_ambiguous"]) {
+            const message = "Frase do servidor em português.";
+            const described = describeError(new FakeApiError({ status: 409, message, code }), { lang: "pt", action: "decidir a sugestão" });
+            expect(described).toMatchObject({ kind: "conflict", message, code });
+        }
+    });
+
     it("never echoes a 5xx body and offers retry plus support", () => {
         const described = describeError(
             new FakeApiError({
