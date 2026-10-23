@@ -312,6 +312,7 @@ async function toApiError(
             detail?: unknown;
             code?: unknown;
             request_id?: unknown;
+            field?: unknown;
         };
         const requestId =
             typeof parsed.request_id === "string"

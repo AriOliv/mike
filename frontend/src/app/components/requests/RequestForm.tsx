@@ -133,9 +133,9 @@ export function RequestForm({
         // Enter in a field moves on; only the last part sends.
         if (part < 2) return next();
         const problem = partOneProblem();
-        if (problem) {
+        if (problem || !kind) {
             setPart(0);
-            return setError(problem);
+            return setError(problem ?? "Escolha o que você precisa.");
         }
         if (!context.trim() && !counterparty.trim()) return setError("Conte em uma frase o que você precisa.");
         const blocking = emailError(counterpartyEmail) ?? monthsError(termMonths);
