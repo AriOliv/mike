@@ -6069,3 +6069,23 @@ export async function createMcpToken(body: {
 export async function revokeMcpToken(id: string): Promise<McpAccessToken> {
     return apiRequest(`/mcp-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+
+// ── Consulta de CNPJ (L-54) ─────────────────────────────────────────────────
+
+export interface CnpjRecord {
+    cnpj: string;
+    razao_social: string;
+    nome_fantasia: string | null;
+    situacao: string | null;
+    natureza_juridica: string | null;
+    cnae: { codigo: string | null; descricao: string | null };
+    porte: string | null;
+    endereco: string | null;
+    fonte: "cache" | "brasilapi" | "receitaws";
+    consultado_em: string;
+}
+
+/** The company record from the Receita's public data; off (404-like `cnpj_disabled`) until the server switches it on. */
+export async function lookupCnpj(cnpj: string): Promise<CnpjRecord> {
+    return apiRequest(`/cnpj/${encodeURIComponent(cnpj.replace(/\D/g, ""))}`);
+}

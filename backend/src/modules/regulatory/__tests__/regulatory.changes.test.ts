@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 
 const access = vi.hoisted(() => ({ getOrgRole: vi.fn(), listAccessibleProjectIds: vi.fn() }));
@@ -361,7 +361,16 @@ describe("one-click actions", () => {
         { table: "regulatory_scans", data: orgScan },
     ];
 
-    beforeEach(() => access.getOrgRole.mockResolvedValue("member"));
+    // The request's deadline is "a week before the rule takes effect" while that date is ahead, else two weeks
+    // from today. The fixtures take effect on a fixed date (2027-02-02), so on the real clock this turned red
+    // the day after it passed. Only Date is faked: timers and the rest keep working.
+    beforeEach(() => {
+        access.getOrgRole.mockResolvedValue("member");
+        vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-20T15:00:00Z") });
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     it("turns a change into a request on the pipeline, owned by the team", async () => {
         projects.createProject.mockResolvedValue({ ok: true, project: { id: "pnew" } });
