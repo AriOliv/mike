@@ -53,11 +53,6 @@ export function nameWords(names: readonly (string | null | undefined)[]): Set<st
 }
 
 /**
- * Short counterparty names ("XP", "BTG", "B3", "3M"): two or three letters, in capitals or with a digit.
- * Only from counterparties, which are company names; a file title or a contract name is not read this way
- * (it would make "de" or "em" a name). Lower-case small words ("de", "do", "e") never count.
- */
-/**
  * Corporate forms and small words that are written in capitals in a company name but mean nothing alone:
  * "ME" (microempresa) is also the pronoun "me", so a counterparty "Padaria do Zé ME" would turn every
  * report that says "não me deixa salvar" sensitive. Found by running real-looking names through
@@ -65,6 +60,11 @@ export function nameWords(names: readonly (string | null | undefined)[]): Set<st
  */
 const NOT_A_NAME = new Set(["me", "epp", "eireli", "mei", "sa", "ss", "cia", "ltd", "inc", "llc", "gmbh", "bv", "nv", "ag", "co", "de", "da", "do", "das", "dos", "em", "na", "no", "um", "uma", "por", "com", "sem", "ao", "as", "os", "ou", "eu", "se", "te", "ele", "ela", "nos", "vos", "seu", "sua", "que"]);
 
+/**
+ * Short counterparty names ("XP", "BTG", "B3", "3M"): two or three letters, in capitals or with a digit.
+ * Only from counterparties, which are company names; a file title or a contract name is not read this way
+ * (it would make "de" or "em" a name). Lower-case small words ("de", "do", "e") never count.
+ */
 export function shortNames(counterparties: readonly (string | null | undefined)[]): Set<string> {
     const out = new Set<string>();
     for (const c of counterparties) {

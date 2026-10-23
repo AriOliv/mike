@@ -7,6 +7,7 @@ import type { DbJob } from "../../lib/dbq/types";
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import { NonRetryableJobError } from "../../lib/dbq/runner";
 import { getOrgRole } from "../../lib/access";
+import { whoAmI } from "../requests/requests.service";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { addToProject, createIssue, githubConfig, type GithubCall, githubCall } from "./feedback.github";
 import { namesVerdict, type NamesVerdict } from "./feedback.names";
@@ -29,12 +30,30 @@ export type ReportInput = {
     app_version?: string | null;
     browser?: string | null;
     org_id?: string | null;
-    role?: string | null;
 };
 export type Reported = { number: number; label: string; redacted: boolean };
 
 const short = (v: unknown, n: number): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
 export const label = (n: number) => `REL-${String(n).padStart(4, "0")}`;
+
+export type ReportRole = "head" | "team" | "requester";
+
+/**
+ * The person's role on the legal team, derived on the server. The auto-fix trusts the "Papel" line of the
+ * issue to decide who may spend its key, so it can never come from the request: a body that says
+ * `role: "head"` would let a requester through. Two choices that differ from the MCP's context on purpose:
+ *  - no legal team configured => requester (the MCP reads "no team" as "team" so the screens keep their menu;
+ *    here that would let everyone in);
+ *  - the role cannot be derived => requester (the report is still kept: losing it over this would be worse).
+ */
+export async function roleOf(db: Db, caller: Caller): Promise<ReportRole> {
+    try {
+        const who = await whoAmI(db, caller);
+        return who.ok && who.data.configured ? who.data.role : "requester";
+    } catch {
+        return "requester";
+    }
+}
 
 /** Everything a report may carry is checked here; anything else the caller sends is dropped. */
 export function parseReport(raw: Record<string, unknown>): ServiceResult<ReportInput> {
@@ -51,7 +70,7 @@ export function parseReport(raw: Record<string, unknown>): ServiceResult<ReportI
         app_version: short(raw.app_version, 60),
         browser: short(raw.browser, 120),
         org_id: typeof raw.org_id === "string" ? raw.org_id : null,
-        role: short(raw.role, 20),
+        // No `role` here on purpose: the role is derived on the server (see `roleOf`), never read from the request.
     });
 }
 
@@ -85,6 +104,7 @@ export async function submitReport(
         // The space comes from the request, so it is checked: a person who is not a member of the
         // organization they name gets the report filed without it, never under someone else's.
         const orgId = input.org_id && (await getOrgRole(caller.userId, input.org_id, db)) ? input.org_id : null;
+        const role = await roleOf(db, caller);
         const body = redact(input.body);
         const expected = input.expected ? redact(input.expected) : null;
         const { data, error } = await db
@@ -100,7 +120,7 @@ export async function submitReport(
                 route: input.route,
                 app_version: input.app_version,
                 browser: input.browser,
-                role: input.role,
+                role,
                 // The verdict is NOT computed here: it reads the whole base (hundreds of queries on a large org),
                 // so the job that files the issue does it. Until then the row has none, which reads as sensitive.
                 names_verdict: null,

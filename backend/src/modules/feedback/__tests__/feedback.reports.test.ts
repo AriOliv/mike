@@ -10,6 +10,9 @@ vi.mock("../../../lib/dbq/enqueue", () => queue);
 // Who belongs to which organization: a member of ORG, nobody else.
 const access = vi.hoisted(() => ({ getOrgRole: vi.fn(async (_u: string, org: string | null) => (org === "00000000-0000-4000-c000-000000000001" ? "member" : null)) }));
 vi.mock("../../../lib/access", () => access);
+// The person's role on the legal team, derived on the server: head, team, or requester. Per test.
+const requests = vi.hoisted(() => ({ whoAmI: vi.fn(async () => ({ ok: true, data: { configured: true, role: "requester", area: null, areas: [] } })) }));
+vi.mock("../../requests/requests.service", () => requests);
 // The names check has its own tests; here it is the verdict that matters.
 const names = vi.hoisted(() => ({ namesVerdict: vi.fn(async () => "names-clear") }));
 vi.mock("../feedback.names", async (orig) => ({ ...(await orig<typeof import("../feedback.names")>()), ...names }));
@@ -33,6 +36,8 @@ beforeEach(() => {
     names.namesVerdict.mockClear();
     names.namesVerdict.mockResolvedValue("names-clear");
     access.getOrgRole.mockClear();
+    requests.whoAmI.mockReset();
+    requests.whoAmI.mockResolvedValue({ ok: true, data: { configured: true, role: "requester", area: null, areas: [] } });
     resetGithubCache();
 });
 afterEach(() => {
@@ -46,8 +51,15 @@ describe("parseReport", () => {
         expect(parseReport({ kind: "bug", body: "x".repeat(4001) })).toMatchObject({ ok: false, code: "feedback_long" });
     });
     it("keeps only the known fields, a clean route, and the expectation only for a bug", () => {
-        const r = parseReport({ kind: "feature", body: "uma ideia", expected: "x", route: "/pedidos?t=1", cookie: "segredo", token: "t" });
-        expect(r).toEqual({ ok: true, data: { kind: "feature", body: "uma ideia", expected: null, route: "/pedidos", app_version: null, browser: null, org_id: null, role: null } });
+        const r = parseReport({ kind: "feature", body: "uma ideia", expected: "x", route: "/pedidos?t=1", cookie: "segredo", token: "t", role: "head" });
+        expect(r).toEqual({ ok: true, data: { kind: "feature", body: "uma ideia", expected: null, route: "/pedidos", app_version: null, browser: null, org_id: null } });
+    });
+
+    it("cannot carry a role at all: the field does not exist in what it returns, whatever the body says", () => {
+        for (const claimed of ["head", "team", "admin", null, 7, { a: 1 }]) {
+            const r = parseReport({ kind: "bug", body: "não salva o pedido", role: claimed });
+            expect(r.ok && Object.keys(r.data)).not.toContain("role");
+        }
     });
 });
 
@@ -120,6 +132,60 @@ describe("submitReport", () => {
         const fake = scriptedDb(insertScript());
         await submitReport(fake.db, caller, { kind: "bug", body: "Era o pedido da Orion" }, { kind: "app" });
         expect((fake.calls[1].payload as { names_verdict: unknown }).names_verdict).toBeNull();
+    });
+});
+
+describe("the role is derived on the server, never taken from the request", () => {
+    const row = (fake: ReturnType<typeof scriptedDb>) => fake.calls[1].payload as { role: string | null };
+    const insert = () => scriptedDb([{ table: "feedback_reports", data: null }, { table: "feedback_reports", op: "insert", data: { id: "r9", number: 3 } }]);
+    const as = (role: "head" | "team" | "requester", configured = true) => requests.whoAmI.mockResolvedValue({ ok: true, data: { configured, role, area: null, areas: [] } });
+
+    it("a POST that claims role head, from someone who is not on the team, is stored as requester", async () => {
+        as("requester");
+        const fake = insert();
+        await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", role: "head" }, { kind: "app" });
+        expect(row(fake).role).toBe("requester");
+    });
+
+    it("whatever the body says (head, team, admin, anything), the stored role is the server's", async () => {
+        for (const claimed of ["head", "team", "admin", "owner", "HEAD", " team ", "requester", "", null, 7, { a: 1 }]) {
+            as("requester");
+            const fake = insert();
+            await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", role: claimed }, { kind: "app" });
+            expect(row(fake).role).toBe("requester");
+        }
+    });
+
+    it("a real team member and a real head are stored as what they are", async () => {
+        for (const real of ["team", "head"] as const) {
+            as(real);
+            const fake = insert();
+            await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", role: "requester" }, { kind: "app" });
+            expect(row(fake).role).toBe(real);
+        }
+    });
+
+    it("with no legal team configured everyone is a requester (the MCP's 'no team = team' does NOT apply here)", async () => {
+        as("requester", false);
+        const fake = insert();
+        await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", role: "team" }, { kind: "app" });
+        expect(row(fake).role).toBe("requester");
+    });
+
+    it("the same for an agent: the role the MCP context claims is ignored, the server's is stored", async () => {
+        as("requester");
+        const fake = insert();
+        // the MCP tool used to pass ctx.role, which reads 'team' when no team is configured
+        await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", role: "team" }, { kind: "agent", client: "claude-code" });
+        expect(row(fake).role).toBe("requester");
+    });
+
+    it("if the role cannot be derived, the report is stored as requester, not refused and not trusted", async () => {
+        requests.whoAmI.mockResolvedValue({ ok: false, kind: "error", error: new Error("db down") } as never);
+        const fake = insert();
+        const r = await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", role: "head" }, { kind: "app" });
+        expect(r.ok).toBe(true);
+        expect(row(fake).role).toBe("requester");
     });
 });
 
