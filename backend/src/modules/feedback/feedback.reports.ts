@@ -101,8 +101,9 @@ export async function submitReport(
                 app_version: input.app_version,
                 browser: input.browser,
                 role: input.role,
-                // The base's names stay in the cluster: only this verdict leaves, as a label on the issue.
-                names_verdict: await namesVerdict(db, orgId, caller.userId, [body.text, expected?.text ?? "", input.route ?? ""]),
+                // The verdict is NOT computed here: it reads the whole base (hundreds of queries on a large org),
+                // so the job that files the issue does it. Until then the row has none, which reads as sensitive.
+                names_verdict: null,
             })
             .select("id, number")
             .single();
@@ -123,6 +124,8 @@ export async function submitReport(
 
 type ReportRow = {
     id: string;
+    /** Null when the author's account was deleted after the report (on delete set null). */
+    user_id: string | null;
     number: number;
     org_id: string | null;
     source: "app" | "agent";
@@ -187,6 +190,17 @@ export async function handleFeedbackIssue(db: Db, job: DbJob, call: GithubCall =
     // Not configured is not a failure: the report waits `pending` until it is.
     if (!cfg) return { skipped: "github_not_configured" };
 
+    // The base's names stay in the cluster: only this verdict leaves, as a label on the issue. It compares
+    // the stored (already redacted) text with every space the author reports from, and it is saved BEFORE
+    // the issue exists, so a retry after a GitHub failure does not read the base again.
+    let verdict: NamesVerdict | null = row.names_verdict;
+    if (!verdict) {
+        // An author who no longer exists has no spaces to compare with: nothing can be vouched for, so sensitive.
+        verdict = row.user_id ? await namesVerdict(db, row.user_id, [row.body, row.expected ?? "", row.route ?? ""]) : "sensitive";
+        const { error: verdictError } = await db.from("feedback_reports").update({ names_verdict: verdict }).eq("id", row.id);
+        if (verdictError) throw verdictError;
+    }
+
     let orgSlug: string | null = null;
     if (row.org_id) {
         const { data: org } = await db.from("organizations").select("name").eq("id", row.org_id).maybeSingle();
@@ -195,7 +209,7 @@ export async function handleFeedbackIssue(db: Db, job: DbJob, call: GithubCall =
     await db.from("feedback_reports").update({ attempts: job.attempts }).eq("id", row.id);
     let created;
     try {
-        created = await createIssue(cfg, issueFor(row, orgSlug), call);
+        created = await createIssue(cfg, issueFor({ ...row, names_verdict: verdict }, orgSlug), call);
     } catch (e) {
         if (e instanceof Error && e.name === "FeedbackRepoNotPrivate") throw new NonRetryableJobError(e.message);
         throw e;

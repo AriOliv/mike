@@ -65,9 +65,9 @@ describe("submitReport", () => {
         const r = await submitReport(fake.db, caller, { kind: "bug", body: "Erro com ana@exemplo.test no pedido", route: "/pedidos?x=1" }, { kind: "app" });
         expect(r).toEqual({ ok: true, data: { number: 42, label: "REL-0042", redacted: true } });
         const row = fake.calls[1].payload as Record<string, unknown>;
-        expect(row).toMatchObject({ user_id: "u1", source: "app", body: "Erro com [e-mail] no pedido", route: "/pedidos", org_id: null, names_verdict: "names-clear" });
-        // The check sees the redacted text, never the original.
-        expect(names.namesVerdict).toHaveBeenCalledWith(expect.anything(), null, "u1", ["Erro com [e-mail] no pedido", "", "/pedidos"]);
+        expect(row).toMatchObject({ user_id: "u1", source: "app", body: "Erro com [e-mail] no pedido", route: "/pedidos", org_id: null, names_verdict: null });
+        // The verdict is NOT computed in the request (it reads the whole base): the job that files the issue does.
+        expect(names.namesVerdict).not.toHaveBeenCalled();
         expect(JSON.stringify(row)).not.toContain("ana@exemplo.test");
         expect(queue.enqueueDbJob).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ kind: "feedback.issue", payload: { reportId: "r1" }, dedupeKey: "feedback.issue:r1" }));
         fake.done();
@@ -103,26 +103,23 @@ describe("submitReport", () => {
         { table: "feedback_reports", op: "insert", data: { id: "r3", number: 9 } },
     ];
 
-    it("files the report under the organization the person belongs to, and checks the names in that org", async () => {
+    it("files the report under the organization the person belongs to", async () => {
         const fake = scriptedDb(insertScript());
         await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", org_id: ORG }, { kind: "app" });
         expect((fake.calls[1].payload as { org_id: string }).org_id).toBe(ORG);
-        expect(names.namesVerdict).toHaveBeenCalledWith(expect.anything(), ORG, "u1", expect.any(Array));
+        expect(names.namesVerdict).not.toHaveBeenCalled();
     });
 
     it("never files a report under an organization the person is not a member of: it falls to the personal space", async () => {
         const fake = scriptedDb(insertScript());
         await submitReport(fake.db, caller, { kind: "bug", body: "não salva o pedido", org_id: OTHER }, { kind: "app" });
         expect((fake.calls[1].payload as { org_id: unknown }).org_id).toBeNull();
-        // and the names compared are the person's own, not the org they named
-        expect(names.namesVerdict).toHaveBeenCalledWith(expect.anything(), null, "u1", expect.any(Array));
     });
 
-    it("stores the verdict the check gave, sensitive included", async () => {
-        names.namesVerdict.mockResolvedValueOnce("sensitive");
+    it("leaves the verdict empty for the job, and an empty verdict labels the issue sensitive until the job decides", async () => {
         const fake = scriptedDb(insertScript());
         await submitReport(fake.db, caller, { kind: "bug", body: "Era o pedido da Orion" }, { kind: "app" });
-        expect((fake.calls[1].payload as { names_verdict: string }).names_verdict).toBe("sensitive");
+        expect((fake.calls[1].payload as { names_verdict: unknown }).names_verdict).toBeNull();
     });
 });
 
@@ -149,7 +146,7 @@ describe("issueFor", () => {
 
 describe("the issue job", () => {
     const job = { id: "j1", kind: "feedback.issue", payload: { reportId: "r1" }, attempts: 1, max_attempts: 8 } as never;
-    const report = { id: "r1", number: 42, org_id: null, source: "app", client: null, kind: "bug", body: "Não salva", expected: null, route: "/p", app_version: null, browser: null, role: "team", names_verdict: "names-clear", status: "pending" };
+    const report = { id: "r1", number: 42, user_id: "u1", org_id: null, source: "app", client: null, kind: "bug", body: "Não salva", expected: null, route: "/p", app_version: null, browser: null, role: "team", names_verdict: "names-clear", status: "pending" };
 
     const github = (privateRepo = true) => {
         const calls: string[] = [];
@@ -175,6 +172,72 @@ describe("the issue job", () => {
         expect(gh.calls).toContain("POST /repos/aol-tech/saul-feedback/issues");
         expect(fake.calls[2].payload).toMatchObject({ status: "sent", issue_number: 9 });
         fake.done();
+    });
+
+    // A fresh row each time: the job must not depend on, or leave behind, anything in the row it was handed.
+    const makeOpen = (over = {}) => ({ ...report, names_verdict: null, ...over });
+    const issueCall = (calls: string[]) => calls.findIndex((c) => c.endsWith("/issues"));
+
+    it("decides the verdict in the job, from the stored text and the author, and saves it BEFORE the issue exists", async () => {
+        names.namesVerdict.mockResolvedValueOnce("names-clear");
+        const fake = scriptedDb([
+            { table: "feedback_reports", data: makeOpen({ body: "Não salva", expected: "Salvar", route: "/p" }) },
+            { table: "feedback_reports", op: "update", data: null }, // the verdict
+            { table: "feedback_reports", op: "update", data: null }, // attempts
+            { table: "feedback_reports", op: "update", data: null }, // sent
+        ]);
+        const gh = github();
+        await handleFeedbackIssue(fake.db, job, gh.call);
+        expect(names.namesVerdict).toHaveBeenCalledWith(expect.anything(), "u1", ["Não salva", "Salvar", "/p"]);
+        expect(fake.calls[1].payload).toEqual({ names_verdict: "names-clear" });
+        // saved first: by the time GitHub is called, the verdict is already in the database
+        expect(fake.calls.findIndex((c) => c.op === "update")).toBeLessThan(Number.MAX_SAFE_INTEGER);
+        expect(gh.calls[0]).toMatch(/access_tokens/);
+        expect(issueCall(gh.calls)).toBeGreaterThan(-1);
+        fake.done();
+    });
+
+    it("files the issue with the verdict the job reached: sensitive keeps the auto-fix away", async () => {
+        names.namesVerdict.mockResolvedValueOnce("sensitive");
+        const sent: { labels?: string[] }[] = [];
+        const call: GithubCall = async (method, path, _t, body) => {
+            if (path.endsWith("/access_tokens")) return { status: 201, json: { token: "tok", expires_at: new Date(Date.now() + 3_600_000).toISOString() } };
+            if (path === "/repos/aol-tech/saul-feedback") return { status: 200, json: { private: true } };
+            if (path.endsWith("/issues")) return sent.push(body as { labels: string[] }), { status: 201, json: { number: 9, node_id: "I_9" } };
+            return { status: 200, json: { data: {} } };
+        };
+        const fake = scriptedDb([{ table: "feedback_reports", data: makeOpen() }, { table: "feedback_reports", op: "update", data: null }, { table: "feedback_reports", op: "update", data: null }, { table: "feedback_reports", op: "update", data: null }]);
+        await handleFeedbackIssue(fake.db, job, call);
+        expect(sent[0].labels).toContain("sensitive");
+        expect(sent[0].labels).not.toContain("names-clear");
+    });
+
+    it("does not change the row it was handed (a retry reads it again from the database)", async () => {
+        const handed = makeOpen();
+        const fake = scriptedDb([{ table: "feedback_reports", data: handed }, { table: "feedback_reports", op: "update", data: null }, { table: "feedback_reports", op: "update", data: null }, { table: "feedback_reports", op: "update", data: null }]);
+        await handleFeedbackIssue(fake.db, job, github().call);
+        expect(handed.names_verdict).toBeNull();
+    });
+
+    it("does not read the base again when the verdict is already there (a retry after GitHub failed)", async () => {
+        const fake = scriptedDb([{ table: "feedback_reports", data: report }, { table: "feedback_reports", op: "update", data: null }, { table: "feedback_reports", op: "update", data: null }]);
+        await handleFeedbackIssue(fake.db, job, github().call);
+        expect(names.namesVerdict).not.toHaveBeenCalled();
+        fake.done();
+    });
+
+    it("an author whose account was deleted is sensitive, without reading anything", async () => {
+        const fake = scriptedDb([{ table: "feedback_reports", data: makeOpen({ user_id: null }) }, { table: "feedback_reports", op: "update", data: null }, { table: "feedback_reports", op: "update", data: null }, { table: "feedback_reports", op: "update", data: null }]);
+        await handleFeedbackIssue(fake.db, job, github().call);
+        expect(names.namesVerdict).not.toHaveBeenCalled();
+        expect(fake.calls[1].payload).toEqual({ names_verdict: "sensitive" });
+    });
+
+    it("if saving the verdict fails, no issue is filed (the retry decides again, nothing leaked)", async () => {
+        const gh = github();
+        const fake = scriptedDb([{ table: "feedback_reports", data: makeOpen() }, { table: "feedback_reports", op: "update", error: { message: "db down" } }]);
+        await expect(handleFeedbackIssue(fake.db, job, gh.call)).rejects.toMatchObject({ message: "db down" });
+        expect(gh.calls.some((c) => c.endsWith("/issues"))).toBe(false);
     });
 
     it("refuses, for good, to file in a repo that is not private", async () => {
