@@ -176,6 +176,9 @@ describe("HomeView", () => {
     });
 
     describe("a long queue", () => {
+        // The queue is sorted most recently updated first. Each review gets its own fixed time,
+        // r1 the newest, so the order is the one written here and never depends on the clock or
+        // on how fast the fixtures were built (they used to share "now" and tie).
         const many = (n: number) =>
             Array.from({ length: n }, (_, i) =>
                 review({
@@ -183,6 +186,7 @@ describe("HomeView", () => {
                     project_id: `p${i + 1}`,
                     filename: `Contrato ${String(i + 1).padStart(2, "0")}.pdf`,
                     assignee_email: "duda@avenia.io",
+                    updated_at: new Date(Date.UTC(2026, 9, 20, 12, 0, 0) - i * 60_000).toISOString(),
                 }),
             );
 
