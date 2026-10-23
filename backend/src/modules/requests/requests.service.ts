@@ -34,6 +34,18 @@ export {
     setIntakeTemplate,
     type RequestIntake,
 } from "./requests.checklist";
+export {
+    buildStrip,
+    currentStage,
+    laneOfStage,
+    moveStage,
+    stageOwner,
+    STAGE_CATALOG,
+    STAGES,
+    syncStage,
+    type Stage,
+    type StageStrip,
+} from "./requests.stages";
 export { handleIntakePrefill, parsePrefill, PREFILL_JOB_KIND } from "./requests.prefill";
 export {
     DEFAULT_INTAKE_TEMPLATE,
