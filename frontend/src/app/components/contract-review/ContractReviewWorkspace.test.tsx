@@ -276,6 +276,15 @@ describe("ContractReviewWorkspace", () => {
         expect(await screen.findByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
     });
 
+    it("tells the person what happened to the document under an accepted point", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        const decided = (await screen.findAllByRole("article"))[0];
+        expect(within(decided).getByText("Mantida como alteração rastreada para a contraparte.")).toBeInTheDocument();
+    });
+
     describe("leaving the page inside the undo window", () => {
         async function decideOne() {
             vi.useFakeTimers({ shouldAdvanceTime: true });
