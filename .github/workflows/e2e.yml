@@ -125,7 +125,7 @@ jobs:
           esac
           npx playwright test --project=synthetic "${filter[@]}" \
             ${{ matrix.renderer == 'development' && '--retries=0 --trace=retain-on-failure' || '' }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: assistant-streaming-${{ matrix.renderer }}-${{ matrix.group }}
@@ -190,7 +190,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-chromium
@@ -434,7 +434,7 @@ jobs:
 
       # always() (not !cancelled()) so the report still uploads when the job is
       # cancelled by the timeout — that's exactly when you most need the traces.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: playwright-report-${{ matrix.renderer }}

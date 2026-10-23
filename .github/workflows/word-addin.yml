@@ -67,7 +67,7 @@ jobs:
       # Production React omits the passive-update-depth warning. Exercise the
       # real development bundle too, using the same hermetic Office/API mocks.
       - run: npx playwright test --retries=0 --trace=retain-on-failure
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: word-addin-streaming-development
@@ -111,7 +111,7 @@ jobs:
       # (see header), chromium guards the honours-overflow-anchor path.
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('word-addin/package-lock.json') }}-chromium-webkit
@@ -136,7 +136,7 @@ jobs:
 
       # always() (not !cancelled()) so traces/screenshots still upload when
       # the job is cancelled by the timeout — exactly when they're needed.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: word-addin-playwright-results
