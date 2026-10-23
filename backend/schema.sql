@@ -1299,6 +1299,16 @@ create table if not exists public.mcp_confirmations (
 create index if not exists idx_mcp_confirmations_expires
   on public.mcp_confirmations(expires_at);
 
+create table if not exists public.cnpj_lookups (
+  cnpj text primary key check (cnpj ~ '^[0-9]{14}$'),
+  payload jsonb not null,
+  fetched_at timestamptz not null default now()
+);
+
+alter table public.cnpj_lookups enable row level security;
+revoke all on public.cnpj_lookups from anon, authenticated;
+grant select, insert, update, delete on public.cnpj_lookups to service_role;
+
 alter table public.mcp_confirmations enable row level security;
 revoke all on public.mcp_confirmations from anon, authenticated;
 -- delete too: schema.sql's blanket service_role grant gives it, and fresh
@@ -12069,6 +12079,29 @@ alter table public.legal_requests
     check (term_months is null or (term_months >= 1 and term_months <= 600));
 
 
+-- Migration date: 2026-10-23 (20261023_95_request_terms_inferred.sql)
+--
+-- What the intake agent read from the contract about its terms (U-05 part
+-- 2): the other party, when it starts and for how many months. It is kept
+-- apart from what the requester typed (counterparty, term_start,
+-- term_months) so the form can show it as "preenchido pela IA, confirme"
+-- and a person's answer is never overwritten.
+--
+-- {counterparty?: {value, quote}, term_start?: {value, quote},
+--  term_months?: {value, quote}}. A key is there only with the contract's own
+-- words (quote) behind it. Confirming copies the value into the real column
+-- and drops the key.
+
+alter table public.legal_requests
+  add column if not exists terms_inferred jsonb not null default '{}'::jsonb;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_terms_inferred_check;
+alter table public.legal_requests
+  add constraint legal_requests_terms_inferred_check
+    check (jsonb_typeof(terms_inferred) = 'object');
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12254,5 +12287,7 @@ insert into public.schema_migrations (filename) values
   ('20261022_99_renewal_requests.sql'),
   ('20261023_91_assignment_rules.sql'),
   ('20261023_92_request_stages.sql'),
-  ('20261023_94_request_contract_terms.sql')
+  ('20261023_93_cnpj_lookups.sql'),
+  ('20261023_94_request_contract_terms.sql'),
+  ('20261023_95_request_terms_inferred.sql')
 on conflict (filename) do nothing;

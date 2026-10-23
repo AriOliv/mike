@@ -8,13 +8,14 @@ import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
     createRequest,
     getRequestRole,
+    lookupCnpj,
     uploadStandaloneDocument,
     type LegalRequest,
     type RequestKind,
     type RequestUrgency,
 } from "@/app/lib/mikeApi";
 import { KIND_OPTIONS, URGENCY_OPTIONS } from "@/app/lib/requests";
-import { notifyError } from "@/app/lib/userFacingError";
+import { describeError, errorCode, notifyError } from "@/app/lib/userFacingError";
 
 const FIELD =
     "w-full rounded-lg border border-gray-200 bg-app-surface px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
@@ -35,6 +36,9 @@ export function RequestForm({
 }) {
     const [kind, setKind] = useState<RequestKind | null>(null);
     const [counterparty, setCounterparty] = useState("");
+    // L-54: a CNPJ typed here can be looked up; the company name replaces it.
+    const [cnpjBusy, setCnpjBusy] = useState(false);
+    const [cnpjNote, setCnpjNote] = useState<string | null>(null);
     const [context, setContext] = useState("");
     const [urgency, setUrgency] = useState<RequestUrgency>("normal");
     const [neededBy, setNeededBy] = useState("");
@@ -75,6 +79,24 @@ export function RequestForm({
         setFiles([]);
         setError(null);
         setChangingArea(false);
+    }
+
+    async function findCnpj() {
+        setCnpjBusy(true);
+        setCnpjNote(null);
+        try {
+            const found = await lookupCnpj(counterparty);
+            setCounterparty(found.razao_social.slice(0, 200));
+            setCnpjNote(`Receita: ${found.situacao ?? "situação não informada"}${found.cnae.descricao ? ` · ${found.cnae.descricao}` : ""}`);
+        } catch (e) {
+            setCnpjNote(
+                errorCode(e) === "cnpj_disabled"
+                    ? "A consulta de CNPJ ainda não está ligada. Digite o nome da empresa."
+                    : describeError(e, { lang: "pt", action: "consultar o CNPJ" }).message,
+            );
+        } finally {
+            setCnpjBusy(false);
+        }
     }
 
     async function submit(event?: FormEvent) {
@@ -186,13 +208,24 @@ export function RequestForm({
 
                 <label className="block">
                     <span className="mb-1 block text-xs font-medium text-gray-700">Com quem?</span>
-                    <input
-                        className={FIELD}
-                        value={counterparty}
-                        onChange={(e) => setCounterparty(e.target.value)}
-                        placeholder="Empresa ou pessoa do outro lado (se houver)"
-                        maxLength={200}
-                    />
+                    <span className="flex gap-2">
+                        <input
+                            className={FIELD}
+                            value={counterparty}
+                            onChange={(e) => {
+                                setCounterparty(e.target.value);
+                                setCnpjNote(null);
+                            }}
+                            placeholder="Empresa ou pessoa do outro lado (se houver). Pode digitar o CNPJ."
+                            maxLength={200}
+                        />
+                        {counterparty.replace(/\D/g, "").length === 14 ? (
+                            <PillButtonUI tone="white" size="sm" onClick={() => void findCnpj()} loading={cnpjBusy} disabled={cnpjBusy}>
+                                Buscar CNPJ
+                            </PillButtonUI>
+                        ) : null}
+                    </span>
+                    {cnpjNote ? <span className="mt-1 block text-[11px] text-gray-500">{cnpjNote}</span> : null}
                 </label>
 
                 <label className="block">

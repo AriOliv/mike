@@ -8,6 +8,8 @@ const service = vi.hoisted(() => ({
     decideTriage: vi.fn(),
     deliverRequest: vi.fn(),
     getRequest: vi.fn(),
+    getTerms: vi.fn(),
+    setTerms: vi.fn(),
     inviteParticipant: vi.fn(),
     listRequests: vi.fn(),
     postMessage: vi.fn(),
@@ -108,6 +110,18 @@ describe("requests routes", () => {
         expect(JSON.stringify(res.body)).not.toContain("secret");
         service.getRequest.mockRejectedValue(new Error("boom"));
         await request(app).get("/requests/r").expect(500);
+    });
+
+    it("reads and saves the contract's terms through the service", async () => {
+        service.getTerms.mockResolvedValueOnce(okData({ term_end: null }));
+        await request(app).get("/requests/r1/terms").expect(200);
+        expect(service.getTerms).toHaveBeenCalledWith({}, caller, "r1");
+        service.setTerms.mockResolvedValueOnce(okData({ term_months: 12 }));
+        await request(app).put("/requests/r1/terms").send({ term_months: 12 }).expect(200);
+        expect(service.setTerms).toHaveBeenCalledWith({}, caller, "r1", { term_months: 12 });
+        service.setTerms.mockResolvedValueOnce({ ok: false, kind: "validation", code: "field:term_months", detail: "Use um prazo de 1 mês ou mais." });
+        const bad = await request(app).put("/requests/r1/terms").send({ term_months: 0 }).expect(422);
+        expect(bad.body).toEqual({ detail: "Use um prazo de 1 mês ou mais.", field: "term_months" });
     });
 });
 
