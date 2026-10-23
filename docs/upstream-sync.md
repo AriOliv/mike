@@ -1,6 +1,6 @@
 # Keeping the fork in sync with upstream
 
-This fork (`AriOliv/mike`) carries the Avenia CLM features — pipeline, radar,
+This fork (`aol-tech/mike`) carries the Avenia CLM features — pipeline, radar,
 dossier, contract terms, acervo, and the Notion/Drive/Calendar mirrors — on
 top of `open-legal-products/mike`. All of that code lives in
 `backend/src/modules/contracts/`, three mirror files in `backend/src/lib/`

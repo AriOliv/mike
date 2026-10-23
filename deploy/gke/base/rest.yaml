@@ -1,0 +1,35 @@
+# PostgREST — the backend's data API (through the gateway).
+apiVersion: v1
+kind: Service
+metadata:
+  name: rest
+spec:
+  selector: { app: rest }
+  ports: [{ name: http, port: 3000, targetPort: 3000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rest
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: rest } }
+  template:
+    metadata: { labels: { app: rest } }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: postgrest
+          image: postgrest/postgrest:v14.12
+          ports: [{ containerPort: 3000 }]
+          env:
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: POSTGRES_PASSWORD } }
+            - { name: PGRST_DB_URI, value: "postgres://authenticator:$(DB_PASSWORD)@db:5432/postgres" }
+            - { name: PGRST_DB_SCHEMAS, value: public }
+            - { name: PGRST_DB_ANON_ROLE, value: anon }
+            - name: PGRST_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: JWT_SECRET } }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }

@@ -1068,6 +1068,18 @@ create index if not exists idx_obligations_user_due
 create index if not exists idx_obligations_project
   on public.obligations(project_id);
 
+-- A deadline with an owner and its own warning lead time (20261022_98).
+alter table public.obligations
+  add column if not exists owner_email text,
+  add column if not exists alert_days integer not null default 30;
+alter table public.obligations
+  drop constraint if exists obligations_alert_days_check;
+alter table public.obligations
+  add constraint obligations_alert_days_check check (alert_days between 0 and 365);
+create index if not exists idx_obligations_owner_due
+  on public.obligations(lower(owner_email), due_date)
+  where owner_email is not null and done = false;
+
 -- AI contract analysis: structured review whose every item quotes the clause
 -- it came from, so a finding can be traced back to the document text.
 create table if not exists public.dossiers (
@@ -11957,6 +11969,157 @@ grant select, insert, update, delete on public.contract_analyses, public.contrac
   to service_role;
 
 
+-- Migration date: 2026-10-23 (20261023_91_assignment_rules.sql)
+--
+-- Assignment rules of the legal team (L-33): fixed, predictable, no model.
+-- legal_teams.assignment_rules is an ordered list of
+-- {when: {area?, kind?, value_min?, value_max?}, assign_to, note?}; the first
+-- rule that matches a request names who takes it. Empty means no rule: the
+-- triage agent's suggestion (open load) decides, as before.
+--
+-- legal_requests.assigned_by records how the current assignee was set:
+-- 'rule' (a rule above), 'triage' (the Head accepted or auto-assign applied
+-- the agent's suggestion) or 'person'. Only a rule's own assignment may be
+-- replaced by a later rule; a person's choice is never undone.
+
+alter table public.legal_teams
+  add column if not exists assignment_rules jsonb not null default '[]'::jsonb;
+
+alter table public.legal_teams
+  drop constraint if exists legal_teams_assignment_rules_check;
+alter table public.legal_teams
+  add constraint legal_teams_assignment_rules_check
+    check (jsonb_typeof(assignment_rules) = 'array');
+
+alter table public.legal_requests
+  add column if not exists assigned_by text;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_assigned_by_check;
+alter table public.legal_requests
+  add constraint legal_requests_assigned_by_check
+    check (assigned_by is null or assigned_by in ('rule', 'triage', 'person'));
+
+-- Migration date: 2026-10-23 (20261023_92_request_stages.sql)
+--
+-- The history of a request's stages (U-13): which stage, with whom, since
+-- when. One row per entry into a stage; the open row is the current stage
+-- (left_at is null). The stage itself is computed from the status, the card's
+-- lane and the checklist (requests.stages.ts); this table remembers the path.
+--
+-- It does not replace card_events (the card's activity log): it answers "in
+-- what stage and since when" without scanning the log, and it is what the
+-- time-per-stage report (L-45) and the stage SLA (L-16) will read.
+--
+-- note is a short label ("movido na Esteira", "checklist fechado"), never text
+-- from a contract. Requests that already exist get one row with their current
+-- stage, dated from the card's last lane change: the past is not invented.
+
+create table if not exists public.legal_request_stages (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.legal_requests(id) on delete cascade,
+  stage text not null,
+  owner_kind text not null default 'none',
+  owner_id uuid references auth.users(id) on delete set null,
+  owner_name text,
+  entered_at timestamptz not null default now(),
+  left_at timestamptz,
+  note text
+);
+
+alter table public.legal_request_stages
+  drop constraint if exists legal_request_stages_stage_check;
+alter table public.legal_request_stages
+  add constraint legal_request_stages_stage_check
+    check (stage in ('recebido', 'triagem', 'checklist', 'analise', 'negociacao', 'assinatura', 'concluido'));
+
+alter table public.legal_request_stages
+  drop constraint if exists legal_request_stages_owner_kind_check;
+alter table public.legal_request_stages
+  add constraint legal_request_stages_owner_kind_check
+    check (owner_kind in ('agent', 'person', 'requester', 'none'));
+
+-- At most one open row per request: the current stage.
+create unique index if not exists uq_legal_request_stages_open
+  on public.legal_request_stages(request_id)
+  where left_at is null;
+
+create index if not exists idx_legal_request_stages_request
+  on public.legal_request_stages(request_id, entered_at);
+
+alter table public.legal_request_stages enable row level security;
+revoke all on public.legal_request_stages from anon, authenticated;
+grant select, insert, update, delete on public.legal_request_stages to service_role;
+
+-- Backfill: one open row for each request that has none, at its present stage.
+-- The stage is the pipeline lane's (a closed request is concluded), dated from
+-- the card's last lane change or, failing that, from the request itself.
+insert into public.legal_request_stages (request_id, stage, owner_kind, entered_at, note)
+select r.id,
+       case
+         when r.status in ('entregue', 'cancelado') or p.lane = 'arquivado' then 'concluido'
+         when p.lane = 'assinatura' then 'assinatura'
+         when p.lane = 'negociacao' then 'negociacao'
+         when p.lane = 'revisao' then 'analise'
+         when r.status in ('em_andamento', 'aguardando_solicitante') then 'analise'
+         when r.status = 'em_triagem' or p.lane = 'triagem' then 'triagem'
+         else 'recebido'
+       end,
+       'none',
+       coalesce(p.lane_updated_at, r.created_at),
+       'etapa em que o pedido já estava'
+from public.legal_requests r
+left join public.projects p on p.id = r.project_id
+where not exists (select 1 from public.legal_request_stages s where s.request_id = r.id);
+
+-- Migration date: 2026-10-23 (20261023_94_request_contract_terms.sql)
+--
+-- Part 2 of asking the legal team, "the contract" (U-05, U-07, U-08): the
+-- other party's e-mail, when the contract starts and for how many months.
+-- The end date is computed from the two (term_end), never stored.
+--
+-- counterparty_email is only kept, for the external validation by link
+-- (U-16) that comes later. Nothing is sent to that address; it stays out of
+-- notifications, the card's activity and the MCP tools.
+--
+-- All three are optional: a request without a contract file (an NDA, a
+-- question) leaves them empty.
+
+alter table public.legal_requests
+  add column if not exists counterparty_email text,
+  add column if not exists term_start date,
+  add column if not exists term_months integer;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_term_months_check;
+alter table public.legal_requests
+  add constraint legal_requests_term_months_check
+    check (term_months is null or (term_months >= 1 and term_months <= 600));
+
+
+-- Migration date: 2026-10-23 (20261023_95_request_terms_inferred.sql)
+--
+-- What the intake agent read from the contract about its terms (U-05 part
+-- 2): the other party, when it starts and for how many months. It is kept
+-- apart from what the requester typed (counterparty, term_start,
+-- term_months) so the form can show it as "preenchido pela IA, confirme"
+-- and a person's answer is never overwritten.
+--
+-- {counterparty?: {value, quote}, term_start?: {value, quote},
+--  term_months?: {value, quote}}. A key is there only with the contract's own
+-- words (quote) behind it. Confirming copies the value into the real column
+-- and drops the key.
+
+alter table public.legal_requests
+  add column if not exists terms_inferred jsonb not null default '{}'::jsonb;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_terms_inferred_check;
+alter table public.legal_requests
+  add constraint legal_requests_terms_inferred_check
+    check (jsonb_typeof(terms_inferred) = 'object');
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12138,7 +12301,12 @@ insert into public.schema_migrations (filename) values
   ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
   ('20261022_97_card_events_cascade.sql'),
+  ('20261022_98_obligation_owner.sql'),
+  ('20261023_91_assignment_rules.sql'),
+  ('20261023_92_request_stages.sql'),
   ('20261023_93_cnpj_lookups.sql'),
+  ('20261023_94_request_contract_terms.sql'),
+  ('20261023_95_request_terms_inferred.sql'),
   ('20261023_96_feedback_reports.sql'),
   ('20261023_97_feedback_names_verdict.sql')
 on conflict (filename) do nothing;

@@ -14,10 +14,14 @@
 // rule takes the light the playbook gave that rule.
 
 import { locateQuote } from "./contractReview.ficha";
+import { parseModelJson } from "./contractReview.shared";
+// jsonrepair declares "type": "module" but ships a CommonJS build; importing
+// it normally trips TS1479 under this package's Node16 CJS resolution.
+const { jsonrepair } = require("jsonrepair") as { jsonrepair: (text: string) => string };
 
 /** Shown on every analysis: it is a draft for the legal team. */
 export const ANALYSIS_NOTICE = "Rascunho gerado por IA para o time jurídico. Não é parecer jurídico.";
-export const ANALYSIS_PROMPT_VERSION = "analise-analista-v1";
+export const ANALYSIS_PROMPT_VERSION = "analise-analista-v2";
 
 export type Light = "red" | "yellow" | "green";
 export type IntakeAnswer = { key: string; label: string; value: string; source?: string | null };
@@ -63,6 +67,8 @@ export type AnalysisResult = {
         term_termination_penalties: string;
     };
     open_points: OpenPoint[];
+    /** Set when the answer was cut off and some sections could not be recovered. */
+    partial?: { missing: string[] };
 };
 export type DroppedCitation = { section: string; title: string; quote: string; reason: string };
 
@@ -87,6 +93,9 @@ const SECTION_BY_LIGHT: Record<Light, "critical" | "attention" | "favorable"> = 
 };
 const DEPENDS_ON = new Set<OpenPoint["depends_on"]>(["juridico_interno", "founder", "contraparte", "due_diligence", "outro"]);
 
+/** How many items each section may carry: what keeps the whole answer well under the output cap. */
+export const SECTION_LIMITS = { critical: 6, attention: 6, favorable: 4, redlines: 6, open_points: 6 } as const;
+
 /** The prompt: the contract, the intake answers as context, and the playbook as the yardstick when there is one. */
 export function analysisPrompt(args: {
     documentText: string;
@@ -109,9 +118,10 @@ export function analysisPrompt(args: {
 Regras invioláveis:
 - Português do Brasil, tom profissional e objetivo.
 - NUNCA diga se a Avenia deve ou não assinar: aponte riscos e sugira ajustes; a decisão é humana.
-- NUNCA invente cláusula ou trecho. Todo risco, ponto de atenção e ponto favorável cita TEXTUALMENTE um trecho do contrato (até 400 caracteres, copiado sem alterar), com o número da cláusula quando houver.
+- NUNCA invente cláusula ou trecho. Todo risco, ponto de atenção e ponto favorável cita TEXTUALMENTE um trecho do contrato (até 250 caracteres, copiado sem alterar; o trecho mais curto que identifica a cláusula), com o número da cláusula quando houver.
 - Redline: "from" é o trecho original exato; "to" é a redação completa que o substitui.
 - Ponto aberto é o que depende de informação externa: jurídico interno, founder, contraparte ou due diligence.
+- Seja conciso, a resposta tem teto de tamanho: no máximo ${SECTION_LIMITS.critical} itens em critical, ${SECTION_LIMITS.attention} em attention, ${SECTION_LIMITS.favorable} em favorable, ${SECTION_LIMITS.redlines} em redlines e ${SECTION_LIMITS.open_points} em open_points (os mais relevantes, do mais grave ao menos). "rationale" e "why" com no máximo 2 frases curtas; "suggestion" com 1 frase; em redline, "from" e "to" só a cláusula alterada, não o artigo inteiro.
 
 CHECKLIST DE INTAKE (contexto do pedido):
 ${intake}
@@ -127,6 +137,103 @@ Responda só JSON:
 
 CONTRATO (${args.documentName}):
 ${args.documentText.slice(0, 180_000)}`;
+}
+
+const SECTIONS = ["executive_summary", "critical", "attention", "favorable", "redlines", "compliance", "open_points"] as const;
+export type AnalysisSection = (typeof SECTIONS)[number];
+/** The sections' names for the people reading a partial analysis. */
+export const SECTION_LABELS: Record<AnalysisSection, string> = {
+    executive_summary: "resumo executivo",
+    critical: "riscos críticos",
+    attention: "pontos de atenção",
+    favorable: "pontos favoráveis",
+    redlines: "redlines",
+    compliance: "compliance",
+    open_points: "pontos abertos",
+};
+
+export type ParsedAnswer =
+    | { ok: true; value: Record<string, unknown>; missing: AnalysisSection[] }
+    | { ok: false; reason: "invalid_json" | "incomplete_answer" };
+
+/**
+ * The model's answer as an object, mending small syntax slips. When the text
+ * stops before its closing brace (the output cap), what is kept is what came
+ * whole: the section being written when it stopped loses its last item, which
+ * may be half there.
+ */
+function parseTolerant(raw: string): { value: Record<string, unknown>; cutOff: boolean } | null {
+    let value: unknown;
+    try {
+        value = parseModelJson(raw);
+    } catch {
+        const start = raw.indexOf("{");
+        if (start === -1) return null;
+        try {
+            value = JSON.parse(jsonrepair(raw.slice(start)));
+        } catch {
+            return null;
+        }
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const object = { ...(value as Record<string, unknown>) };
+    const cutOff = !/}\s*(```)?\s*$/.test(raw.trim());
+    if (cutOff) {
+        const last = Object.keys(object).pop();
+        if (last !== undefined) {
+            const tail = object[last];
+            if (Array.isArray(tail)) object[last] = tail.slice(0, -1);
+            else delete object[last];
+        }
+    }
+    return { value: object, cutOff };
+}
+
+const present = (value: Record<string, unknown>, section: AnalysisSection): boolean => {
+    const entry = value[section];
+    if (section === "executive_summary")
+        return !!entry && typeof entry === "object" && typeof (entry as { text?: unknown }).text === "string";
+    if (section === "compliance") return !!entry && typeof entry === "object" && !Array.isArray(entry);
+    return Array.isArray(entry);
+};
+
+/**
+ * The analysis from the model's answer. A whole answer passes; a cut-off one
+ * passes with the sections that came whole and the list of those that did not
+ * (a section cut mid-way counts as missing, so it can be asked again). Without
+ * the executive summary there is nothing worth keeping.
+ */
+export function parseAnalysisAnswer(raw: string): ParsedAnswer {
+    const parsed = parseTolerant(raw);
+    if (!parsed) return { ok: false, reason: "invalid_json" };
+    const { value, cutOff } = parsed;
+    if (!present(value, "executive_summary")) return { ok: false, reason: "incomplete_answer" };
+    const lastKey = cutOff ? Object.keys(value).pop() : undefined;
+    const missing = SECTIONS.filter((section) => !present(value, section) || section === lastKey);
+    return { ok: true, value, missing };
+}
+
+/** The sections asked for again, as an answer: only the keys requested, whole items only. */
+export function parseSectionsAnswer(raw: string, sections: AnalysisSection[]): Record<string, unknown> {
+    const parsed = parseTolerant(raw);
+    if (!parsed) return {};
+    const out: Record<string, unknown> = {};
+    for (const section of sections) if (present(parsed.value, section)) out[section] = parsed.value[section];
+    return out;
+}
+
+/** The second try after an answer that was not the analysis: the same task, much shorter. */
+export function analysisRetryPrompt(prompt: string): string {
+    return `${prompt}
+
+ATENÇÃO: a resposta anterior veio inválida. Responda de novo, só com o JSON completo e válido no formato acima, e BEM mais curto: no máximo 3 itens por seção, 1 frase em "rationale" e "why", trechos citados de até 150 caracteres.`;
+}
+
+/** The ask for the sections the first answer lacked: the same contract, only those keys, small. */
+export function analysisCompletionPrompt(prompt: string, missing: AnalysisSection[]): string {
+    return `${prompt}
+
+ATENÇÃO: as outras seções já estão prontas. Responda só JSON com ESTAS chaves e nenhuma outra: ${missing.join(", ")}. Mesmo formato acima, no máximo 4 itens por seção, 1 frase em "rationale" e "why", trechos citados de até 200 caracteres.`;
 }
 
 const text = (value: unknown, max: number): string =>

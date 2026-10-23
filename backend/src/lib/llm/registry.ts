@@ -208,6 +208,7 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
   const apiKey = optionalString(record, "apiKey");
   const apiKeyProvider = record.apiKeyProvider;
   const maxTokensField = record.maxTokensField;
+  const headers = parseHeaders(record.headers);
 
   if (
     !id ||
@@ -230,7 +231,8 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
       typeof record.replayReasoning !== "boolean") ||
     (maxTokensField !== undefined &&
       maxTokensField !== "max_tokens" &&
-      maxTokensField !== "max_completion_tokens")
+      maxTokensField !== "max_completion_tokens") ||
+    headers === null
   ) {
     return null;
   }
@@ -252,7 +254,39 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
       : {}),
     ...(maxTokensField ? { maxTokensField } : {}),
     ...(record.replayReasoning === true ? { replayReasoning: true } : {}),
+    ...(headers ? { headers } : {}),
   };
+}
+
+// Headers a deployment may not set: auth has its own fields, and the rest are
+// owned by the HTTP client.
+const RESERVED_HEADERS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "host",
+  "content-length",
+  "content-type",
+]);
+
+/** undefined when absent, null when present but unusable (rejects the model). */
+function parseHeaders(value: unknown): Record<string, string> | undefined | null {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const headers: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(value)) {
+    if (
+      !/^[A-Za-z0-9-]{1,100}$/.test(name) ||
+      RESERVED_HEADERS.has(name.toLowerCase()) ||
+      typeof headerValue !== "string" ||
+      headerValue.length > 1000 ||
+      /[\r\n]/.test(headerValue)
+    ) {
+      return null;
+    }
+    headers[name.toLowerCase()] = headerValue;
+  }
+  return Object.keys(headers).length ? headers : undefined;
 }
 
 function isCommitteeModel(value: unknown): value is CommitteeModel {

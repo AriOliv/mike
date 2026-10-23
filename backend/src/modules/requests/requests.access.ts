@@ -68,6 +68,8 @@ export type RequestRow = {
     paused_seconds: number;
     assignee_id: string | null;
     assigned_at: string | null;
+    /** How the owner was set: a rule, the triage agent's suggestion, or a person. */
+    assigned_by: string | null;
     summary: string | null;
     triage: Record<string, unknown> | null;
     delivery: Record<string, unknown> | null;
@@ -76,6 +78,10 @@ export type RequestRow = {
     intake: Record<string, unknown>;
     intake_completed_at: string | null;
     critical_alert_at: string | null;
+    counterparty_email: string | null;
+    term_start: string | null;
+    term_months: number | null;
+    terms_inferred: Record<string, unknown>;
     created_at: string;
     updated_at: string;
 };
@@ -84,8 +90,8 @@ export const REQUEST_COLUMNS =
     "id, number, org_id, project_id, requester_id, requester_email, requester_name, requester_area, " +
     "requester_area_source, kind, title, " +
     "counterparty, context, urgency, needed_by, due_at, status, paused_at, paused_seconds, " +
-    "assignee_id, assigned_at, summary, triage, delivery, delivered_at, source, intake, intake_completed_at, " +
-    "critical_alert_at, created_at, updated_at";
+    "assignee_id, assigned_at, assigned_by, summary, triage, delivery, delivered_at, source, intake, intake_completed_at, " +
+    "critical_alert_at, counterparty_email, term_start, term_months, terms_inferred, created_at, updated_at";
 
 const NOT_FOUND = failure("not_found", "Pedido não encontrado.");
 
