@@ -214,6 +214,17 @@ describe("IntakeChecklist por tipo", () => {
 });
 
 describe("RequestIntakeSection", () => {
+    it("keeps the type-changed notice until a saved answer comes back without it, with no new GET", async () => {
+        const changed = intake({ kind: "nda", kind_changed: { from: "revisao", to: "nda" }, total: 4 });
+        api.getRequestIntake.mockResolvedValue(changed);
+        api.answerRequestIntake.mockResolvedValue({ ...changed, kind_changed: null });
+        render(<RequestIntakeSection requestId="r1" audience="requester" />);
+        expect(await screen.findByText(/O tipo mudou de Revisar um contrato para NDA/)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+        await waitFor(() => expect(screen.queryByText(/O tipo mudou de/)).not.toBeInTheDocument());
+        expect(api.getRequestIntake).toHaveBeenCalledTimes(1);
+    });
+
     it("loads, saves, and says when the checklist closes", async () => {
         api.getRequestIntake.mockResolvedValue(intake());
         api.answerRequestIntake.mockResolvedValue(intake({ complete: true }));
