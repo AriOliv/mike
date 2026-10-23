@@ -6,8 +6,10 @@ import type { Db } from "../../lib/supabase";
 import type { DbJob } from "../../lib/dbq/types";
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import { NonRetryableJobError } from "../../lib/dbq/runner";
+import { getOrgRole } from "../../lib/access";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
 import { addToProject, createIssue, githubConfig, type GithubCall, githubCall } from "./feedback.github";
+import { namesVerdict, type NamesVerdict } from "./feedback.names";
 import { cleanRoute, redact } from "./feedback.redact";
 
 export const FEEDBACK_JOB = "feedback.issue";
@@ -80,13 +82,16 @@ export async function submitReport(
         if ((await recentCount(db, caller.userId, now)) >= HOURLY_LIMIT) {
             return failure("conflict", "Você já enviou vários relatos nesta hora. Tente de novo mais tarde.", "feedback_rate_limited");
         }
+        // The space comes from the request, so it is checked: a person who is not a member of the
+        // organization they name gets the report filed without it, never under someone else's.
+        const orgId = input.org_id && (await getOrgRole(caller.userId, input.org_id, db)) ? input.org_id : null;
         const body = redact(input.body);
         const expected = input.expected ? redact(input.expected) : null;
         const { data, error } = await db
             .from("feedback_reports")
             .insert({
                 user_id: caller.userId,
-                org_id: input.org_id,
+                org_id: orgId,
                 source: source.kind,
                 client: source.kind === "agent" ? source.client.slice(0, 80) : null,
                 kind: input.kind,
@@ -96,6 +101,8 @@ export async function submitReport(
                 app_version: input.app_version,
                 browser: input.browser,
                 role: input.role,
+                // The base's names stay in the cluster: only this verdict leaves, as a label on the issue.
+                names_verdict: await namesVerdict(db, orgId, caller.userId, [body.text, expected?.text ?? "", input.route ?? ""]),
             })
             .select("id, number")
             .single();
@@ -127,6 +134,7 @@ type ReportRow = {
     app_version: string | null;
     browser: string | null;
     role: string | null;
+    names_verdict: NamesVerdict | null;
     status: string;
 };
 
@@ -154,7 +162,14 @@ export function issueFor(r: ReportRow, orgSlug: string | null): { title: string;
     return {
         title: `[${label(r.number)}][${r.kind}] ${first}`,
         body: lines.join("\n"),
-        labels: [r.kind, r.source === "agent" ? "from-agent" : "from-app", "needs-triage", ...(orgSlug ? [`org:${orgSlug}`] : [])],
+        labels: [
+            r.kind,
+            r.source === "agent" ? "from-agent" : "from-app",
+            "needs-triage",
+            // A row without a verdict (older, or the check could not run) is sensitive: the safe side.
+            r.names_verdict === "names-clear" ? "names-clear" : "sensitive",
+            ...(orgSlug ? [`org:${orgSlug}`] : []),
+        ],
     };
 }
 

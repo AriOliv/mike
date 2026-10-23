@@ -1322,6 +1322,11 @@ create table if not exists public.feedback_reports (
   sent_at timestamptz
 );
 
+-- The verdict of the backend's check of the base's names (doc 13): only this leaves the cluster.
+alter table public.feedback_reports
+  add column if not exists names_verdict text
+    check (names_verdict is null or names_verdict in ('names-clear', 'sensitive'));
+
 create index if not exists idx_feedback_reports_user_created
   on public.feedback_reports(user_id, created_at desc);
 create index if not exists idx_feedback_reports_status
@@ -12134,5 +12139,6 @@ insert into public.schema_migrations (filename) values
   ('20261022_95_mcp_confirmations.sql'),
   ('20261022_97_card_events_cascade.sql'),
   ('20261023_93_cnpj_lookups.sql'),
-  ('20261023_96_feedback_reports.sql')
+  ('20261023_96_feedback_reports.sql'),
+  ('20261023_97_feedback_names_verdict.sql')
 on conflict (filename) do nothing;
