@@ -5445,6 +5445,8 @@ export interface AnalysisResult {
         term_termination_penalties: string;
     };
     open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro" }[];
+    /** Set when the model's answer was cut off and these sections could not be recovered. */
+    partial?: { missing: string[] };
 }
 export interface AnalystAnalysis {
     id: string;

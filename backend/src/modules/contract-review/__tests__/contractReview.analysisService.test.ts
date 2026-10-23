@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 import type { DbJob } from "../../../lib/dbq/types";
 
@@ -21,9 +21,10 @@ const contracts = vi.hoisted(() => ({
     finishAgentRun: vi.fn(async () => undefined),
 }));
 vi.mock("../../contracts/contracts.service", () => contracts);
-vi.mock("../../user/user.service", () => ({
-    getUserModelSettings: vi.fn(async () => ({ tabular_model: null, last_selected_chat_model: null, api_keys: {} })),
+const user = vi.hoisted(() => ({
+    getUserModelSettings: vi.fn(async () => ({ tabular_model: null as string | null, last_selected_chat_model: null, api_keys: {} })),
 }));
+vi.mock("../../user/user.service", () => user);
 
 import {
     ANALYSIS_READY_JOB,
@@ -34,6 +35,7 @@ import {
     markAnalystAnalysisFailed,
     startAnalystAnalysis,
 } from "../contractReview.service";
+
 import { DEFAULT_ANALYSIS_MODEL } from "../contractReview.analysisService";
 
 const caller = { userId: "u1", userEmail: "time@example.com" };
@@ -108,6 +110,133 @@ describe("startAnalystAnalysis", () => {
 });
 
 describe("handleAnalystAnalysis", () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+    const runScript = () =>
+        scriptedDb([
+            { table: "contract_analyses", data: row() },
+            { table: "contract_analyses", op: "update" }, // running
+            { table: "projects", data: { contract_type: null } },
+            { table: "contract_analyses", op: "update" }, // done or failed
+        ]);
+
+    it("runs on its own model: a profile set to Haiku for tabular reviews does not change it", async () => {
+        user.getUserModelSettings.mockResolvedValue({ tabular_model: "claude-haiku-5-5", last_selected_chat_model: null, api_keys: {} });
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        expect(llm.completeText).toHaveBeenCalledWith(expect.objectContaining({ model: DEFAULT_ANALYSIS_MODEL }));
+        expect(fake.calls[3].payload).toMatchObject({ status: "done", model: DEFAULT_ANALYSIS_MODEL });
+
+        vi.stubEnv("LEGAL_ANALYSIS_MODEL", " claude-opus-5-5 ");
+        llm.completeText.mockClear();
+        await handleAnalystAnalysis(runScript().db, job());
+        expect(llm.completeText).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-opus-5-5" }));
+        user.getUserModelSettings.mockResolvedValue({ tabular_model: null, last_selected_chat_model: null, api_keys: {} });
+    });
+
+    it("mends a small JSON slip without asking again", async () => {
+        llm.completeText.mockResolvedValueOnce(`${modelAnswer.slice(0, -1)},}`);
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        expect(llm.completeText).toHaveBeenCalledTimes(1);
+        expect(fake.calls[3].payload).toMatchObject({ status: "done" });
+    });
+
+    // A long fictitious answer cut where the output cap would stop it: whole
+    // critical and attention sections, then the favorable one half written.
+    const longCutOff = () => {
+        const item = (n: number) => ({ title: `Item ${n}`, quote: "pagará multa de 50% do valor total", clause: "cl. 5.1", rationale: "Texto ".repeat(200) });
+        const full = JSON.stringify({
+            executive_summary: { text: "Serviços.", object: "Serviços", parties: ["A", "B"], value: null },
+            critical: Array.from({ length: 6 }, (_, n) => item(n)),
+            attention: Array.from({ length: 6 }, (_, n) => item(n + 10)),
+            favorable: Array.from({ length: 4 }, (_, n) => item(n + 20)),
+            redlines: [], compliance: {}, open_points: [],
+        });
+        return full.slice(0, full.indexOf('"title":"Item 22"') + 12);
+    };
+
+    it("keeps a cut-off answer's whole items and asks only for the sections that are missing", async () => {
+        llm.completeText.mockResolvedValueOnce(longCutOff());
+        llm.completeText.mockResolvedValueOnce(
+            JSON.stringify({
+                favorable: [],
+                redlines: [{ clause: "cl. 5.1", from: "multa de 50% do valor total", to: "multa de 10% do saldo", why: "Proporção." }],
+                compliance: { data_protection: "ok", confidentiality: "", governing_law_forum: "", term_termination_penalties: "" },
+                open_points: [{ text: "Aprovação do founder.", depends_on: "founder" }],
+            }),
+        );
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        expect(llm.completeText).toHaveBeenCalledTimes(2);
+        const second = llm.completeText.mock.calls[1][0];
+        expect(second.maxTokens).toBeLessThan(16_000);
+        expect(second.user).toContain("favorable, redlines, compliance, open_points");
+        const done = fake.calls[3].payload as Record<string, any>;
+        expect(done.status).toBe("done");
+        expect(done.result.critical).toHaveLength(6);
+        expect(done.result.attention).toHaveLength(6);
+        expect(done.result.redlines).toHaveLength(1);
+        expect(done.result.partial).toBeUndefined();
+    });
+
+    it("marks the analysis partial when the missing sections do not come either", async () => {
+        llm.completeText.mockResolvedValueOnce(longCutOff());
+        llm.completeText.mockResolvedValueOnce("{ cortado");
+        const fake = runScript();
+        await handleAnalystAnalysis(fake.db, job());
+        const done = fake.calls[3].payload as Record<string, any>;
+        expect(done.status).toBe("done");
+        expect(done.result.critical).toHaveLength(6);
+        expect(done.result.partial.missing).toEqual(["favorable", "redlines", "compliance", "open_points"]);
+        expect(contracts.finishAgentRun).toHaveBeenCalledWith(
+            expect.anything(),
+            "run1",
+            expect.objectContaining({ status: "succeeded", output: expect.objectContaining({ partial: done.result.partial.missing }) }),
+        );
+    });
+
+    it("stops before a call once the analysis has spent its cap, and records why", async () => {
+        vi.stubEnv("LEGAL_ANALYSIS_MAX_COST_USD", "0.10");
+        llm.completeText.mockImplementation(async (params: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            params.onUsage?.({ inputTokens: 25_000, outputTokens: 16_000 });
+            return "Desculpe, não consigo.";
+        });
+        const fake = runScript();
+        await expect(handleAnalystAnalysis(fake.db, job(1))).rejects.toThrow("cost_cap");
+        expect(llm.completeText).toHaveBeenCalledTimes(1);
+        const failed = fake.calls[3].payload as Record<string, any>;
+        expect(failed).toMatchObject({ status: "failed", usage: { calls: 1, failure: "cost_cap" } });
+        expect(failed.error).toContain("teto de custo");
+        llm.completeText.mockReset();
+        llm.completeText.mockResolvedValue(modelAnswer);
+    });
+
+    it("fails for good after two bad answers, keeping the reason and what the calls spent", async () => {
+        llm.completeText.mockImplementation(async (params: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
+            params.onUsage?.({ inputTokens: 10_000, outputTokens: 2_000 });
+            return "Desculpe, não consigo.";
+        });
+        const fake = runScript();
+        await expect(handleAnalystAnalysis(fake.db, job(1))).rejects.toThrow("invalid_json");
+        expect(llm.completeText).toHaveBeenCalledTimes(2);
+        const failed = fake.calls[3].payload as Record<string, any>;
+        expect(failed).toMatchObject({
+            status: "failed",
+            model: DEFAULT_ANALYSIS_MODEL,
+            usage: { calls: 2, input_tokens: 20_000, output_tokens: 4_000, estimated_cost_usd: 0.12, estimated: false, failure: "invalid_json" },
+        });
+        expect(failed.error).toContain("incompleta duas vezes");
+        expect(contracts.finishAgentRun).toHaveBeenCalledWith(
+            expect.anything(),
+            "run1",
+            expect.objectContaining({ status: "failed", error: "invalid_json", tokensIn: 20_000, tokensOut: 4_000, costUsd: 0.12 }),
+        );
+        llm.completeText.mockReset();
+        llm.completeText.mockResolvedValue(modelAnswer);
+    });
+
     it("records the provider's token counts, not the character estimate, when it reports them", async () => {
         llm.completeText.mockImplementationOnce(async (params: { onUsage?: (u: { inputTokens: number; outputTokens: number }) => void }) => {
             params.onUsage?.({ inputTokens: 10_000, outputTokens: 2_000 });

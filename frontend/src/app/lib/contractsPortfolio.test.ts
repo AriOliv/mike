@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     brDate,
+    contractTypeLabel,
     daysUntil,
     fichaProgress,
     sortPortfolio,
@@ -64,5 +65,18 @@ describe("contractsPortfolio", () => {
         expect(brDate("2027-01-10")).toBe("10/01/2027");
         expect(brDate("2027-01-10T00:00:00Z")).toBe("10/01/2027");
         expect(brDate(null)).toBe("—");
+    });
+
+    it("names the contract type for a person, never the stored key", () => {
+        expect(contractTypeLabel("prestacao_servicos")).toBe("Prestação de serviços");
+        expect(contractTypeLabel("tratamento_dados")).toBe("Tratamento de dados");
+        expect(contractTypeLabel("nda")).toBe("NDA");
+        expect(contractTypeLabel(null)).toBe("—");
+        expect(contractTypeLabel("")).toBe("—");
+    });
+
+    it("falls back to readable words for a type it does not know", () => {
+        expect(contractTypeLabel("seguro_garantia")).toBe("Seguro garantia");
+        expect(contractTypeLabel("___")).toBe("—");
     });
 });
