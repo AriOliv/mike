@@ -19,6 +19,8 @@ export type DetailPanelProps = {
     fields: DetailField[];
     /** Buttons at the top, next to the close button. */
     actions?: ReactNode;
+    /** Pinned right under the title, above the fields: what needs the reader first. */
+    banner?: ReactNode;
     summary?: ReactNode;
     /** Extra content between the summary and the activity, e.g. the traffic light. */
     aside?: ReactNode;
@@ -36,6 +38,7 @@ export function DetailPanel({
     subtitle,
     fields,
     actions,
+    banner,
     summary,
     aside,
     activity,
@@ -75,6 +78,7 @@ export function DetailPanel({
             <div className="px-5 pb-6">
                 <h2 className="break-words font-serif text-xl text-gray-900">{title}</h2>
                 {subtitle ? <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p> : null}
+                {banner ? <div className="mt-4">{banner}</div> : null}
                 <dl className="mt-4 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-xs">
                     {fields.map((field) => (
                         <div key={field.label} className="contents">

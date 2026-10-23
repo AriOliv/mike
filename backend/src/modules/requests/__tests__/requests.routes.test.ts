@@ -58,6 +58,23 @@ describe("requests routes", () => {
         expect(service.createRequest).toHaveBeenLastCalledWith({}, caller, {});
     });
 
+    it("answers 422 with the field when a validation names one, so the form paints that field", async () => {
+        service.createRequest.mockResolvedValueOnce({
+            ok: false,
+            kind: "validation",
+            code: "field:counterparty_email",
+            detail: "Esse e-mail não parece certo. Confira e tente de novo.",
+        });
+        const bad = await request(app).post("/requests").send({ kind: "nda", counterparty_email: "x" }).expect(422);
+        expect(bad.body).toEqual({
+            detail: "Esse e-mail não parece certo. Confira e tente de novo.",
+            field: "counterparty_email",
+        });
+        // a validation without a field keeps its 400
+        service.createRequest.mockResolvedValueOnce({ ok: false, kind: "validation", code: "outro", detail: "Escolha o tipo de pedido." });
+        await request(app).post("/requests").send({}).expect(400);
+    });
+
     it("maps every action onto its service call and status", async () => {
         const view = okData({ id: "r" });
         service.whoAmI.mockResolvedValue(okData({ role: "head" }));

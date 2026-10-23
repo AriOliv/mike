@@ -50,8 +50,11 @@ import {
     type RequestStatus,
     type Urgency,
 } from "./requests.shared";
+import { parseTerms, termEnd, type Terms } from "./requests.terms";
+import { buildStrip, loadStageHistory, syncStage, type StageRow, type StageStrip } from "./requests.stages";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
 import { loadTemplate, queueIntakePrefill } from "./requests.checklist";
+import { applyAssignmentRules } from "./requests.rules";
 import { applyAnswers, intakeStatus } from "./requests.intake";
 
 export const TRIAGE_JOB_KIND = "request.triage";
@@ -74,6 +77,11 @@ export type CreateRequestInput = {
     source?: unknown;
     /** Checklist answers given with the request: {key: value | {value, detail}}. */
     intake?: unknown;
+    /** The other party's e-mail: only kept (for the validation by link), never mailed. */
+    counterparty_email?: unknown;
+    /** When the contract starts (YYYY-MM-DD) and for how many months; the end is computed. */
+    term_start?: unknown;
+    term_months?: unknown;
     idempotency_key?: unknown;
 };
 
@@ -118,6 +126,17 @@ export type RequestTeamView = RequestPublicView & {
     intake_completed_at: string | null;
     /** The analysis found a critical risk and the Head was alerted. */
     critical_alert_at: string | null;
+    /** What the form asked about the contract. The end is computed; the e-mail is only kept, never mailed. */
+    terms: {
+        counterparty_email: string | null;
+        term_start: string | null;
+        term_months: number | null;
+        term_end: string | null;
+    };
+    /** The spine: current stage, who holds the ball and since when, and the strip. */
+    stage: StageStrip;
+    /** The stages it went through, oldest first; the open one is the current stage. */
+    stages: StageRow[];
 };
 
 export type RequestMessage = {
@@ -161,8 +180,9 @@ function validateCreate(input: CreateRequestInput):
           urgency: Urgency;
           neededBy: string | null;
           documentIds: string[];
+          terms: Terms;
       }
-    | { ok: false; detail: string } {
+    | { ok: false; detail: string; field?: string } {
     const kind = REQUEST_KINDS.includes(input.kind as RequestKind) ? (input.kind as RequestKind) : null;
     if (!kind) return { ok: false, detail: "Escolha o tipo de pedido." };
     const context = cleanText(input.context, 8000) ?? "";
@@ -188,7 +208,19 @@ function validateCreate(input: CreateRequestInput):
     if (documentIds.length > MAX_ATTACHMENTS) {
         return { ok: false, detail: `Anexe no máximo ${MAX_ATTACHMENTS} arquivos.` };
     }
-    return { ok: true, kind, title, counterparty, context, urgency, neededBy, documentIds };
+    const terms = parseTerms(input);
+    if (!terms.ok) return { ok: false, detail: terms.detail, field: terms.field };
+    return {
+        ok: true,
+        kind,
+        title,
+        counterparty,
+        context,
+        urgency,
+        neededBy,
+        documentIds,
+        terms: { counterpartyEmail: terms.counterpartyEmail, termStart: terms.termStart, termMonths: terms.termMonths },
+    };
 }
 
 /**
@@ -281,7 +313,7 @@ export async function createRequest(
     const requesterEmail = normalizeEmail(caller.userEmail);
     if (!requesterEmail) return failure("validation", "Sua conta não tem e-mail.");
     const valid = validateCreate(input);
-    if (!valid.ok) return failure("validation", valid.detail);
+    if (!valid.ok) return failure("validation", valid.detail, valid.field ? `field:${valid.field}` : undefined);
 
     let team;
     try {
@@ -366,6 +398,9 @@ export async function createRequest(
             urgency: valid.urgency,
             needed_by: valid.neededBy,
             due_at: dueAt.toISOString(),
+            counterparty_email: valid.terms.counterpartyEmail,
+            term_start: valid.terms.termStart,
+            term_months: valid.terms.termMonths,
             source: sourceOf(input.source),
             idempotency_key: idempotencyKey,
         })
@@ -377,6 +412,7 @@ export async function createRequest(
         return internalFailure(insertError);
     }
     const row = created as unknown as RequestRow;
+    await syncStage(db, row, "pedido recebido");
 
     let attached = 0;
     try {
@@ -408,6 +444,8 @@ export async function createRequest(
             payload: { due: dueAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) },
         },
     ]);
+    // Fixed rules first: they name the owner without a model. The triage still runs and suggests the rest.
+    await applyAssignmentRules(db, row);
     try {
         await enqueueDbJob(db, {
             kind: TRIAGE_JOB_KIND,
@@ -553,8 +591,14 @@ async function buildView(
         .eq("request_id", row.id)
         .order("created_at", { ascending: true });
     if (error) throw error;
+    // The history follows the request: a card moved on the board, or a request
+    // older than the history, is recorded the first time anyone looks.
+    const current = await syncStage(db, row);
+    const stages = await loadStageHistory(db, row.id);
     return {
         ...base,
+        stage: buildStrip(current.stage, current.owner, stages),
+        stages,
         number: row.number,
         project_id: row.project_id,
         lane,
@@ -565,6 +609,12 @@ async function buildView(
         can_decide: isHead(audience),
         intake_completed_at: row.intake_completed_at,
         critical_alert_at: row.critical_alert_at,
+        terms: {
+            counterparty_email: row.counterparty_email,
+            term_start: row.term_start,
+            term_months: row.term_months,
+            term_end: termEnd(row.term_start, row.term_months),
+        },
     };
 }
 
@@ -822,6 +872,7 @@ export async function assignRequest(
     const updated = await updateRow(db, row.id, {
         assignee_id: assigneeId,
         assigned_at: assigneeId ? new Date().toISOString() : null,
+        assigned_by: assigneeId ? "person" : null,
         status,
     });
     if (!updated.ok) return updated;
@@ -850,6 +901,7 @@ export async function assignRequest(
             after: member ? { id: member.user_id, name: member.name } : null,
         });
     }
+    await syncStage(db, { ...row, ...updated.data }, member ? "responsável definido" : "responsável retirado");
     if (member) {
         await queueNotifications(db, [
             {
@@ -1113,6 +1165,7 @@ export async function deliverRequest(
         delivery: { message, document_ids: documentIds, delivered_by: caller.userId },
     });
     if (!updated.ok) return updated;
+    await syncStage(db, updated.data, "devolutiva enviada");
     if (row.project_id) {
         await db
             .from("projects")
