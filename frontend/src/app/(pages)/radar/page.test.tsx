@@ -212,6 +212,11 @@ describe("Radar page", () => {
         expect(screen.getByText(/^Próximos 30 dias · 2$/)).toBeInTheDocument();
         expect(screen.getByText(/^31 a 90 dias · 1$/)).toBeInTheDocument();
         expect(screen.getByText(/^Mais adiante · 1$/)).toBeInTheDocument();
+        // The date reads dd/mm/aaaa like the rest of the app, not the stored ISO.
+        const iso = day(-2);
+        const [y, m, d] = iso.split("-");
+        expect(screen.getByText(`${d}/${m}/${y}`)).toBeInTheDocument();
+        expect(screen.queryByText(iso)).not.toBeInTheDocument();
         expect(screen.getAllByText("crítico").length).toBeGreaterThan(0);
         expect(screen.getByText("tarefa")).toBeInTheDocument();
         expect(screen.getByText("recorrente")).toBeInTheDocument();

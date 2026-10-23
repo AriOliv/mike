@@ -195,6 +195,85 @@ describe("ContractReviewWorkspace", () => {
         await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" }));
     });
 
+    it("sends every decision made in quick succession, each after its own undo window", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        // A server that remembers what it was sent, as the real one does: the review it
+        // returns on a refresh carries every decision recorded so far.
+        const stored = new Map<string, ReviewClause["decision"]>();
+        const three = {
+            ...REVIEW,
+            clauses: [clause("a", "diverge"), clause("b", "diverge"), clause("c", "precisa_revisao")],
+        };
+        api.getContractReview.mockImplementation(async () => ({
+            ...three,
+            clauses: three.clauses.map((c) => (stored.has(c.id) ? { ...c, decision: stored.get(c.id)! } : c)),
+        }));
+        api.decideReviewClause.mockImplementation(async (_p: string, _r: string, clauseId: string, input: { decision: string }) => {
+            const decision = { decision: input.decision, edited_text: null, reason: null, decided_by: "você", decided_at: "t" } as ReviewClause["decision"];
+            stored.set(clauseId, decision);
+            return { decision, edit: null };
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        const cards = await screen.findAllByRole("article");
+        expect(cards).toHaveLength(3);
+        // Three clicks back to back, as a person working through the list does.
+        for (const card of cards) fireEvent.click(within(card).getByRole("button", { name: /Aceitar/ }));
+        expect(api.decideReviewClause).not.toHaveBeenCalled();
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(3));
+        expect(api.decideReviewClause.mock.calls.map((c) => c[2]).sort()).toEqual(["a", "b", "c"]);
+        // And the screen agrees with the server: all three are decided, none sprang back.
+        await waitFor(() => expect(screen.getAllByRole("button", { name: "Reabrir: Aceito" })).toHaveLength(3));
+        expect(screen.getByRole("status")).toHaveTextContent("Tudo tratado");
+    });
+
+    it("keeps every decision when they are made one after another while the server is slow", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const stored = new Map<string, ReviewClause["decision"]>();
+        const three = {
+            ...REVIEW,
+            clauses: [clause("a", "diverge"), clause("b", "diverge"), clause("c", "precisa_revisao")],
+        };
+        const slow = () => new Promise((resolve) => setTimeout(resolve, 3_000));
+        api.getContractReview.mockImplementation(async () => {
+            const snapshot = three.clauses.map((c) => (stored.has(c.id) ? { ...c, decision: stored.get(c.id)! } : c));
+            await slow();
+            return { ...three, clauses: snapshot };
+        });
+        api.decideReviewClause.mockImplementation(async (_p: string, _r: string, clauseId: string, input: { decision: string }) => {
+            await slow();
+            const decision = { decision: input.decision, edited_text: null, reason: null, decided_by: "você", decided_at: "t" } as ReviewClause["decision"];
+            stored.set(clauseId, decision);
+            return { decision, edit: null };
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        for (let i = 0; i < 4; i += 1) {
+            await act(async () => {
+                vi.advanceTimersByTime(3_000);
+            });
+        }
+        const cards = await screen.findAllByRole("article");
+        // The first, then a pause longer than the undo window's start, then the next two.
+        fireEvent.click(within(cards[0]).getByRole("button", { name: /Aceitar/ }));
+        await act(async () => {
+            vi.advanceTimersByTime(4_000);
+        });
+        fireEvent.click(within(screen.getAllByRole("article")[1]).getByRole("button", { name: /Aceitar/ }));
+        await act(async () => {
+            vi.advanceTimersByTime(4_000);
+        });
+        fireEvent.click(within(screen.getAllByRole("article")[2]).getByRole("button", { name: /Aceitar/ }));
+        for (let i = 0; i < 12; i += 1) {
+            await act(async () => {
+                vi.advanceTimersByTime(3_000);
+            });
+        }
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(3));
+        await waitFor(() => expect(screen.getAllByRole("button", { name: "Reabrir: Aceito" })).toHaveLength(3));
+    });
+
     it("says how many attention points are left, and points to the export when none is", async () => {
         render(<ContractReviewWorkspace {...props()} />);
         const status = await screen.findByRole("status");

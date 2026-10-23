@@ -761,9 +761,10 @@ export function ContractReviewWorkspace({
                                 : `Falta${progress.left === 1 ? "" : "m"} ${progress.left} de ${plural(progress.total, "ponto de atenção", "pontos de atenção")}`}
                         </span>
                         {progress.left === 0 && (
-                            <TextButtonUI size="xs" onClick={exportDocx} disabled={!review.document.id}>
+                            <PillButtonUI tone="black" size="xs" onClick={exportDocx} disabled={!review.document.id}>
+                                <Download aria-hidden="true" className="h-3 w-3" />
                                 Exportar .docx
-                            </TextButtonUI>
+                            </PillButtonUI>
                         )}
                     </div>
                     <div
