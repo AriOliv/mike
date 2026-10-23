@@ -288,6 +288,147 @@ describe("ContractReviewWorkspace", () => {
         expect(within(screen.getByRole("status")).getByRole("button", { name: "Exportar .docx" })).toBeEnabled();
     });
 
+    it("takes two clicks on Aceitar for one decision, not two", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        const accept = within(foro).getByRole("button", { name: /Aceitar/ });
+        // Both clicks in one batch, so the card has not been redrawn as decided between them.
+        act(() => {
+            accept.click();
+            accept.click();
+        });
+        expect(toasts.showToast).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(1));
+        expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" });
+    });
+
+    it("hands the next point the focus, and leaves the decided card without a decision button", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        api.getContractReview.mockResolvedValue({
+            ...REVIEW,
+            clauses: [clause("a", "diverge"), clause("b", "diverge")],
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        const [first] = await screen.findAllByRole("article");
+        fireEvent.click(within(first).getByRole("button", { name: /Aceitar/ }));
+        const decided = (await screen.findAllByRole("article"))[0];
+        expect(within(decided).queryByRole("button", { name: /^Aceitar/ })).not.toBeInTheDocument();
+        expect(within(decided).getByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
+    });
+
+    it("offers Tentar de novo when the server refuses a decision, and sends the same one again", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const decided = { decision: "aceito" as const, edited_text: null, reason: null, decided_by: "você", decided_at: "t" };
+        let recorded = false;
+        // As the real server: once the decision is recorded, the review carries it.
+        api.getContractReview.mockImplementation(async () => ({
+            ...REVIEW,
+            clauses: REVIEW.clauses.map((c) => (recorded && c.id === "foro" ? { ...c, decision: decided } : c)),
+        }));
+        api.decideReviewClause
+            .mockRejectedValueOnce(Object.assign(new Error("O documento mudou desde a revisão."), { status: 409 }))
+            .mockImplementation(async () => {
+                recorded = true;
+                return { decision: decided, edit: null };
+            });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(errors.notifyError).toHaveBeenCalledTimes(1));
+        const [, options] = errors.notifyError.mock.calls[0];
+        expect(options).toMatchObject({ lang: "pt", action: "registrar a decisão" });
+        expect(typeof options.onRetry).toBe("function");
+        // The card is back to open (nothing was recorded), and Tentar de novo sends it again.
+        expect(within((await screen.findAllByRole("article"))[0]).getByRole("button", { name: /Aceitar/ })).toBeInTheDocument();
+        await act(async () => {
+            await options.onRetry();
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(2));
+        expect(api.decideReviewClause).toHaveBeenLastCalledWith("p1", "run-1", "foro", { decision: "aceito" });
+        expect(await screen.findByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
+    });
+
+    it("tells the person what happened to the document under an accepted point", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        const decided = (await screen.findAllByRole("article"))[0];
+        expect(within(decided).getByText("Mantida como alteração rastreada para a contraparte.")).toBeInTheDocument();
+    });
+
+    describe("leaving the page inside the undo window", () => {
+        async function decideOne() {
+            vi.useFakeTimers({ shouldAdvanceTime: true });
+            render(<ContractReviewWorkspace {...props()} />);
+            const foro = (await screen.findAllByRole("article"))[0];
+            fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+            await screen.findByRole("button", { name: "Reabrir: Aceito" });
+            expect(api.decideReviewClause).not.toHaveBeenCalled();
+        }
+
+        it("sends the pending decision at once on pagehide, with keepalive", async () => {
+            await decideOne();
+            act(() => {
+                window.dispatchEvent(new Event("pagehide"));
+            });
+            expect(api.decideReviewClause).toHaveBeenCalledTimes(1);
+            expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" }, { keepalive: true });
+            // The timer is gone: the undo window ending later does not send it again.
+            await act(async () => {
+                vi.advanceTimersByTime(10_000);
+            });
+            expect(api.decideReviewClause).toHaveBeenCalledTimes(1);
+        });
+
+        it("sends it when the tab is hidden, but not while it is visible", async () => {
+            await decideOne();
+            act(() => {
+                document.dispatchEvent(new Event("visibilitychange"));
+            });
+            expect(api.decideReviewClause).not.toHaveBeenCalled();
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+            try {
+                act(() => {
+                    document.dispatchEvent(new Event("visibilitychange"));
+                });
+                expect(api.decideReviewClause).toHaveBeenCalledTimes(1);
+                expect(api.decideReviewClause.mock.calls[0][4]).toEqual({ keepalive: true });
+            } finally {
+                Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+            }
+        });
+
+        it("asks before leaving while a decision is waiting, and not otherwise", async () => {
+            vi.useFakeTimers({ shouldAdvanceTime: true });
+            render(<ContractReviewWorkspace {...props()} />);
+            const foro = (await screen.findAllByRole("article"))[0];
+            const quiet = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(quiet);
+            expect(quiet.defaultPrevented).toBe(false);
+            fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+            await screen.findByRole("button", { name: "Reabrir: Aceito" });
+            const waiting = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(waiting);
+            expect(waiting.defaultPrevented).toBe(true);
+            // After the undo window the decision is sent, and leaving is free again.
+            await act(async () => {
+                vi.advanceTimersByTime(10_000);
+            });
+            await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(1));
+            const after = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(after);
+            expect(after.defaultPrevented).toBe(false);
+        });
+    });
+
     it("undoes a decision from the toast without touching the document", async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
         render(<ContractReviewWorkspace {...props()} />);

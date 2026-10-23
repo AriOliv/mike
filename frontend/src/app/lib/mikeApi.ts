@@ -5265,7 +5265,29 @@ export interface Obligation {
     owner_email: string | null;
     /** Days before the due date when the warning starts. */
     alert_days: number;
+    /** What the deadline is: the end of the term, the notice, the decision, or one entered by hand. */
+    kind: ObligationKind;
+    /** Where it stands; `done` follows it (feito and dispensado are done). */
+    status: ObligationStatus;
     projects?: { name: string; counterparty: string | null; lane: string | null } | null;
+}
+
+export type ObligationKind = "vigencia" | "aviso_previo" | "renovacao" | "manual";
+export type ObligationStatus = "aberto" | "feito" | "dispensado";
+
+/** A deadline of one contract, with the days left (negative = overdue). */
+export interface ContractAlert extends Obligation {
+    days_left: number;
+}
+
+export async function getContractAlerts(projectId: string): Promise<ContractAlert[]> {
+    return apiRequest(`/projects/${encodeURIComponent(projectId)}/alerts`);
+}
+
+/** One deadline as a calendar file, for "criar evento". */
+export async function downloadObligationIcs(id: string): Promise<{ blob: Blob; filename: string }> {
+    const file = await apiBlobRequest(`/obligations/${encodeURIComponent(id)}/ics`);
+    return { blob: file.blob, filename: file.filename ?? "prazo.ics" };
 }
 
 /** A deadline whose warning window is open for the caller; negative = overdue. */
@@ -5327,6 +5349,7 @@ export async function updateObligation(
         note?: string | null;
         owner_email?: string | null;
         alert_days?: number;
+        status?: ObligationStatus;
     },
 ): Promise<Obligation> {
     return apiRequest(`/obligations/${id}`, {
@@ -5460,6 +5483,8 @@ export async function decideReviewClause(
     runId: string,
     findingId: string,
     input: { decision: "aceito" | "editado" | "rejeitado" | "desfeito"; edited_text?: string; reason?: string },
+    /** Leaving the page: the browser finishes the request after the tab is gone. */
+    options: { keepalive?: boolean } = {},
 ): Promise<{ decision: ReviewDecision | null; edit: EditAnnotation | null }> {
     return apiRequest(
         contractReviewPath(
@@ -5470,6 +5495,7 @@ export async function decideReviewClause(
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(input),
+            ...(options.keepalive ? { keepalive: true } : {}),
         },
     );
 }
@@ -5610,6 +5636,8 @@ export interface ContractPortfolioRow {
     verified: number;
     total: number;
     risk: "critico" | "atencao" | "ok" | null;
+    /** Who holds the contract's request, by name. */
+    assignee: string | null;
 }
 
 export interface ContractPortfolio {
@@ -6056,7 +6084,8 @@ export type McpScope =
     | "painel:read"
     | "pedidos:read"
     | "pedidos:write"
-    | "agente:config";
+    | "agente:config"
+    | "feedback:write";
 
 export interface McpAccessToken {
     id: string;
@@ -6115,4 +6144,31 @@ export interface CnpjRecord {
 /** The company record from the Receita's public data; off (404-like `cnpj_disabled`) until the server switches it on. */
 export async function lookupCnpj(cnpj: string): Promise<CnpjRecord> {
     return apiRequest(`/cnpj/${encodeURIComponent(cnpj.replace(/\D/g, ""))}`);
+}
+
+// ── Algo errado? Conte (feedback no app, doc 13) ────────────────────────────
+
+export interface FeedbackReceipt {
+    number: number;
+    /** "REL-0042": the number the person is given. */
+    label: string;
+    redacted: boolean;
+}
+
+/** Whether the server has the feedback feature on; the entry points hide when not. */
+export async function getFeedbackStatus(): Promise<{ enabled: boolean }> {
+    return apiRequest("/feedback/status");
+}
+
+export async function sendFeedback(body: {
+    kind: "bug" | "feature";
+    body: string;
+    expected?: string;
+    route?: string;
+    app_version?: string;
+    browser?: string;
+    org_id?: string | null;
+    role?: string | null;
+}): Promise<FeedbackReceipt> {
+    return apiRequest("/feedback", jsonInit("POST", body));
 }

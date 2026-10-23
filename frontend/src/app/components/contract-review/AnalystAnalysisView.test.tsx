@@ -92,6 +92,46 @@ describe("AnalystAnalysisView", () => {
         expect(await within(redlines).findByText(/Aceito/)).toBeInTheDocument();
     });
 
+    describe("when the server refuses a decision with a 409", () => {
+        function refuse(code: string) {
+            api.decideAnalysisRedline.mockRejectedValue(Object.assign(new Error("frase do servidor"), { code, status: 409 }));
+        }
+        async function accept(onLocate?: (quote: string) => void) {
+            render(<AnalystAnalysisView projectId="p1" analysis={done} canDecide onLocate={onLocate} />);
+            const redlines = screen.getByRole("region", { name: "Sugestões de redline" });
+            fireEvent.click(within(redlines).getByRole("button", { name: /Aceitar/ }));
+            await waitFor(() => expect(errors.notifyError).toHaveBeenCalled());
+            return errors.notifyError.mock.calls[0][1] as { actions?: { label: string; onClick: () => void }[]; onRetry?: () => void };
+        }
+
+        it("offers a new analysis when the clause changed", async () => {
+            refuse("analysis_text_changed");
+            api.startAnalystAnalysis.mockResolvedValue({ analysis_id: "a2", queued: true });
+            const options = await accept();
+            expect(options.actions?.map((a) => a.label)).toEqual(["Pedir nova análise"]);
+            options.actions![0].onClick();
+            await waitFor(() => expect(api.startAnalystAnalysis).toHaveBeenCalledWith("p1"));
+        });
+
+        it("takes the person to the clause when it appears more than once", async () => {
+            refuse("analysis_text_ambiguous");
+            const onLocate = vi.fn();
+            const options = await accept(onLocate);
+            expect(options.actions?.map((a) => a.label)).toEqual(["Ver na revisão"]);
+            options.actions![0].onClick();
+            expect(onLocate).toHaveBeenCalled();
+        });
+
+        it("lets the person send the decision again when the contract was busy", async () => {
+            refuse("document_busy");
+            const options = await accept();
+            expect(options.actions).toBeUndefined();
+            api.decideAnalysisRedline.mockClear();
+            options.onRetry!();
+            await waitFor(() => expect(api.decideAnalysisRedline).toHaveBeenCalledTimes(1));
+        });
+    });
+
     it("reads the redlines without deciding for someone who cannot edit", () => {
         render(<AnalystAnalysisView projectId="p1" analysis={done} />);
         const redlines = screen.getByRole("region", { name: "Sugestões de redline" });

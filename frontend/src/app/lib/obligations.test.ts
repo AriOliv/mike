@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALERT_DAY_CHOICES, alertLabel, daysUntil, dueLabel, ownerLabel, parseAlertDays } from "./obligations";
+import { ALERT_DAY_CHOICES, alertLabel, KIND_LABEL, sortAlerts, STATUS_LABEL, daysUntil, dueLabel, ownerLabel, parseAlertDays } from "./obligations";
 
 describe("obligation helpers", () => {
     it("counts days from today, midnight to midnight", () => {
@@ -39,5 +39,27 @@ describe("obligation helpers", () => {
         expect(parseAlertDays("0")).toBe(0);
         expect(parseAlertDays(" 365 ")).toBe(365);
         for (const bad of ["", "366", "-1", "1.5", "abc", "1000"]) expect(parseAlertDays(bad)).toBeNull();
+    });
+
+    it("names each kind of deadline and each status in Portuguese", () => {
+        expect(KIND_LABEL).toEqual({
+            vigencia: "Fim da vigência",
+            aviso_previo: "Aviso prévio",
+            renovacao: "Decisão de renovação",
+            manual: "Prazo",
+        });
+        expect(STATUS_LABEL).toEqual({ aberto: "Aberto", feito: "Feito", dispensado: "Dispensado" });
+    });
+
+    it("sorts open deadlines first, then the closed ones, each by date, without touching the input", () => {
+        const input = [
+            { id: "a", status: "feito", due_date: "2026-11-01" },
+            { id: "b", status: "aberto", due_date: "2026-12-01" },
+            { id: "c", status: "dispensado", due_date: "2026-10-01" },
+            { id: "d", status: "aberto", due_date: "2026-11-15" },
+        ] as const;
+        const copy = [...input];
+        expect(sortAlerts([...input]).map((x) => x.id)).toEqual(["d", "b", "c", "a"]);
+        expect([...input]).toEqual(copy);
     });
 });

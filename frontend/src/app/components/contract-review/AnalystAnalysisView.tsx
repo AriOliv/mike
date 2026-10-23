@@ -174,7 +174,19 @@ export function AnalystAnalysisView({
             setDecisions((current) => new Map(current).set(redline.id, decided));
             if (input.decision !== "rejeitado") onChanged?.();
         } catch (error) {
-            notifyError(error, { lang: "pt", action: "decidir a sugestão" });
+            const code = (error as { code?: unknown } | null)?.code;
+            // The server's own sentence says what happened; the button is the way out.
+            if (code === "analysis_text_changed") {
+                notifyError(error, { lang: "pt", action: "decidir a sugestão", actions: [{ label: "Pedir nova análise", onClick: () => void start() }] });
+            } else if (code === "analysis_text_ambiguous" && onLocate) {
+                notifyError(error, { lang: "pt", action: "decidir a sugestão", actions: [{ label: "Ver na revisão", onClick: () => onLocate(redline.from) }] });
+            } else {
+                notifyError(error, {
+                    lang: "pt",
+                    action: "decidir a sugestão",
+                    ...(code === "document_busy" ? { onRetry: () => decide(redline, input) } : {}),
+                });
+            }
         } finally {
             setBusy(null);
         }
