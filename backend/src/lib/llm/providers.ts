@@ -49,6 +49,7 @@ import type {
   ReasoningLevel,
   StreamChatParams,
   StreamChatResult,
+  TokenUsage,
   UserApiKeys,
 } from "./types";
 import { REASONING_LEVELS } from "./types";
@@ -71,6 +72,7 @@ type CompleteProviderParams = {
   maxTokens?: number;
   abortSignal?: AbortSignal;
   apiKeys?: UserApiKeys;
+  onUsage?: (usage: TokenUsage) => void;
 };
 
 type RouterProvider = Extract<
@@ -503,6 +505,7 @@ async function createConfiguredAdapter(
     baseURL: configured.baseUrl,
     // Omit Authorization entirely for endpoints declared without auth.
     ...(apiKey ? { apiKey } : {}),
+    ...(configured.headers ? { headers: configured.headers } : {}),
     ...(configured.maxTokensField === "max_completion_tokens"
       ? {
           transformRequestBody: (body: Record<string, unknown>) => {

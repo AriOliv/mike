@@ -43,6 +43,7 @@ export {
 export {
     handleNotionSync,
     enqueueDueNotionSyncs,
+    notionSyncEnabled,
     getNotionSyncStatus,
     setNotionSyncEnabled,
     syncNotionNow,

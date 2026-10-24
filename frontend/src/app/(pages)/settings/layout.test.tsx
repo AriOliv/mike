@@ -39,11 +39,11 @@ describe("SettingsLayout", () => {
             </SettingsLayout>,
         );
 
-        const memoryTab = screen.getByRole("button", { name: "Memory" });
+        const memoryTab = screen.getByRole("button", { name: "Memória" });
         expect(memoryTab).toHaveAttribute("aria-current", "page");
         expect(screen.getByText("Memory content")).toBeVisible();
 
-        await user.click(screen.getByRole("button", { name: "Features" }));
+        await user.click(screen.getByRole("button", { name: "Recursos" }));
         expect(push).toHaveBeenCalledWith("/settings/features");
     });
 
@@ -88,11 +88,11 @@ describe("SettingsLayout", () => {
         );
 
         const organizations = await screen.findByRole("button", {
-            name: /Organizations/,
+            name: /Organizações/,
         });
         await waitFor(() =>
             expect(organizations).toHaveAccessibleName(
-                "Organizations 2 pending invitations",
+                "Organizações 2 convites pendentes",
             ),
         );
         await user.click(organizations);

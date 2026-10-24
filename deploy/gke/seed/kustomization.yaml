@@ -1,0 +1,9 @@
+# Synthetic seed as a reusable component (staging and per-PR previews).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - seed-job.yaml
+configMapGenerator:
+  - name: seed-sql
+    files:
+      - seed.sql

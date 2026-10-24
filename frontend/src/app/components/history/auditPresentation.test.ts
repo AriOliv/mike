@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent } from "@/app/lib/mikeApi";
+import { HISTORY_APPLICATION_ICONS } from "./HistoryApplicationIcon";
+import { SURFACE_LABELS } from "./auditPresentation";
 import {
   auditAction,
   auditActor,
@@ -161,5 +163,22 @@ describe("audit event presentation", () => {
         timeZoneName: "short",
       }),
     );
+  });
+
+  it("tells, in Portuguese, what an agent did in the person's name over MCP", () => {
+    const call = {
+      ...event,
+      action: "mcp.tool",
+      title: "mike_contratos_ficha",
+      surface: "mcp",
+      detail: { client: "claude-code", tool: "mike_contratos_ficha", ok: true },
+    };
+    expect(auditAction(call)).toBe("Agente consultou o Mike");
+    expect(SURFACE_LABELS.mcp).toBe("Agente (MCP)");
+    expect(HISTORY_APPLICATION_ICONS.mcp).toBeTruthy();
+    expect(auditSummary(call, true)).toBe("Claude Code leu a Ficha de um contrato em seu nome.");
+    expect(auditSummary(call, false)).toBe("Claude Code leu a Ficha de um contrato em nome de Alex Chen.");
+    expect(auditSummary({ ...call, title: "mike_nova", detail: {} }, true)).toBe("Um agente consultou o Mike em seu nome.");
+    expect(auditAction({ ...call, action: "mcp.read" })).toBe("Agente leu um contrato");
   });
 });

@@ -10,6 +10,7 @@ import { wordChatRouter } from "./modules/word-chat/wordChat.routes";
 import { projectsRouter } from "./modules/projects/projects.routes";
 import { orgsRouter } from "./modules/orgs/orgs.routes";
 import { notionIntegrationRouter } from "./modules/integrations-notion/notionSync.routes";
+import { chatLinksRouter, legalAgentRouter } from "./modules/legal-agent/legalAgent.routes";
 import { projectChatRouter } from "./modules/project-chat/projectChat.routes";
 import { documentsRouter } from "./modules/documents/documents.routes";
 import { libraryRouter } from "./modules/library/library.routes";
@@ -43,8 +44,11 @@ import {
   projectContractRouter,
   watchedFoldersRouter,
 } from "./modules/contracts/contracts.routes";
+import { feedbackRouter } from "./modules/feedback/feedback.routes";
+import { cnpjRouter } from "./modules/cnpj/cnpj.routes";
 import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
+import { buildOAuthRouter, mcpConsentRouter, mcpRouter, mcpTokensRouter } from "./modules/mcp/mcp.routes";
 import { requestsRouter } from "./modules/requests/requests.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
@@ -100,6 +104,10 @@ function makeLimiter(options: {
 // tool-deadline stall per call inside a held SSE stream.
 const TOOL_RESULT_PATH = "/word-chat/tool-result";
 
+// The MCP server agents call (doc 09). Mounted at the root, not under /api:
+// the preview's load balancer sends it straight to this process.
+const MCP_PATH = "/mcp";
+
 // Path prefix of the filesystem driver's signed blob PUT, used both to give it
 // its own rate-limit lane and to keep it out of the shared one.
 const BLOB_UPLOAD_PREFIX = "/download/signed/";
@@ -110,6 +118,11 @@ const generalLimiter = makeLimiter({
   // Upload status polling has its own authenticated per-user limiter. Keep it
   // and the dedicated Word tool-result lane out of the shared IP budget.
   skip: (req) =>
+    // Agents on /mcp are limited per access token inside the MCP module; the
+    // OAuth endpoints carry the SDK's own per-endpoint limits.
+    req.path === MCP_PATH ||
+    req.path.startsWith("/oauth/") ||
+    req.path.startsWith("/.well-known/oauth-") ||
     req.path === TOOL_RESULT_PATH ||
     req.path === "/upload-sessions" ||
     req.path.startsWith("/upload-sessions/") ||
@@ -344,6 +357,16 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 // no body parser may consume it first — a .json upload otherwise would be.
 app.put("/download/signed/:token", blobUploadLimiter, blobUploadHandler);
 
+// Agents send JSON-RPC calls, never documents: 1 MB is plenty and keeps a
+// token-holder from posting 50 MB bodies. Parsed before the global parser.
+app.use(MCP_PATH, express.json({ limit: "1mb" }), mcpRouter);
+
+// OAuth 2.1 for MCP clients (doc 09 §3.4): only when MCP_PUBLIC_URL is set.
+// The SDK's handlers parse their own bodies, so they sit before the global
+// parser.
+const mcpOAuthRouter = buildOAuthRouter();
+if (mcpOAuthRouter) app.use(mcpOAuthRouter);
+
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Body-aware account throttling complements the per-IP login limiter. The key
@@ -358,7 +381,9 @@ app.use("/projects/:projectId/memory", projectMemoryRouter);
 app.use("/projects/:projectId/contract-review", contractReviewRouter);
 app.use("/projects/:projectId", projectContractRouter);
 app.use("/projects", projectsRouter);
-// Before /orgs so its own router answers these paths.
+// Before /orgs so its own router answers these paths, not the org catch-alls.
+app.use("/orgs/:orgId/legal-agent", legalAgentRouter);
+app.use("/chat-links", chatLinksRouter);
 app.use("/orgs/:orgId/integrations/notion", notionIntegrationRouter);
 app.use("/orgs", orgsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
@@ -381,7 +406,11 @@ app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
 app.use("/contracts", contractPortfolioRouter);
 app.use("/regulatory", regulatoryRouter);
+app.use("/cnpj", cnpjRouter);
+app.use("/feedback", feedbackRouter);
 app.use("/dashboard", dashboardRouter);
+app.use("/mcp-tokens", mcpTokensRouter);
+app.use("/mcp-oauth", mcpConsentRouter);
 app.use("/requests", requestsRouter);
 app.use("/home", homeRouter);
 app.use("/watched-folders", watchedFoldersRouter);

@@ -13,6 +13,7 @@ vi.mock("../../../lib/dbq/enqueue", () => queue);
 import {
     enqueueDueNotionSyncs,
     getNotionSyncStatus,
+    notionSyncEnabled,
     handleNotionSync,
     pullOrg,
     pushOrg,
@@ -91,6 +92,7 @@ const notionPage = (over: Record<string, unknown> = {}, props: Record<string, un
 beforeEach(() => {
     process.env.USER_API_KEYS_ENCRYPTION_SECRET = "segredo-de-teste";
     process.env.APP_BASE_URL = "https://mike.example";
+    process.env.NOTION_SYNC_ENABLED = "true";
     access.getOrgRole.mockReset().mockResolvedValue("admin");
     audit.recordAudit.mockReset();
     contracts.recordCardEvent.mockReset();
@@ -463,5 +465,42 @@ describe("the job, the sweep and the controls", () => {
         expect(await syncNotionNow(scriptedDb([]).db, head, ORG)).toMatchObject({ kind: "forbidden" });
         access.getOrgRole.mockResolvedValue(null);
         expect(await syncNotionNow(scriptedDb([]).db, head, ORG)).toMatchObject({ kind: "not_found" });
+    });
+});
+
+describe("the deployment switch (NOTION_SYNC_ENABLED)", () => {
+    it("is off unless explicitly turned on", () => {
+        expect(notionSyncEnabled({})).toBe(false);
+        expect(notionSyncEnabled({ NOTION_SYNC_ENABLED: "" })).toBe(false);
+        expect(notionSyncEnabled({ NOTION_SYNC_ENABLED: "false" })).toBe(false);
+        expect(notionSyncEnabled({ NOTION_SYNC_ENABLED: "0" })).toBe(false);
+        expect(notionSyncEnabled({ NOTION_SYNC_ENABLED: "talvez" })).toBe(false);
+        expect(notionSyncEnabled({ NOTION_SYNC_ENABLED: "true" })).toBe(true);
+        expect(notionSyncEnabled({ NOTION_SYNC_ENABLED: " TRUE " })).toBe(true);
+        expect(notionSyncEnabled({ NOTION_SYNC_ENABLED: "1" })).toBe(true);
+    });
+
+    it("with it off, the sweep queues nothing and does not even read the database", async () => {
+        delete process.env.NOTION_SYNC_ENABLED;
+        const fake = scriptedDb([]);
+        expect(await enqueueDueNotionSyncs(fake.db)).toBe(0);
+        expect(fake.calls).toHaveLength(0);
+        expect(queue.enqueueDbJob).not.toHaveBeenCalled();
+    });
+
+    it("with it off, a job already queued does nothing: zero calls to Notion, zero to the database", async () => {
+        delete process.env.NOTION_SYNC_ENABLED;
+        const fake = scriptedDb([]);
+        const notion = fakeNotion();
+        expect(await handleNotionSync(fake.db, { org_id: ORG }, notion.fetch)).toEqual({ skipped: "flag_off" });
+        expect(notion.calls).toHaveLength(0);
+        expect(fake.calls).toHaveLength(0);
+        expect(contracts.recordCardEvent).not.toHaveBeenCalled();
+    });
+
+    it("with it on, the same job reaches Notion", async () => {
+        const fake = scriptedDb([{ table: "notion_connections", data: conn({ sync_enabled: false }) }, { table: "notion_sync_outbox", data: [] }, { table: "notion_connections", op: "update" }]);
+        expect(await handleNotionSync(fake.db, { org_id: ORG }, fakeNotion().fetch)).toMatchObject({ read: 0 });
+        expect(fake.calls.length).toBeGreaterThan(0);
     });
 });

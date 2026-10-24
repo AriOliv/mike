@@ -81,6 +81,19 @@ describe("listContractPortfolio", () => {
                     { project_id: "p3", term_end: "2026-12-31", notice_days: 90, notice_deadline: "2026-10-02" },
                 ],
             },
+            legal_requests: {
+                data: [
+                    { project_id: "p2", assignee_id: "u-duda" },
+                    { project_id: "p3", assignee_id: "u-sem-perfil" },
+                    { project_id: "p1", assignee_id: null },
+                ],
+            },
+            user_profiles: {
+                data: [
+                    { user_id: "u-duda", display_name: " Duda Reis ", email: "duda@avenia.io" },
+                    { user_id: "u-bia", display_name: null, email: "bia@avenia.io" },
+                ],
+            },
         });
         const result = await listContractPortfolio(fake.db, caller, {});
         expect(result.ok).toBe(true);
@@ -102,7 +115,10 @@ describe("listContractPortfolio", () => {
             verified: 1,
             total: 3,
             risk: "atencao",
+            assignee: "Duda Reis",
         });
+        // No request, no owner, or an owner with no profile: no name, never a raw id.
+        expect(result.data.rows.map((r) => r.assignee)).toEqual([null, null, "Duda Reis"]);
         expect(result.data.rows[0]).toMatchObject({ notice_days: 60, filled: 1, total: 1, term_end: null });
         // No Ficha: the terms' notice stands and the counts are zero.
         expect(result.data.rows[1]).toMatchObject({ notice_days: 90, filled: 0, verified: 0, total: 0, risk: null });
@@ -139,5 +155,21 @@ describe("listContractPortfolio", () => {
     it("hides database errors", async () => {
         const result = await listContractPortfolio(fakeDb({ projects: { error: { message: "relation missing" } } }).db, caller, {});
         expect(result).toMatchObject({ ok: false, kind: "error" });
+    });
+
+    it("narrows to one workspace when asked, the cut the home screen counts in", async () => {
+        const projects = [
+            { ...PROJECTS[0], org_id: "org-a" },
+            { ...PROJECTS[1], org_id: null },
+            { ...PROJECTS[2], org_id: "org-b" },
+        ];
+        const ids = async (workspace: string | null) => {
+            const fake = fakeDb({ projects: { data: projects }, contract_fichas: { data: [] }, contract_terms: { data: [] } });
+            const r = await listContractPortfolio(fake.db, caller, {}, workspace);
+            return r.ok ? r.data.rows.map((row) => row.project_id) : r;
+        };
+        expect(await ids(null)).toEqual(["p1", "p3", "p2"]);
+        expect(await ids("org-a")).toEqual(["p2"]);
+        expect(await ids("personal")).toEqual(["p1"]);
     });
 });

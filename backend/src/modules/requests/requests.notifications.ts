@@ -41,6 +41,11 @@ function appUrl(path: string): string {
     return `${base}${path}`;
 }
 
+/** The request's page in the app, as the e-mails and the MCP tools link it. */
+export function requestLink(requestId: string): string {
+    return appUrl(`/pedidos/${requestId}`);
+}
+
 /** Subject and body of each e-mail, in Portuguese, always with the link. */
 export function renderNotification(
     template: NotificationTemplate,
@@ -50,7 +55,7 @@ export function renderNotification(
     payload: Record<string, unknown> = {},
 ): { subject: string; text: string } {
     const code = requestCode(number);
-    const link = appUrl(`/pedidos/${requestId}`);
+    const link = requestLink(requestId);
     const str = (key: string) => (typeof payload[key] === "string" ? (payload[key] as string) : "");
     switch (template) {
         case "request.created":

@@ -7,7 +7,7 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure, type ServiceResult } from "../../lib/serviceResult";
 import { resolveWorkspaceFilter, sendWorkspaceFailure } from "../../lib/workspace";
-import { whoAmI } from "../requests/requests.service";
+import { listAmendmentsOf, listLegalTeamMembers, whoAmI } from "../requests/requests.service";
 import {
     askAcervo,
     createWatchedFolder,
@@ -26,6 +26,9 @@ import {
     getContractTerms,
     getDossier,
     integrationStatus,
+    listContractAlerts,
+    listObligationAlerts,
+    obligationIcs,
     listObligations,
     listCardEvents,
     listPipeline,
@@ -36,6 +39,7 @@ import {
     updateObligation,
     updatePipelineCard,
     type Caller,
+    type OwnerOptions,
 } from "./contracts.service";
 
 function caller(res: Response): Caller {
@@ -89,11 +93,60 @@ obligationsRouter.get(
     }),
 );
 
+// Before "/:id": the alerts waiting for this person today.
+obligationsRouter.get(
+    "/alerts",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await listObligationAlerts(createServerSupabase(), caller(res)));
+    }),
+);
+
+// Who can own a deadline: the legal team's people, for the picker.
+obligationsRouter.get(
+    "/owners",
+    requireAuth,
+    asyncRoute(async (_req, res) => {
+        send(res, await listLegalTeamMembers(createServerSupabase(), caller(res)));
+    }),
+);
+
+/**
+ * Whom a deadline may be handed to, when the body names someone: the legal
+ * team's e-mails. With no team set up there is nothing to check against, so
+ * any valid e-mail goes; someone outside the team cannot name an owner.
+ */
+async function ownerOptions(
+    db: ReturnType<typeof createServerSupabase>,
+    who: Caller,
+    payload: Record<string, unknown>,
+): Promise<OwnerOptions> {
+    if (typeof payload.owner_email !== "string" || payload.owner_email.trim() === "") return {};
+    const team = await listLegalTeamMembers(db, who);
+    if (team.ok) return { members: team.data.map((m) => m.email) };
+    return team.kind === "unavailable" ? {} : { members: [] };
+}
+
 obligationsRouter.post(
     "/",
     requireAuth,
     asyncRoute(async (req, res) => {
-        send(res, await createObligation(createServerSupabase(), caller(res), body(req)), 201);
+        const db = createServerSupabase();
+        const options = await ownerOptions(db, caller(res), body(req));
+        send(res, await createObligation(db, caller(res), body(req), options), 201);
+    }),
+);
+
+// One deadline as a calendar file ("criar evento"); before "/:id".
+obligationsRouter.get(
+    "/:id/ics",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const result = await obligationIcs(createServerSupabase(), caller(res), req.params.id);
+        if (!result.ok) return void sendServiceFailure(res, result);
+        res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${result.data.filename}"`);
+        res.send(result.data.body);
     }),
 );
 
@@ -101,7 +154,9 @@ obligationsRouter.patch(
     "/:id",
     requireAuth,
     asyncRoute(async (req, res) => {
-        send(res, await updateObligation(createServerSupabase(), caller(res), req.params.id, body(req)));
+        const db = createServerSupabase();
+        const options = await ownerOptions(db, caller(res), body(req));
+        send(res, await updateObligation(db, caller(res), req.params.id, body(req), options));
     }),
 );
 
@@ -157,6 +212,28 @@ projectContractRouter.get(
         res.setHeader("Content-Type", result.data.contentType);
         res.setHeader("Content-Disposition", `inline; filename="${result.data.filename}"`);
         res.send(result.data.bytes);
+    }),
+);
+
+// Every deadline of the contract: the tab inside it.
+projectContractRouter.get(
+    "/alerts",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await listContractAlerts(createServerSupabase(), caller(res), req.params.projectId));
+    }),
+);
+
+// The amendments tied to this contract (a request's "contrato original").
+projectContractRouter.get(
+    "/amendments",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const db = createServerSupabase();
+        // Seeing the contract is what allows seeing the amendments tied to it.
+        const seen = await listContractAlerts(db, caller(res), req.params.projectId);
+        if (!seen.ok) return void sendServiceFailure(res, seen);
+        send(res, await listAmendmentsOf(db, req.params.projectId));
     }),
 );
 

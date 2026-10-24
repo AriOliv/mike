@@ -18,7 +18,16 @@ export {
     createObligation,
     updateObligation,
     deleteObligation,
+    listObligationAlerts,
+    listContractAlerts,
+    obligationIcs,
+    OBLIGATION_STATUSES,
+    DEFAULT_ALERT_DAYS,
     type Obligation,
+    type ObligationAlert,
+    type ContractAlert,
+    type ObligationStatus,
+    type OwnerOptions,
 } from "./contracts.obligations";
 export { getDossier, putDossier, type Dossier } from "./contracts.dossiers";
 export {
@@ -32,6 +41,8 @@ export {
     getContractTerms,
     extractContractTerms,
     extractMissingContractTerms,
+    applyAmendedTerm,
+    type AmendedTerm,
     type ContractTerms,
     type TermsSyncSummary,
 } from "./contracts.terms";
@@ -48,6 +59,7 @@ export {
     ACTOR_TYPES,
     EVENT_SOURCES,
     recordCardEvent,
+    recordAgentRead,
     listCardEvents,
     startAgentRun,
     finishAgentRun,
@@ -73,6 +85,7 @@ export {
 } from "./contracts.autoReview";
 export {
     getHomeSummary,
+    listNoticeDeadlines,
     countAgentReviews,
     REVIEW_AGENTS,
     type HomeSummary,
@@ -80,3 +93,6 @@ export {
     type HomeDeadline,
 } from "./contracts.home";
 export type { Caller } from "./contracts.shared";
+
+export { CONTRACT_TOOLS } from "./contracts.mcp";
+export { getContractText, type ContractText } from "./contracts.text";

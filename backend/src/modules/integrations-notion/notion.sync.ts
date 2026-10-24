@@ -364,8 +364,19 @@ export async function pullOrg(db: Db, orgId: string, fetchImpl?: Fetch, now: Dat
 
 // ── jobs, sweep, status ─────────────────────────────────────────────────────
 
+/**
+ * The deployment-wide switch for the sync (NOTION_SYNC_ENABLED=true). Off by
+ * default: with it off nothing sweeps, no job does any work and nothing is
+ * sent to api.notion.com, whatever the organizations have set. Read on every
+ * call so it can be flipped without code.
+ */
+export function notionSyncEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+    return /^(1|true|yes|on)$/i.test((env.NOTION_SYNC_ENABLED ?? "").trim());
+}
+
 /** Job: pull then push one organization, and record how it went. */
 export async function handleNotionSync(db: Db, payload: { org_id?: unknown }, fetchImpl?: Fetch): Promise<Record<string, unknown>> {
+    if (!notionSyncEnabled()) return { skipped: "flag_off" };
     const orgId = typeof payload.org_id === "string" ? payload.org_id : null;
     if (!orgId) return { skipped: "no_org" };
     try {
@@ -385,6 +396,7 @@ export async function handleNotionSync(db: Db, payload: { org_id?: unknown }, fe
  * Mike reaches Notion within a minute, not at the next poll.
  */
 export async function enqueueDueNotionSyncs(db: Db, now: Date = new Date()): Promise<number> {
+    if (!notionSyncEnabled()) return 0;
     const { data, error } = await db.from("notion_connections").select("org_id, poll_minutes, last_sync_at").eq("sync_enabled", true);
     if (error) throw error;
     const rows = (data ?? []) as { org_id: string; poll_minutes: number; last_sync_at: string | null }[];

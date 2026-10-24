@@ -1,0 +1,16 @@
+# Extra synthetic rows for environments that carry the integration PRs
+# (requests 20261020_93, regulatory radar 20261020_95, card_events/agent_runs
+# 20261020_92, Início 20261020_94). List it after ../ (the base seed component).
+# Each file names the tables it needs on line 1 and is skipped without them.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  - name: seed-sql
+    behavior: merge
+    files:
+      - extra-integration.sql
+      - extra-inicio.sql
+      - extra-revisao.sql
+      - extra-zz-painel.sql
+      - extra-zzz-time.sql
+      - extra-zzzz-checklist.sql

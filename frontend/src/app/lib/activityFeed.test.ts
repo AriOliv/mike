@@ -113,9 +113,31 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "triage.edited" })).verb).toBe("ajustou a triagem");
         expect(describeEvent(event({ action: "triage.rejected" })).verb).toBe("recusou a triagem");
         expect(describeEvent(event({ action: "triage.reopened" })).verb).toBe("reabriu a triagem");
+        expect(describeEvent(event({ action: "intake.prefilled", after: { filled: 3 } }))).toMatchObject({
+            verb: "leu o contrato e preencheu",
+            object: "3 itens do checklist",
+        });
+        expect(describeEvent(event({ action: "intake.prefilled", after: { filled: 1 } })).object).toBe("1 item do checklist");
+        expect(describeEvent(event({ action: "intake.prefilled", after: { filled: 0 } })).verb).toBe("leu o contrato para o checklist");
+        expect(describeEvent(event({ action: "intake.prefilled", after: {} })).verb).toBe("leu o contrato para o checklist");
+        expect(describeEvent(event({ action: "intake.answered" })).verb).toBe("respondeu o checklist");
+        expect(describeEvent(event({ action: "intake.completed" })).verb).toBe("completou o checklist");
+        expect(describeEvent(event({ action: "request.critical_alert", after: { critical: 2 } }))).toMatchObject({
+            verb: "avisou a liderança:",
+            object: "2 riscos críticos",
+        });
+        expect(describeEvent(event({ action: "request.critical_alert", after: { critical: 1 } })).object).toBe("1 risco crítico");
+        expect(describeEvent(event({ action: "request.critical_alert", after: {} })).object).toBe("há riscos críticos");
+        expect(describeEvent(event({ action: "analysis.completed" })).verb).toBe("analisou o contrato");
+        expect(describeEvent(event({ action: "analysis.failed" })).verb).toBe("não conseguiu analisar o contrato");
         expect(describeEvent(event({ action: "request.question" })).verb).toBe("perguntou ao solicitante");
         expect(describeEvent(event({ action: "request.answered" })).verb).toBe("respondeu");
         expect(describeEvent(event({ action: "request.delivered" })).verb).toBe("entregou o pedido");
+        expect(describeEvent(event({ action: "terms.amended", after: { term_end: "2028-01-05" } }))).toMatchObject({
+            verb: "atualizou a vigência a partir de um aditivo",
+            object: "fim em 05/01/2028",
+        });
+        expect(describeEvent(event({ action: "terms.amended", after: {} })).object).toBeUndefined();
         expect(
             describeEvent(event({ action: "participant.invited", after: { email: "a@b.c", label: "Escritório X" } })).object,
         ).toBe("Escritório X");

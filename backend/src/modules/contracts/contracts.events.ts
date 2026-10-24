@@ -82,6 +82,56 @@ export async function recordCardEvent(db: Db, input: CardEventInput): Promise<nu
     return (data as { id: number }).id;
 }
 
+/** How often one agent's reads of one contract enter the feed. */
+const AGENT_READ_EVERY_MS = 10 * 60_000;
+
+/**
+ * Records that an agent read a contract for someone (doc 09 §7): one
+ * `mcp.read` per actor per contract per 10 minutes, so an agent paging
+ * through a document does not flood the feed. Checked against the table, so
+ * it holds across replicas. Never throws.
+ */
+export async function recordAgentRead(
+    db: Db,
+    input: { projectId: string; actorId: string; actorName: string; onBehalfOf: string; tool: string },
+    now: Date = new Date(),
+): Promise<void> {
+    try {
+        const since = new Date(now.getTime() - AGENT_READ_EVERY_MS).toISOString();
+        const { data: recent, error: recentError } = await db
+            .from("card_events")
+            .select("id")
+            .eq("project_id", input.projectId)
+            .eq("actor_id", input.actorId)
+            .eq("on_behalf_of", input.onBehalfOf)
+            .eq("action", "mcp.read")
+            .gte("at", since)
+            .limit(1);
+        if (recentError) throw recentError;
+        if ((recent ?? []).length > 0) return;
+        const { data: project, error: projectError } = await db
+            .from("projects")
+            .select("org_id")
+            .eq("id", input.projectId)
+            .maybeSingle();
+        if (projectError) throw projectError;
+        if (!project) return;
+        await recordCardEvent(db, {
+            projectId: input.projectId,
+            orgId: (project as { org_id: string | null }).org_id,
+            actorType: "agent",
+            actorId: input.actorId,
+            actorName: input.actorName,
+            onBehalfOf: input.onBehalfOf,
+            action: "mcp.read",
+            after: { ferramenta: input.tool },
+            source: "mcp",
+        });
+    } catch (error) {
+        console.error("[card_events] agent read not recorded", { error: safeError(error) });
+    }
+}
+
 /** A card's events, newest first. */
 export async function listCardEvents(
     db: Db,
@@ -139,6 +189,9 @@ export type AgentRunOutcome = {
     error?: string | null;
     modelResolved?: string | null;
     latencyMs?: number | null;
+    tokensIn?: number | null;
+    tokensOut?: number | null;
+    costUsd?: number | null;
 };
 
 /** Close a run. Best-effort: a failed close must not fail the agent's work. */
@@ -155,6 +208,10 @@ export async function finishAgentRun(
             error: outcome.error ?? null,
             model_resolved: outcome.modelResolved ?? null,
             latency_ms: outcome.latencyMs ?? null,
+            // Left out when the agent does not report them, so a close never blanks them.
+            ...(outcome.tokensIn != null && { tokens_in: outcome.tokensIn }),
+            ...(outcome.tokensOut != null && { tokens_out: outcome.tokensOut }),
+            ...(outcome.costUsd != null && { cost_usd: outcome.costUsd }),
             finished_at: new Date().toISOString(),
         })
         .eq("id", runId);

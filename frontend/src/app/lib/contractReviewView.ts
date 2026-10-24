@@ -46,6 +46,19 @@ export function isDecidable(clause: ReviewClause): boolean {
     return !!clause.suggestedText.trim() || !!clause.edit;
 }
 
+/**
+ * How far the review is: the clauses that need a person (precisa revisão or
+ * diverge, and proposing wording) against those already decided. Aligned
+ * clauses are not attention points; they have their own "aceitar todos".
+ */
+export function attentionProgress(clauses: readonly ReviewClause[]): { total: number; decided: number; left: number } {
+    const points = clauses.filter(
+        (clause) => (clause.verdict === "precisa_revisao" || clause.verdict === "diverge") && isDecidable(clause),
+    );
+    const decided = points.filter((clause) => !!clause.decision).length;
+    return { total: points.length, decided, left: points.length - decided };
+}
+
 /** Aligned suggestions still waiting for a decision: "Aceitar todos os alinhados". */
 export function pendingAligned(clauses: readonly ReviewClause[]): ReviewClause[] {
     return clauses.filter((clause) => clause.verdict === "alinhado" && isDecidable(clause) && !clause.decision);
