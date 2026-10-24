@@ -10,6 +10,9 @@ import { PERSONAL_WORKSPACE, resolveWorkspaceFilter, type WorkspaceFilter } from
 import { DEFAULT_SCOPES, MCP_SCOPES, type McpScope } from "./mcp.types";
 
 const PREFIX = { pessoal: "mike_pat_", servico: "mike_svc_" } as const;
+/** OAuth access tokens (mcp.oauth.ts issues them; kept here so lookup needs no cycle). */
+const OAUTH_ACCESS_PREFIX = "mike_oat_";
+const KIND_PREFIX: Record<string, string> = { ...PREFIX, oauth: OAUTH_ACCESS_PREFIX, oauth_refresh: "mike_ort_" };
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 90;
 const MAX_ACTIVE_PER_USER = 20;
@@ -17,12 +20,13 @@ const MAX_ACTIVE_PER_USER = 20;
 const TOUCH_EVERY_MS = 60_000;
 const DAY = 86_400_000;
 
-export type TokenKind = keyof typeof PREFIX;
+export type TokenKind = keyof typeof PREFIX | "oauth" | "oauth_refresh";
 
 export type AccessTokenView = {
     id: string;
     name: string;
-    kind: TokenKind;
+    /** "aplicativo" is an app the person connected by OAuth (one live grant). */
+    kind: "pessoal" | "servico" | "aplicativo" | "oauth";
     workspace: string;
     prefix: string;
     scopes: McpScope[];
@@ -65,9 +69,9 @@ function view(row: TokenRow): AccessTokenView {
     return {
         id: row.id,
         name: row.name,
-        kind: row.kind,
+        kind: row.kind === "oauth_refresh" ? "aplicativo" : row.kind,
         workspace: row.org_id ?? PERSONAL_WORKSPACE,
-        prefix: `${PREFIX[row.kind]}${row.token_prefix}…`,
+        prefix: `${KIND_PREFIX[row.kind]}${row.token_prefix}…`,
         scopes: row.scopes.filter(isScope),
         expires_at: row.expires_at,
         revoked_at: row.revoked_at,
@@ -85,16 +89,33 @@ function isScope(s: unknown): s is McpScope {
 type Caller = { userId: string; userEmail?: string | null };
 
 /** The person's tokens, newest first, revoked ones included (the screen greys them). */
+/**
+ * The person's tokens, newest first: their personal tokens (revoked ones
+ * included, the screen greys them) and the apps they connected by OAuth,
+ * one row per live grant (its refresh token), never the hourly access tokens.
+ */
 export async function listAccessTokens(db: Db, caller: Caller): Promise<ServiceResult<AccessTokenView[]>> {
-    const { data, error } = await db
-        .from("mcp_access_tokens")
-        .select(COLUMNS)
-        .eq("user_id", caller.userId)
-        .eq("kind", "pessoal")
-        .order("created_at", { ascending: false })
-        .limit(100);
-    if (error) return internalFailure(error);
-    return ok(((data ?? []) as TokenRow[]).map(view));
+    const [personal, apps] = await Promise.all([
+        db
+            .from("mcp_access_tokens")
+            .select(COLUMNS)
+            .eq("user_id", caller.userId)
+            .eq("kind", "pessoal")
+            .order("created_at", { ascending: false })
+            .limit(100),
+        db
+            .from("mcp_access_tokens")
+            .select(COLUMNS)
+            .eq("user_id", caller.userId)
+            .eq("kind", "oauth_refresh")
+            .is("revoked_at", null)
+            .order("created_at", { ascending: false })
+            .limit(50),
+    ]);
+    if (personal.error) return internalFailure(personal.error);
+    if (apps.error) return internalFailure(apps.error);
+    const rows = [...((apps.data ?? []) as TokenRow[]), ...((personal.data ?? []) as TokenRow[])];
+    return ok(rows.map(view));
 }
 
 /**
@@ -169,7 +190,7 @@ export async function createAccessToken(
  * factor of whoever enrolled one (requireMfaIfEnrolled); this refuses the
  * accounts that have none.
  */
-async function requireEnrolledMfa(db: Db, userId: string): Promise<ServiceResult<never> | null> {
+export async function requireEnrolledMfa(db: Db, userId: string): Promise<ServiceResult<never> | null> {
     const { data: account, error } = await db.auth.admin.getUserById(userId);
     if (error) return internalFailure(error);
     const hasTotp = (account.user?.factors ?? []).some((f) => f.factor_type === "totp" && f.status === "verified");
@@ -324,24 +345,33 @@ export async function revokeAccessToken(
     if (!/^[0-9a-f-]{36}$/i.test(tokenId)) return failure("not_found", "Token não encontrado.");
     const { data: existing, error: readError } = await db
         .from("mcp_access_tokens")
-        .select(COLUMNS)
+        .select(`${COLUMNS}, refresh_of`)
         .eq("id", tokenId)
         .eq("user_id", caller.userId)
-        .eq("kind", "pessoal")
         .maybeSingle();
     if (readError) return internalFailure(readError);
-    if (!existing) return failure("not_found", "Token não encontrado.");
-    const row = existing as TokenRow;
+    const row = existing as (TokenRow & { refresh_of?: string | null }) | null;
+    // A personal token, or a connected app (its grant). Never a service token here.
+    if (!row || (row.kind !== "pessoal" && row.kind !== "oauth_refresh")) return failure("not_found", "Token não encontrado.");
     if (row.revoked_at) return ok(view(row));
+    const at = now.toISOString();
     const { data, error } = await db
         .from("mcp_access_tokens")
-        .update({ revoked_at: now.toISOString() })
+        .update({ revoked_at: at })
         .eq("id", tokenId)
         .eq("user_id", caller.userId)
-        .eq("kind", "pessoal")
         .select(COLUMNS)
         .single();
     if (error) return internalFailure(error);
+    // Disconnecting an app ends its current access token too, not in an hour.
+    if (row.kind === "oauth_refresh" && row.refresh_of) {
+        const { error: accessError } = await db
+            .from("mcp_access_tokens")
+            .update({ revoked_at: at })
+            .eq("id", row.refresh_of)
+            .is("revoked_at", null);
+        if (accessError) return internalFailure(accessError);
+    }
     return ok(view(data as TokenRow));
 }
 
@@ -375,7 +405,7 @@ export type ServiceToken = {
 };
 
 type TokenCheck =
-    | { ok: true; kind: "pessoal"; row: TokenRow; scopes: McpScope[] }
+    | { ok: true; kind: "pessoal"; row: TokenRow; scopes: McpScope[]; oauth?: boolean }
     | { ok: true; kind: "servico"; token: ServiceToken }
     | { ok: false; reason: TokenRejection };
 
@@ -383,7 +413,15 @@ type TokenCheck =
 export async function checkToken(db: Db, bearer: string | undefined, now: Date = new Date()): Promise<TokenCheck> {
     const raw = bearer?.startsWith("Bearer ") ? bearer.slice(7).trim() : "";
     if (!raw) return { ok: false, reason: "missing" };
-    const kind = raw.startsWith(PREFIX.pessoal) ? "pessoal" : raw.startsWith(PREFIX.servico) ? "servico" : null;
+    // An OAuth access token acts like a personal one: as the person who
+    // consented, with the scopes and workspace they approved (doc 09 §3.4).
+    const kind = raw.startsWith(PREFIX.pessoal)
+        ? "pessoal"
+        : raw.startsWith(PREFIX.servico)
+          ? "servico"
+          : raw.startsWith(OAUTH_ACCESS_PREFIX)
+            ? "oauth"
+            : null;
     if (!kind) return { ok: false, reason: "invalid" };
 
     const { data, error } = await db
@@ -395,8 +433,10 @@ export async function checkToken(db: Db, bearer: string | undefined, now: Date =
     if (!data) return { ok: false, reason: "invalid" };
     const row = data as TokenRow;
     if (row.kind !== kind) return { ok: false, reason: "invalid" };
+    // Revoked and expired before anything else, for every kind of token.
     if (row.revoked_at) return { ok: false, reason: "revoked" };
     if (Date.parse(row.expires_at) <= now.getTime()) return { ok: false, reason: "expired" };
+    if (kind === "oauth") return { ok: true, kind: "pessoal", row, scopes: row.scopes.filter(isScope), oauth: true };
     if (kind === "pessoal") return { ok: true, kind, row, scopes: row.scopes.filter(isScope) };
     // A service token that was not granted act_as has nothing to do here: it
     // acts for no one, and the server holds no data of its own to show.
