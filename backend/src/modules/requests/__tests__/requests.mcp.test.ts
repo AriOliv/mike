@@ -122,9 +122,9 @@ async function preview(t: AnyMcpTool, ctx: McpContext, args: Record<string, unkn
     return t.confirm!.preview(ctx, z.object(t.input).parse(args));
 }
 
-async function pedido(w: ReturnType<typeof world>, who = REQUESTER, name = "Ana") {
+async function pedido(w: ReturnType<typeof world>, who = REQUESTER, name = "Ana", tipo = "nda") {
     const { result } = await call(tool("criar"), ctxOf(w, who, name, "requester"), {
-        tipo: "nda",
+        tipo,
         descricao: "Vamos trocar dados de clientes num piloto.",
         contraparte: "Polaris Tecnologia",
         area: "Comercial",
@@ -355,9 +355,25 @@ describe("the team through an assistant", () => {
 });
 
 describe("the checklist through an assistant", () => {
+    it("asks only the questions of the request's kind: an NDA has its own and no value, a legal question has one", async () => {
+        const w = world();
+        const ana = ctxOf(w, REQUESTER, "Ana", "requester");
+        const nda = await pedido(w);
+        const r = await call(tool("checklist"), ana, { pedido: nda });
+        if (!r.result.ok) throw new Error("no checklist");
+        const keys = (r.result.data as { itens: { chave: string }[] }).itens.map((i) => i.chave);
+        expect(keys).toEqual(expect.arrayContaining(["quem_compartilha", "finalidade", "modelo"]));
+        expect(keys).not.toContain("valor_recorrencia");
+        expect(r.text).not.toMatch(/Valor e recorrência/);
+        const duvida = await pedido(w, REQUESTER, "Ana", "parecer");
+        const d = await call(tool("checklist"), ana, { pedido: duvida });
+        if (!d.result.ok) throw new Error("no checklist");
+        expect((d.result.data as { itens: { chave: string }[] }).itens.map((i) => i.chave)).toEqual(["duvida", "contraparte"]);
+    });
+
     it("shows what is confirmed, inferred and open, and asks only that", async () => {
         const w = world();
-        const code = await pedido(w);
+        const code = await pedido(w, REQUESTER, "Ana", "revisao");
         const ana = ctxOf(w, REQUESTER, "Ana", "requester");
         const row = w.table("legal_requests")[0];
         row.intake = {
@@ -386,7 +402,7 @@ describe("the checklist through an assistant", () => {
 
     it("answers and confirms in two steps, and closing it is the requester's on the card", async () => {
         const w = world();
-        const code = await pedido(w);
+        const code = await pedido(w, REQUESTER, "Ana", "revisao");
         const ana = ctxOf(w, REQUESTER, "Ana", "requester");
         w.table("legal_requests")[0].intake = {
             valor_recorrencia: { value: "R$ 5 mil", source: "inferred", confirmed: false, quote: "R$ 5.000,00", updated_at: "x" },

@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { completeWithProvider } from "../llm/providers";
-import { resetModelRegistryCache } from "../llm/registry";
+import { getConfiguredModel, resetModelRegistryCache } from "../llm/registry";
 import type { ConfiguredModel } from "../llm/types";
 
 const originalConfig = process.env.MIKE_MODEL_CONFIG_JSON;
 
-function configure(maxTokensField?: ConfiguredModel["maxTokensField"]) {
+function configure(
+    maxTokensField?: ConfiguredModel["maxTokensField"],
+    extra: Record<string, unknown> = {},
+) {
     process.env.MIKE_MODEL_CONFIG_JSON = JSON.stringify({
         models: [
             {
@@ -16,10 +19,16 @@ function configure(maxTokensField?: ConfiguredModel["maxTokensField"]) {
                 apiModel: "upstream-model",
                 baseUrl: "https://models.example.test/v1",
                 ...(maxTokensField ? { maxTokensField } : {}),
+                ...extra,
             },
         ],
     });
     resetModelRegistryCache();
+}
+
+function requestHeaders(fetchMock: ReturnType<typeof vi.fn>): Headers {
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    return new Headers(init.headers);
 }
 
 function completionResponse(): Response {
@@ -92,5 +101,41 @@ describe("configured OpenAI-compatible models", () => {
             max_completion_tokens: 321,
         });
         expect(requestBody(fetchMock)).not.toHaveProperty("max_tokens");
+    });
+
+    it("sends the declared headers on every call (LiteLLM redaction)", async () => {
+        configure(undefined, {
+            headers: { "x-litellm-enable-message-redaction": "true" },
+        });
+        const fetchMock = vi.fn().mockResolvedValue(completionResponse());
+        vi.stubGlobal("fetch", fetchMock);
+
+        await completeWithProvider({ model: "custom-model", user: "Complete this" });
+
+        expect(
+            requestHeaders(fetchMock).get("x-litellm-enable-message-redaction"),
+        ).toBe("true");
+    });
+
+    it("sends no extra header when none is declared", async () => {
+        configure();
+        const fetchMock = vi.fn().mockResolvedValue(completionResponse());
+        vi.stubGlobal("fetch", fetchMock);
+
+        await completeWithProvider({ model: "custom-model", user: "Complete this" });
+
+        expect(
+            requestHeaders(fetchMock).has("x-litellm-enable-message-redaction"),
+        ).toBe(false);
+    });
+
+    it.each([
+        ["an auth header", { Authorization: "Bearer x" }],
+        ["a header injection", { "x-a": "1\r\nx-b: 2" }],
+        ["a non-string value", { "x-a": true }],
+        ["a list", ["x-a"]],
+    ])("drops a model whose headers carry %s", (_label, headers) => {
+        configure(undefined, { headers });
+        expect(getConfiguredModel("custom-model")).toBeNull();
     });
 });

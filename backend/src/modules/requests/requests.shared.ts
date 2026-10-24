@@ -193,12 +193,9 @@ export function parseRequestCode(value: string): number | null {
     return n > 0 ? n : null;
 }
 
-/**
- * The four steps a requester sees (03-ux-spec §3). The team's six pipeline
- * lanes and its internal statuses stay behind them.
- */
-export const REQUESTER_STEPS = ["recebido", "em_analise", "assinatura", "concluido"] as const;
-export type RequesterStep = (typeof REQUESTER_STEPS)[number];
+// The four steps a requester sees (03-ux-spec §3) live with the stage
+// catalogue, so the lanes, the steps and the team's strip share one table.
+export { REQUESTER_STEPS, requesterStep, type RequesterStep } from "./requests.stages";
 
 /**
  * The pipeline's lanes (the contracts module's LANES), kept here too so the
@@ -215,17 +212,6 @@ export const LANE_LABELS: Record<string, string> = {
     assinatura: "Assinatura",
     arquivado: "Arquivado",
 };
-
-export function requesterStep(status: RequestStatus, lane: string | null): RequesterStep {
-    if (status === "entregue" || status === "cancelado" || lane === "arquivado") return "concluido";
-    if (lane === "assinatura") return "assinatura";
-    if (status === "novo" || status === "em_triagem" || lane === "entrada" || lane === "triagem") {
-        return status === "em_andamento" || status === "aguardando_solicitante"
-            ? "em_analise"
-            : "recebido";
-    }
-    return "em_analise";
-}
 
 export function isEmail(value: unknown): value is string {
     return typeof value === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.trim());

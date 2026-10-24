@@ -18,7 +18,16 @@ export {
     createObligation,
     updateObligation,
     deleteObligation,
+    listObligationAlerts,
+    listContractAlerts,
+    obligationIcs,
+    OBLIGATION_STATUSES,
+    DEFAULT_ALERT_DAYS,
     type Obligation,
+    type ObligationAlert,
+    type ContractAlert,
+    type ObligationStatus,
+    type OwnerOptions,
 } from "./contracts.obligations";
 export { getDossier, putDossier, type Dossier } from "./contracts.dossiers";
 export {
@@ -32,6 +41,8 @@ export {
     getContractTerms,
     extractContractTerms,
     extractMissingContractTerms,
+    applyAmendedTerm,
+    type AmendedTerm,
     type ContractTerms,
     type TermsSyncSummary,
 } from "./contracts.terms";

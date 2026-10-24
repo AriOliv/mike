@@ -7,12 +7,37 @@ import { answerRequestIntake, getRequestIntake, type IntakeAnswerInput, type Req
 import { notifyError } from "@/app/lib/userFacingError";
 import { showToast } from "@/app/components/ui/toast";
 import { cn } from "@/app/lib/utils";
+import { KIND_OPTIONS } from "@/app/lib/requests";
 
 const FIELD =
     "w-full rounded-lg border border-gray-200 bg-app-surface px-2 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
 type Item = RequestIntake["items"][number];
-type Draft = { value: string; detail: string };
+
+/** How often the checklist looks again while the agent is reading the contract. */
+export const PREFILL_POLL_MS = 5000;
+type Draft = { value: string; detail: string; selected: string[]; unknown: boolean };
+const EMPTY: Draft = { value: "", detail: "", selected: [], unknown: false };
+
+const isChoice = (item: Item) => item.kind === "choice" || item.kind === "multi_choice";
+
+/** What the person gave for a question, in the shape the server takes; null while it is blank. */
+function answerOf(item: Item, d: Draft): IntakeAnswerInput | null {
+    if (d.unknown) return { unknown: true };
+    if (isChoice(item)) return d.selected.length ? (item.kind === "multi_choice" ? d.selected : d.selected[0]) : null;
+    if (!d.value.trim()) return null;
+    return d.detail.trim() ? { value: d.value, detail: d.detail } : d.value;
+}
+
+/** The draft that stands for an answer already given, to correct it in place. */
+function draftFrom(item: Item): Draft {
+    const a = item.answer;
+    if (!a) return EMPTY;
+    if (a.unknown) return { ...EMPTY, unknown: true };
+    return { value: a.choice ?? (isChoice(item) ? "" : a.value), detail: a.detail ?? "", selected: a.selected ?? [], unknown: false };
+}
+
+const kindLabel = (kind: string) => KIND_OPTIONS.find((k) => k.value === kind)?.label ?? kind;
 
 /**
  * The request's intake checklist: what is confirmed, what the agent read in
@@ -36,17 +61,14 @@ export function IntakeChecklist({
     const [editing, setEditing] = useState<string | null>(null);
     const open = intake.items.filter((i) => i.state === "pendente");
     const toConfirm = intake.items.filter((i) => i.state === "inferido");
-    const draftOf = (key: string): Draft => drafts[key] ?? { value: "", detail: "" };
+    const draftOf = (key: string): Draft => drafts[key] ?? EMPTY;
     const setDraft = (key: string, patch: Partial<Draft>) =>
         setDrafts((d) => ({ ...d, [key]: { ...draftOf(key), ...patch } }));
 
-    const filled = open.filter((i) => draftOf(i.key).value.trim());
+    const filled = open.filter((i) => answerOf(i, draftOf(i.key)) !== null);
     const send = () => {
         const answers: Record<string, IntakeAnswerInput> = {};
-        for (const i of filled) {
-            const d = draftOf(i.key);
-            answers[i.key] = d.detail.trim() ? { value: d.value, detail: d.detail } : d.value;
-        }
+        for (const i of filled) answers[i.key] = answerOf(i, draftOf(i.key))!;
         onAnswer({ answers });
         setDrafts({});
     };
@@ -60,12 +82,31 @@ export function IntakeChecklist({
                         intake.complete ? "text-emerald-700" : "text-gray-900",
                     )}
                 >
-                    {intake.complete ? "Checklist completo" : `${intake.answered} de ${intake.total} respondidas`}
+                    {intake.nothing_to_fill
+                        ? "Nada a preencher neste tipo de pedido"
+                        : intake.complete
+                          ? "Checklist completo"
+                          : `${intake.answered} de ${intake.total} respondidas`}
                 </span>
                 {toConfirm.length ? (
                     <span className="text-violet-700">· {toConfirm.length} lida{toConfirm.length === 1 ? "" : "s"} no contrato para confirmar</span>
                 ) : null}
             </p>
+            {intake.kind_changed ? (
+                <p className="mt-1 text-[11px] text-gray-600" role="status">
+                    O tipo mudou de {kindLabel(intake.kind_changed.from)} para {kindLabel(intake.kind_changed.to)}: agora são {intake.total} pergunta{intake.total === 1 ? "" : "s"}. As respostas que você já deu ficam guardadas.
+                </p>
+            ) : null}
+            {intake.prefill === "lendo" && !intake.complete ? (
+                <p className="mt-1 flex items-center gap-1.5 text-[11px] text-violet-700" role="status">
+                    <Sparkles className="h-3 w-3" aria-hidden />
+                    O agente está lendo o contrato para preencher o que ele responde.
+                </p>
+            ) : intake.prefill === "falhou" && !intake.complete ? (
+                <p className="mt-1 text-[11px] text-gray-500" role="status">
+                    O agente não conseguiu ler o contrato agora. Responda as perguntas abaixo.
+                </p>
+            ) : null}
 
             <ul className="mt-2 space-y-2">
                 {intake.items.map((item) =>
@@ -80,15 +121,13 @@ export function IntakeChecklist({
                             onDraft={(patch) => setDraft(item.key, patch)}
                             onEdit={() => {
                                 setEditing(item.key);
-                                setDraft(item.key, {
-                                    value: item.answer?.choice ?? item.answer?.value ?? "",
-                                    detail: item.answer?.detail ?? "",
-                                });
+                                setDraft(item.key, draftFrom(item));
                             }}
                             onConfirm={() => onAnswer({ confirm: [item.key] })}
                             onSave={() => {
-                                const d = draftOf(item.key);
-                                onAnswer({ answers: { [item.key]: d.detail.trim() ? { value: d.value, detail: d.detail } : d.value } });
+                                const answer = answerOf(item, draftOf(item.key));
+                                if (answer === null) return;
+                                onAnswer({ answers: { [item.key]: answer } });
                                 setEditing(null);
                             }}
                         />
@@ -138,7 +177,30 @@ function Question({ item, draft, onDraft }: { item: Item; draft: Draft; onDraft:
                 {item.required ? null : <span className="text-gray-400"> (opcional)</span>}
             </label>
             {item.hint ? <p className="mb-1 text-[11px] text-gray-500">{item.hint}</p> : null}
-            <AnswerInput id={id} item={item} draft={draft} onDraft={onDraft} />
+            <AnswerField id={id} item={item} draft={draft} onDraft={onDraft} />
+        </div>
+    );
+}
+
+/** The input for the question, and the "Não sei" button where the question allows it. */
+function AnswerField({ id, item, draft, onDraft }: { id: string; item: Item; draft: Draft; onDraft: (patch: Partial<Draft>) => void }) {
+    return (
+        <div>
+            {draft.unknown ? (
+                <p className="rounded-lg bg-gray-50 px-2 py-1.5 text-gray-600 dark:bg-white/5">Você marcou que não sabe. O Legal vai confirmar com você.</p>
+            ) : (
+                <AnswerInput id={id} item={item} draft={draft} onDraft={onDraft} />
+            )}
+            {item.no_unknown ? null : (
+                <button
+                    type="button"
+                    aria-pressed={draft.unknown}
+                    className="mt-1 text-[11px] text-gray-500 underline underline-offset-2 hover:text-gray-800"
+                    onClick={() => onDraft({ unknown: !draft.unknown })}
+                >
+                    {draft.unknown ? "Prefiro responder" : "Não sei"}
+                </button>
+            )}
         </div>
     );
 }
@@ -180,6 +242,33 @@ function AnswerInput({
                         onChange={(e) => onDraft({ detail: e.target.value })}
                     />
                 ) : null}
+            </div>
+        );
+    }
+    if (item.kind === "choice" || item.kind === "multi_choice") {
+        const single = item.kind === "choice";
+        const toggle = (code: string) =>
+            onDraft({
+                selected: single
+                    ? [code]
+                    : draft.selected.includes(code)
+                      ? draft.selected.filter((c) => c !== code)
+                      : [...draft.selected, code],
+            });
+        return (
+            <div role={single ? "radiogroup" : "group"} aria-label={item.label} id={id} className="space-y-1">
+                {(item.options ?? []).map((o) => (
+                    <label key={o.value} className="flex items-center gap-1.5">
+                        <input
+                            type={single ? "radio" : "checkbox"}
+                            name={id}
+                            value={o.value}
+                            checked={draft.selected.includes(o.value)}
+                            onChange={() => toggle(o.value)}
+                        />
+                        {o.label}
+                    </label>
+                ))}
             </div>
         );
     }
@@ -239,16 +328,16 @@ function AnsweredRow({
                             className="mt-1 space-y-1"
                             onSubmit={(e) => {
                                 e.preventDefault();
-                                if (draft.value.trim()) onSave();
+                                onSave();
                             }}
                         >
-                            <AnswerInput id={`intake-edit-${item.key}`} item={item} draft={draft} onDraft={onDraft} />
-                            <PillButtonUI tone="black" size="sm" type="submit" loading={busy} disabled={!draft.value.trim()}>
+                            <AnswerField id={`intake-edit-${item.key}`} item={item} draft={draft} onDraft={onDraft} />
+                            <PillButtonUI tone="black" size="sm" type="submit" loading={busy} disabled={answerOf(item, draft) === null}>
                                 Salvar
                             </PillButtonUI>
                         </form>
                     ) : (
-                        <span className="block break-words text-gray-900">{item.answer?.value}</span>
+                        <span className={cn("block break-words", item.answer?.unknown ? "italic text-gray-500" : "text-gray-900")}>{item.answer?.value}</span>
                     )}
                     {inferred && !editing ? (
                         <>
@@ -310,6 +399,19 @@ export function RequestIntakeSection({
             cancelled = true;
         };
     }, [requestId, reloadKey]);
+    // While the agent reads the contract, look again until it is done; a
+    // failed look keeps the screen as it is and tries again.
+    const reading = intake?.prefill === "lendo";
+    const [missed, setMissed] = useState(0);
+    useEffect(() => {
+        if (!reading) return;
+        const timer = setTimeout(() => {
+            getRequestIntake(requestId)
+                .then(setIntake)
+                .catch(() => setMissed((n) => n + 1));
+        }, PREFILL_POLL_MS);
+        return () => clearTimeout(timer);
+    }, [reading, intake, missed, requestId]);
     if (!intake) return null;
     return (
         <IntakeChecklist

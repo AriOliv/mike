@@ -219,6 +219,13 @@ export type ConfiguredModel = {
      * turns without it. Off by default.
      */
     replayReasoning?: boolean;
+    /**
+     * Extra request headers for every call to this endpoint, e.g. a gateway's
+     * per-request switches (LiteLLM `x-litellm-enable-message-redaction`).
+     * Never credentials: auth stays in apiKey / apiKeyEnv, and Authorization
+     * cannot be set here.
+     */
+    headers?: Record<string, string>;
 };
 
 /**

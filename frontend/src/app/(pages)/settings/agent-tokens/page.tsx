@@ -63,7 +63,8 @@ type Draft = { name: string; workspace: string; scopes: McpScope[]; days: number
 const emptyDraft = (offered: typeof SCOPE_OPTIONS, workspace = "personal"): Draft => ({
     name: "",
     workspace,
-    scopes: offered.map((o) => o.scope),
+    // A new token starts with reading only; a write is ticked on purpose.
+    scopes: offered.filter((o) => o.readOnly).map((o) => o.scope),
     days: 30,
 });
 

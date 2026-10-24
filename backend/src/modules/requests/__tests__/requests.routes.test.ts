@@ -8,11 +8,15 @@ const service = vi.hoisted(() => ({
     decideTriage: vi.fn(),
     deliverRequest: vi.fn(),
     getRequest: vi.fn(),
+    getTerms: vi.fn(),
+    setTerms: vi.fn(),
     inviteParticipant: vi.fn(),
     listRequests: vi.fn(),
     postMessage: vi.fn(),
     revokeParticipant: vi.fn(),
     whoAmI: vi.fn(),
+    getRenewalSettings: vi.fn(),
+    setRenewalSettings: vi.fn(),
 }));
 vi.mock("../requests.service", () => service);
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: () => ({}) }));
@@ -58,6 +62,23 @@ describe("requests routes", () => {
         expect(service.createRequest).toHaveBeenLastCalledWith({}, caller, {});
     });
 
+    it("answers 422 with the field when a validation names one, so the form paints that field", async () => {
+        service.createRequest.mockResolvedValueOnce({
+            ok: false,
+            kind: "validation",
+            code: "field:counterparty_email",
+            detail: "Esse e-mail não parece certo. Confira e tente de novo.",
+        });
+        const bad = await request(app).post("/requests").send({ kind: "nda", counterparty_email: "x" }).expect(422);
+        expect(bad.body).toEqual({
+            detail: "Esse e-mail não parece certo. Confira e tente de novo.",
+            field: "counterparty_email",
+        });
+        // a validation without a field keeps its 400
+        service.createRequest.mockResolvedValueOnce({ ok: false, kind: "validation", code: "outro", detail: "Escolha o tipo de pedido." });
+        await request(app).post("/requests").send({}).expect(400);
+    });
+
     it("maps every action onto its service call and status", async () => {
         const view = okData({ id: "r" });
         service.whoAmI.mockResolvedValue(okData({ role: "head" }));
@@ -90,4 +111,39 @@ describe("requests routes", () => {
         service.getRequest.mockRejectedValue(new Error("boom"));
         await request(app).get("/requests/r").expect(500);
     });
+
+    it("reads and saves the contract's terms through the service", async () => {
+        service.getTerms.mockResolvedValueOnce(okData({ term_end: null }));
+        await request(app).get("/requests/r1/terms").expect(200);
+        expect(service.getTerms).toHaveBeenCalledWith({}, caller, "r1");
+        service.setTerms.mockResolvedValueOnce(okData({ term_months: 12 }));
+        await request(app).put("/requests/r1/terms").send({ term_months: 12 }).expect(200);
+        expect(service.setTerms).toHaveBeenCalledWith({}, caller, "r1", { term_months: 12 });
+        service.setTerms.mockResolvedValueOnce({ ok: false, kind: "validation", code: "field:term_months", detail: "Use um prazo de 1 mês ou mais." });
+        const bad = await request(app).put("/requests/r1/terms").send({ term_months: 0 }).expect(422);
+        expect(bad.body).toEqual({ detail: "Use um prazo de 1 mês ou mais.", field: "term_months" });
+    });
 });
+
+describe("renewal settings routes", () => {
+    it("reads the switch before an id would swallow the path", async () => {
+        service.getRenewalSettings.mockResolvedValue(okData({ enabled: true, lead_days: 60 }));
+        const res = await request(app).get("/requests/renewal-settings").expect(200);
+        expect(res.body).toEqual({ enabled: true, lead_days: 60 });
+        expect(service.getRenewalSettings).toHaveBeenCalledWith({}, caller);
+        expect(service.getRequest).not.toHaveBeenCalled();
+    });
+
+    it("changes it from the body", async () => {
+        service.setRenewalSettings.mockResolvedValue(okData({ enabled: false, lead_days: 30 }));
+        await request(app).put("/requests/renewal-settings").send({ enabled: false, lead_days: 30 }).expect(200);
+        expect(service.setRenewalSettings).toHaveBeenCalledWith({}, caller, { enabled: false, lead_days: 30 });
+    });
+
+    it("passes a refusal through, in Portuguese", async () => {
+        service.setRenewalSettings.mockResolvedValue({ ok: false, kind: "forbidden", detail: "Só a liderança do Legal pode fazer isso." });
+        const res = await request(app).put("/requests/renewal-settings").send({ enabled: true }).expect(403);
+        expect(JSON.stringify(res.body)).toContain("Só a liderança do Legal pode fazer isso.");
+    });
+});
+

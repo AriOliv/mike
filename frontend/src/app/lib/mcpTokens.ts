@@ -15,10 +15,11 @@ export const SCOPE_OPTIONS: readonly { scope: McpScope; label: string; hint: str
     { scope: "radar:read", label: "Ver o radar regulatório", hint: "Mudanças e contratos afetados", readOnly: true },
     { scope: "painel:read", label: "Ver o Painel do Legal", hint: "Só para a liderança do Legal", readOnly: true },
     { scope: "pedidos:read", label: "Ver pedidos", hint: "Os pedidos que você vê na tela", readOnly: true },
+    { scope: "feedback:write", label: "Reportar problemas do Mike", hint: "Envia um relato ao time de tecnologia, com a sua confirmação", readOnly: false },
 ];
 
 /** What a new token gets unless the person unticks it: reading only. */
-export const DEFAULT_SCOPES: McpScope[] = SCOPE_OPTIONS.map((o) => o.scope);
+export const DEFAULT_SCOPES: McpScope[] = SCOPE_OPTIONS.filter((o) => o.readOnly).map((o) => o.scope);
 
 /**
  * The permissions line under a token: one phrase when it has everything this
@@ -44,7 +45,7 @@ export type LegalRole = { configured: boolean; role: "head" | "team" | "requeste
  */
 export function scopesFor(who: LegalRole): typeof SCOPE_OPTIONS {
     const role = who && who.configured ? who.role : "team";
-    if (role === "requester") return SCOPE_OPTIONS.filter((o) => o.scope === "pedidos:read");
+    if (role === "requester") return SCOPE_OPTIONS.filter((o) => o.scope === "pedidos:read" || o.scope === "feedback:write");
     if (role === "team") return SCOPE_OPTIONS.filter((o) => o.scope !== "painel:read");
     return SCOPE_OPTIONS;
 }

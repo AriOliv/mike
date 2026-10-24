@@ -185,4 +185,31 @@ describe("AgentSuggestion editor slot", () => {
         fireEvent.keyDown(rich, { key: "a" });
         expect(onAccept).not.toHaveBeenCalled();
     });
+
+    it("says what happened to the document under an accepted card, and only an accepted one", () => {
+        const note = "Mantida como alteração rastreada para a contraparte.";
+        const decided = (kind: "aceito" | "editado" | "rejeitado") =>
+            render(
+                <AgentSuggestion
+                    agent="A"
+                    title="T"
+                    acceptedNote={note}
+                    decision={{ kind, by: "Duda", at: "2026-10-20T12:00:00Z" }}
+                />,
+            );
+        const accepted = decided("aceito");
+        expect(screen.getByText(note)).toBeInTheDocument();
+        accepted.unmount();
+        const edited = decided("editado");
+        expect(screen.queryByText(note)).not.toBeInTheDocument();
+        edited.unmount();
+        decided("rejeitado");
+        expect(screen.queryByText(note)).not.toBeInTheDocument();
+    });
+
+    it("shows no note under an accepted card that has none to give", () => {
+        render(<AgentSuggestion agent="A" title="T" decision={{ kind: "aceito", by: "Duda", at: "2026-10-20T12:00:00Z" }} />);
+        expect(screen.getByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
+        expect(screen.queryByText(/alteração rastreada/)).not.toBeInTheDocument();
+    });
 });

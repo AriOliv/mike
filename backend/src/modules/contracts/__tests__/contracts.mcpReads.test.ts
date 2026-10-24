@@ -2,7 +2,7 @@
 // and workspace cut as the home screen) and the two tools on top of it and
 // askAcervo. Fictional contracts only.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 
 const access = vi.hoisted(() => ({ checkProjectAccess: vi.fn(), listAccessibleProjectIds: vi.fn() }));
@@ -79,6 +79,16 @@ describe("listNoticeDeadlines", () => {
 });
 
 describe("mike_prazos_proximos", () => {
+    // The tool takes "today" from the real clock (the MCP runner does not inject one), and the fixtures have
+    // fixed deadlines: without a fixed clock this test turned red the day after the deadline passed (2026-10-22).
+    // Only Date is faked, so timers and the rest keep working.
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it("passes the token's workspace and shapes the deadlines for the agent", async () => {
         const fake = scriptedDb([
             { table: "projects", data: projects },
@@ -89,7 +99,7 @@ describe("mike_prazos_proximos", () => {
             dias: 180,
             prazos: [{ project_id: "p3", contrato: "NDA — Polaris", avisar_ate: "2026-10-22", renovacao_automatica: true, link: "https://mike.exemplo.test/projects/p3/review" }],
         });
-        expect((result.content as { text: string }[])[0].text).toMatch(/^1 aviso\(s\) prévio\(s\) nos próximos 180 dias; o primeiro vence em \d+ dia\(s\) \(NDA — Polaris\)\.$/);
+        expect((result.content as { text: string }[])[0].text).toMatch(/^1 aviso\(s\) prévio\(s\) nos próximos 180 dias; o primeiro vence em 1 dia\(s\) \(NDA — Polaris\)\.$/);
     });
 
     it("says when nothing is due, and is not for requesters", async () => {
