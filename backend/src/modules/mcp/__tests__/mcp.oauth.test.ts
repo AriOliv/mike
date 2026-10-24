@@ -279,4 +279,29 @@ describe("OAuth 2.1 for MCP clients", () => {
         const write = await fetch(authorize, { redirect: "manual" });
         expect(new URL(write.headers.get("location")!).searchParams.get("error")).toBe("invalid_scope");
     });
+    // The SDK's handlers carry their own per-IP limits (the app keeps /oauth/* out of the general one),
+    // so this proves they are ON as wired here: a fresh router, so the other tests' calls do not count.
+    it("rate-limits the OAuth endpoints per IP: 429 after the SDK's budget on token, register and authorize", async () => {
+        const fresh = express();
+        const router = buildOAuthRouter()!;
+        fresh.use(router);
+        const server = await new Promise<Server>((resolve) => {
+            const s = fresh.listen(0, "127.0.0.1", () => resolve(s));
+        });
+        try {
+            const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+            const hammer = async (path: string, init: RequestInit, budget: number) => {
+                for (let i = 0; i < budget; i++) expect((await fetch(`${base}${path}`, init)).status).not.toBe(429);
+                const over = await fetch(`${base}${path}`, init);
+                expect(over.status).toBe(429);
+                expect(over.headers.get("ratelimit-limit") ?? over.headers.get("ratelimit")).toBeTruthy();
+            };
+            const form = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "grant_type=authorization_code" };
+            await hammer("/oauth/token", form, 50);
+            await hammer("/oauth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, 20);
+            await hammer("/oauth/authorize", { redirect: "manual" }, 100);
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
 });

@@ -25,7 +25,6 @@ export const REFRESH_TTL_S = 30 * 86_400;
 const CODE_TTL_MS = 60_000;
 const REQUEST_TTL_MS = 10 * 60_000;
 
-const sha = (text: string) => crypto.createHash("sha256").update(text, "utf8").digest("hex");
 const secret = () => crypto.randomBytes(32).toString("base64url");
 
 /**
@@ -245,7 +244,8 @@ export async function decideAuthorization(
     }
     const code = `${OAUTH_PREFIX.code}${secret()}`;
     const { error } = await db.from("mcp_oauth_codes").insert({
-        code_hash: sha(code),
+        // A 256-bit random code, not a password a person chose: SHA-256 is the right hash.
+        code_hash: hashToken(code),
         client_id: req.data.client_id,
         user_id: caller.userId,
         org_id: orgId,
@@ -278,7 +278,7 @@ type CodeRow = {
 export class OAuthGrantError extends Error {}
 
 async function liveCode(db: Db, clientId: string, code: string, now: Date): Promise<CodeRow> {
-    const { data, error } = await db.from("mcp_oauth_codes").select("*").eq("code_hash", sha(code)).maybeSingle();
+    const { data, error } = await db.from("mcp_oauth_codes").select("*").eq("code_hash", hashToken(code)).maybeSingle();
     if (error) throw error;
     const row = data as CodeRow | null;
     if (!row || row.client_id !== clientId || row.used_at || Date.parse(row.expires_at) <= now.getTime())
