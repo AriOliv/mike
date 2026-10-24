@@ -76,6 +76,15 @@ run `npm run test:mutation`, confirm a real score, raise
 array in `backend/stryker.config.json`. The last honest measurement is
 below.
 
+**Debt (roadmap, owner: whoever bumps `@stryker-mutator/*`):** the gate stays
+blocked and is not re-enabled by the sandbox fixes below. Until Stryker
+supports vitest 5, a green `mutation.yml` run is not expected. Tests that read
+files outside `backend/` (`docs/product/*`) must skip when the file is absent,
+because Stryker runs them from a copy of `backend/` (`.stryker-tmp`): the
+Ficha and Controle drift checks do. Fixing that only removes one reason the
+dry run failed (2026-10-24, run 40053428943); the 0.00 score above is the
+other, and it remains.
+
 ### Reading the report
 
 Open `backend/reports/mutation/mutation.html` (in CI: download the

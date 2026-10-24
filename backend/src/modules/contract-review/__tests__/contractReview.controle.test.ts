@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -44,8 +44,10 @@ describe("Controle de Contratos columns", () => {
             expect(CONTROLE_COLUMNS.find((c) => c.letter === start)!.group).toBe(group);
     });
 
-    it("maps each column to the Ficha field the schema assigns it (x-planilha)", () => {
-        const schemaPath = path.resolve(__dirname, "../../../../../docs/product/contract-schema.v1.json");
+    // The schema lives outside backend/ (docs/product), so it is absent when the tests run from a copy of
+    // backend/ (Stryker's sandbox): the drift check is skipped there, as the Ficha test does for its YAML.
+    const schemaPath = path.resolve(__dirname, "../../../../../docs/product/contract-schema.v1.json");
+    it.skipIf(!existsSync(schemaPath))("maps each column to the Ficha field the schema assigns it (x-planilha)", () => {
         const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
         const byLetter = new Map<string, { field: string; origin: string | null }>();
         const walk = (node: Record<string, unknown>, at: string) => {
