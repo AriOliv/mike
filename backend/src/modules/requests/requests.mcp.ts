@@ -2,10 +2,12 @@
 // legal team and follows up for a person, and the team works its queue,
 // through the same service functions and role checks as the screens.
 //
-// Reads (Phase 1): mike_pedidos_listar_meus, _ler, _status_e_plano, _fila.
+// Reads (Phase 1): mike_pedidos_listar_meus, _ler, _status_e_plano, _fila,
+// _checklist.
 // Writes (Phase 2, two steps: `confirm.preview` changes nothing and the mcp
 // module asks for the person's ok before `handler` runs): _criar,
-// _responder_duvida, _assumir, _mudar_etapa, _decidir_triagem.
+// _responder_checklist, _responder_duvida, _assumir, _mudar_etapa,
+// _decidir_triagem.
 //
 // Every write goes out with `ctx.actor` on the caller, so the card's
 // activity reads "<cliente> em nome de <Nome>", and a request created here
@@ -31,6 +33,7 @@ import {
     type RequestTeamView,
 } from "./requests.core";
 import { requestLink } from "./requests.notifications";
+import { answerIntake, getIntake, type RequestIntake } from "./requests.checklist";
 import {
     KIND_LABELS,
     LANE_LABELS,
@@ -426,6 +429,12 @@ const criarInput = {
         .max(200)
         .optional()
         .describe("Repetir a mesma chave devolve o pedido já criado, sem duplicar."),
+    checklist: z
+        .record(z.string(), z.string().max(2000))
+        .optional()
+        .describe(
+            "Respostas do checklist que a pessoa já deu, por chave (veja mike_pedidos_checklist). Sim/não: \"sim\" ou \"não\", com o detalhe depois de um ponto.",
+        ),
 };
 
 function createInput(ctx: McpContext, input: z.infer<z.ZodObject<typeof criarInput>>) {
@@ -439,8 +448,63 @@ function createInput(ctx: McpContext, input: z.infer<z.ZodObject<typeof criarInp
         needed_by: input.precisa_ate,
         document_ids: input.anexos,
         idempotency_key: input.chave_idempotencia,
+        intake: input.checklist ? checklistAnswers(input.checklist) : undefined,
         source: { channel: "mcp", client: ctx.clientName },
     };
+}
+
+/** "sim. As duas partes" → the choice "sim" with the detail after it; anything else as given. */
+function checklistAnswers(given: Record<string, string>): Record<string, { value: string; detail?: string }> {
+    const out: Record<string, { value: string; detail?: string }> = {};
+    for (const [key, raw] of Object.entries(given)) {
+        const m = /^\s*(sim|n[aã]o)\s*[.,;:—-]\s*(.+)$/i.exec(raw);
+        out[key] = m ? { value: m[1], detail: m[2].trim() } : { value: raw };
+    }
+    return out;
+}
+
+type ChecklistPt = {
+    codigo: string;
+    completo: boolean;
+    respondidas: number;
+    total: number;
+    itens: {
+        chave: string;
+        pergunta: string;
+        obrigatoria: boolean;
+        estado: "confirmado" | "inferido, confirme" | "pendente";
+        resposta: string | null;
+        trecho_do_contrato: string | null;
+        dica?: string;
+    }[];
+    pendentes: string[];
+    para_confirmar: string[];
+};
+
+function checklistPt(code: string, c: RequestIntake): ChecklistPt {
+    const label = new Map(c.items.map((i) => [i.key, i.label]));
+    return {
+        codigo: code,
+        completo: c.complete,
+        respondidas: c.answered,
+        total: c.total,
+        itens: c.items.map((i) => ({
+            chave: i.key,
+            pergunta: i.label + (i.kind === "yes_no" && i.detail_label ? ` (sim/não; se sim: ${i.detail_label})` : ""),
+            obrigatoria: i.required,
+            estado: i.state === "inferido" ? "inferido, confirme" : i.state,
+            resposta: i.answer?.value ?? null,
+            trecho_do_contrato: i.answer?.quote ?? null,
+            ...(i.hint ? { dica: i.hint } : {}),
+        })),
+        pendentes: c.pending.map((k) => label.get(k) ?? k),
+        para_confirmar: c.to_confirm.map((k) => label.get(k) ?? k),
+    };
+}
+
+async function codeOf(ctx: McpContext, id: string): Promise<string> {
+    const view = await getRequest(ctx.db, callerOf(ctx), id);
+    return view.ok ? view.data.code : "";
 }
 
 const criar = defineTool({
@@ -478,6 +542,96 @@ const criar = defineTool({
         return ja_existia
             ? `Esse pedido já existia: ${p.codigo} · ${p.titulo}.`
             : `Pedido ${p.codigo} criado: ${p.titulo}, prazo ${p.prazo}. Acompanhe em ${p.link}`;
+    },
+});
+
+const checklist = defineTool({
+    name: "mike_pedidos_checklist",
+    title: "Checklist de um pedido",
+    description:
+        "O que o Legal precisa saber antes de analisar o contrato: cada pergunta, a resposta, e o estado — confirmada, " +
+        "lida no contrato pelo agente (\"inferido, confirme\", com o trecho) ou pendente. Pergunte à pessoa só o que está pendente " +
+        "ou para confirmar, nunca o que já está confirmado.",
+    input: { pedido: pedidoRef },
+    scope: "pedidos:read",
+    roles: EVERYONE,
+    access: "read",
+    annotations: READ,
+    async handler(ctx, input): Promise<ServiceResult<ChecklistPt>> {
+        const id = await idOf(ctx, input.pedido);
+        if (!id.ok) return id;
+        const c = await getIntake(ctx.db, callerOf(ctx), id.data);
+        if (!c.ok) return c;
+        return ok(checklistPt(await codeOf(ctx, id.data), c.data));
+    },
+    summary(out: ChecklistPt) {
+        if (out.completo) return `Checklist do ${out.codigo} completo (${out.respondidas} de ${out.total}).`;
+        const missing = out.pendentes.filter((p) => !out.para_confirmar.includes(p));
+        return (
+            `Checklist do ${out.codigo}: ${out.respondidas} de ${out.total} confirmadas.` +
+            (out.para_confirmar.length ? ` Para confirmar: ${out.para_confirmar.join("; ")}.` : "") +
+            (missing.length ? ` Falta: ${missing.join("; ")}.` : "")
+        );
+    },
+});
+
+const responderChecklistInput = {
+    pedido: pedidoRef,
+    respostas: z
+        .record(z.string(), z.string().min(1).max(2000))
+        .optional()
+        .describe("Respostas por chave. Sim/não: \"sim\" ou \"não\", com o detalhe depois de um ponto (\"sim. As duas partes\")."),
+    confirmar: z
+        .array(z.string().max(40))
+        .max(20)
+        .optional()
+        .describe("Chaves de respostas lidas no contrato que a pessoa confirma como estão."),
+};
+
+const responderChecklist = defineTool({
+    name: "mike_pedidos_responder_checklist",
+    title: "Responder o checklist de um pedido",
+    description:
+        "Grava as respostas da pessoa no checklist e confirma as que o agente leu no contrato. Quando a última pendência fecha, " +
+        "o Legal começa a análise do contrato. Pede confirmação antes de gravar.",
+    input: responderChecklistInput,
+    scope: "pedidos:write",
+    roles: EVERYONE,
+    access: "write",
+    annotations: { ...WRITE, idempotentHint: true },
+    confirm: {
+        async preview(ctx, input) {
+            const id = await idOf(ctx, input.pedido);
+            if (!id.ok) return id;
+            const c = await getIntake(ctx.db, callerOf(ctx), id.data);
+            if (!c.ok) return c;
+            if (!c.data.can_answer) return failure("forbidden", "O checklist do pedido é de quem pediu e do time do Legal.");
+            const byKey = new Map(c.data.items.map((i) => [i.key, i.label]));
+            const keys = [...Object.keys(input.respostas ?? {}), ...(input.confirmar ?? [])];
+            if (keys.length === 0) return failure("validation", "Envie ao menos uma resposta ou confirmação.");
+            const unknown = keys.find((k) => !byKey.has(k));
+            if (unknown) return failure("validation", "Uma das respostas não corresponde a nenhuma pergunta do checklist.");
+            const lines = [
+                ...Object.entries(input.respostas ?? {}).map(([k, v]) => `${byKey.get(k)}: ${v}`),
+                ...(input.confirmar ?? []).map((k) => `${byKey.get(k)}: confirmar como está`),
+            ];
+            return ok({ resumo: `Gravar no checklist do ${await codeOf(ctx, id.data)}: ${lines.join(" · ")}.` });
+        },
+    },
+    async handler(ctx, input): Promise<ServiceResult<ChecklistPt>> {
+        const id = await idOf(ctx, input.pedido);
+        if (!id.ok) return id;
+        const saved = await answerIntake(ctx.db, callerOf(ctx), id.data, {
+            answers: input.respostas ? checklistAnswers(input.respostas) : undefined,
+            confirm: input.confirmar,
+        });
+        if (!saved.ok) return saved;
+        return ok(checklistPt(await codeOf(ctx, id.data), saved.data));
+    },
+    summary(out: ChecklistPt) {
+        return out.completo
+            ? `Checklist do ${out.codigo} completo. O Legal vai analisar o contrato.`
+            : `Respostas gravadas no ${out.codigo}. Falta: ${out.pendentes.join("; ")}.`;
     },
 });
 
@@ -703,9 +857,16 @@ const decidirTriagem = defineTool({
 });
 
 /** Phase 1: reads only (doc 09 §10). */
-export const REQUEST_READ_TOOLS: AnyMcpTool[] = [listarMeus, ler, statusEPlano, fila];
+export const REQUEST_READ_TOOLS: AnyMcpTool[] = [listarMeus, ler, statusEPlano, fila, checklist];
 /** Phase 2: writes, each with a preview the mcp module confirms first. */
-export const REQUEST_WRITE_TOOLS: AnyMcpTool[] = [criar, responderDuvida, assumir, mudarEtapa, decidirTriagem];
+export const REQUEST_WRITE_TOOLS: AnyMcpTool[] = [
+    criar,
+    responderChecklist,
+    responderDuvida,
+    assumir,
+    mudarEtapa,
+    decidirTriagem,
+];
 /**
  * Everything the mcp catalog takes. The server refuses any `write` until
  * Phase 2 and leaves it out of the catalog, so the writes travel along.

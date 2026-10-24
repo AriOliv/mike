@@ -34,7 +34,7 @@ function world() {
     let number = 0;
     return memoryDb(
         {
-            legal_teams: [{ org_id: ORG, sla_days: {}, auto_assign: false, created_at: "2026-01-01" }],
+            legal_teams: [{ org_id: ORG, sla_days: {}, auto_assign: false, intake_template: [], created_at: "2026-01-01" }],
             org_members: [
                 { org_id: ORG, user_id: HEAD.userId, role: "owner", created_at: "2026-01-01" },
                 { org_id: ORG, user_id: ANALYST.userId, role: "member", created_at: "2026-01-02" },
@@ -62,6 +62,9 @@ function world() {
                         delivery: null,
                         delivered_at: null,
                         source: { channel: "form" },
+                        intake: {},
+                        intake_completed_at: null,
+                        critical_alert_at: null,
                         idempotency_key: null,
                         created_at: now,
                         updated_at: now,
@@ -119,9 +122,9 @@ async function preview(t: AnyMcpTool, ctx: McpContext, args: Record<string, unkn
     return t.confirm!.preview(ctx, z.object(t.input).parse(args));
 }
 
-async function pedido(w: ReturnType<typeof world>, who = REQUESTER, name = "Ana") {
+async function pedido(w: ReturnType<typeof world>, who = REQUESTER, name = "Ana", tipo = "nda") {
     const { result } = await call(tool("criar"), ctxOf(w, who, name, "requester"), {
-        tipo: "nda",
+        tipo,
         descricao: "Vamos trocar dados de clientes num piloto.",
         contraparte: "Polaris Tecnologia",
         area: "Comercial",
@@ -144,14 +147,16 @@ describe("the catalog", () => {
             "mike_pedidos_ler",
             "mike_pedidos_status_e_plano",
             "mike_pedidos_fila",
+            "mike_pedidos_checklist",
         ]);
-        expect(REQUEST_TOOLS).toHaveLength(9);
+        expect(REQUEST_TOOLS).toHaveLength(11);
         for (const t of REQUEST_READ_TOOLS) {
             expect(t).toMatchObject({ scope: "pedidos:read", access: "read", annotations: { readOnlyHint: true, openWorldHint: false } });
             expect(t.confirm).toBeUndefined();
         }
         expect(REQUEST_WRITE_TOOLS.map((t) => t.name)).toEqual([
             "mike_pedidos_criar",
+            "mike_pedidos_responder_checklist",
             "mike_pedidos_responder_duvida",
             "mike_pedidos_assumir",
             "mike_pedidos_mudar_etapa",
@@ -346,6 +351,102 @@ describe("the team through an assistant", () => {
             expect(detail).toMatch(/[ãçéêíóúõ]|Só|Conte/);
             expect(detail).not.toMatch(/[0-9a-f]{8}-|_id|assignee|lane|request/i);
         }
+    });
+});
+
+describe("the checklist through an assistant", () => {
+    it("asks only the questions of the request's kind: an NDA has its own and no value, a legal question has one", async () => {
+        const w = world();
+        const ana = ctxOf(w, REQUESTER, "Ana", "requester");
+        const nda = await pedido(w);
+        const r = await call(tool("checklist"), ana, { pedido: nda });
+        if (!r.result.ok) throw new Error("no checklist");
+        const keys = (r.result.data as { itens: { chave: string }[] }).itens.map((i) => i.chave);
+        expect(keys).toEqual(expect.arrayContaining(["quem_compartilha", "finalidade", "modelo"]));
+        expect(keys).not.toContain("valor_recorrencia");
+        expect(r.text).not.toMatch(/Valor e recorrência/);
+        const duvida = await pedido(w, REQUESTER, "Ana", "parecer");
+        const d = await call(tool("checklist"), ana, { pedido: duvida });
+        if (!d.result.ok) throw new Error("no checklist");
+        expect((d.result.data as { itens: { chave: string }[] }).itens.map((i) => i.chave)).toEqual(["duvida", "contraparte"]);
+    });
+
+    it("shows what is confirmed, inferred and open, and asks only that", async () => {
+        const w = world();
+        const code = await pedido(w, REQUESTER, "Ana", "revisao");
+        const ana = ctxOf(w, REQUESTER, "Ana", "requester");
+        const row = w.table("legal_requests")[0];
+        row.intake = {
+            contraparte: { value: "Polaris Tecnologia", source: "requester", confirmed: true, updated_at: "x" },
+            valor_recorrencia: { value: "R$ 5 mil por mês", source: "inferred", confirmed: false, quote: "R$ 5.000,00 mensais", updated_at: "x" },
+        };
+        const r = await call(tool("checklist"), ana, { pedido: code });
+        expect(r.result).toMatchObject({ ok: true, data: { codigo: code, completo: false, respondidas: 1, total: 9 } });
+        if (!r.result.ok) return;
+        const out = r.result.data as { itens: { chave: string; estado: string; trecho_do_contrato: string | null; pergunta: string }[] };
+        expect(out.itens.find((i) => i.chave === "valor_recorrencia")).toMatchObject({
+            estado: "inferido, confirme",
+            trecho_do_contrato: "R$ 5.000,00 mensais",
+        });
+        expect(out.itens.find((i) => i.chave === "confidencial")?.pergunta).toBe(
+            "Há compartilhamento de informação confidencial? (sim/não; se sim: Quem compartilha?)",
+        );
+        expect(r.text).toMatch(/^Checklist do LEG-0001: 1 de 9 confirmadas\. Para confirmar: Valor e recorrência de pagamento\. Falta: Quem aprovou/);
+        expect(r.text).not.toMatch(/Falta: .*Valor e recorrência/);
+        // A stranger reads "not found", like the request itself.
+        expect((await call(tool("checklist"), ctxOf(w, OTHER, "Beto", "requester"), { pedido: code })).result).toMatchObject({
+            ok: false,
+            kind: "not_found",
+        });
+    });
+
+    it("answers and confirms in two steps, and closing it is the requester's on the card", async () => {
+        const w = world();
+        const code = await pedido(w, REQUESTER, "Ana", "revisao");
+        const ana = ctxOf(w, REQUESTER, "Ana", "requester");
+        w.table("legal_requests")[0].intake = {
+            valor_recorrencia: { value: "R$ 5 mil", source: "inferred", confirmed: false, quote: "R$ 5.000,00", updated_at: "x" },
+        };
+        expect(await preview(tool("responder_checklist"), ana, { pedido: code })).toMatchObject({ ok: false, kind: "validation" });
+        expect(await preview(tool("responder_checklist"), ana, { pedido: code, respostas: { bogus: "x" } })).toMatchObject({
+            ok: false,
+            detail: "Uma das respostas não corresponde a nenhuma pergunta do checklist.",
+        });
+        const answers = {
+            contraparte: "Polaris Tecnologia",
+            aprovacao: "Diretoria",
+            empresa_signataria: "Exemplo Pagamentos Ltda.",
+            motivo_condicoes: "Piloto de dados.",
+            de_acordo: "sim",
+            inicio: "01/11/2026",
+            confidencial: "sim. As duas partes",
+            dados_pessoais: "não",
+        };
+        const p = await preview(tool("responder_checklist"), ana, { pedido: code, respostas: answers, confirmar: ["valor_recorrencia"] });
+        expect(p).toMatchObject({ ok: true });
+        expect(p.ok && p.data.resumo).toMatch(/^Gravar no checklist do LEG-0001: Nome da contraparte: Polaris Tecnologia · Quem aprovou/);
+        expect(p.ok && p.data.resumo).toContain("Valor e recorrência de pagamento: confirmar como está");
+        expect(w.table("legal_requests")[0].intake_completed_at).toBeNull();
+
+        const r = await call(tool("responder_checklist"), ana, { pedido: code, respostas: answers, confirmar: ["valor_recorrencia"] });
+        expect(r.text).toBe("Checklist do LEG-0001 completo. O Legal vai analisar o contrato.");
+        const saved = w.table("legal_requests")[0].intake as Record<string, { detail?: string; confirmed: boolean }>;
+        expect(saved.confidencial).toMatchObject({ detail: "As duas partes", confirmed: true });
+        expect(saved.valor_recorrencia.confirmed).toBe(true);
+    });
+
+    it("takes checklist answers with a new request", async () => {
+        const w = world();
+        const { result } = await call(tool("criar"), ctxOf(w, REQUESTER, "Ana", "requester"), {
+            tipo: "nda",
+            descricao: "Piloto.",
+            checklist: { contraparte: "Polaris", confidencial: "sim — só nós" },
+        });
+        expect(result.ok).toBe(true);
+        expect(w.table("legal_requests")[0].intake).toMatchObject({
+            contraparte: { value: "Polaris", confirmed: true },
+            confidencial: { choice: "sim", detail: "só nós" },
+        });
     });
 });
 
