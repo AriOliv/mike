@@ -9,7 +9,7 @@ vi.mock("@/app/lib/errorReporting", () => ({
     reportNetworkFailure: vi.fn(),
 }));
 
-import { createMcpToken, listMcpTokens, revokeMcpToken } from "./mikeApi";
+import { createMcpToken, decideMcpAuthorization, getMcpAuthorization, listMcpTokens, revokeMcpToken } from "./mikeApi";
 
 const fetchMock = vi.fn();
 const jsonResponse = (body: unknown, init?: ResponseInit) =>
@@ -42,5 +42,16 @@ describe("access tokens for agents", () => {
         await revokeMcpToken("t/3");
         expect(lastCall().url).toMatch(/\/mcp-tokens\/t%2F3$/);
         expect(lastCall().init.method).toBe("DELETE");
+    });
+
+    it("reads and answers an app's request to connect", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse({ id: "p/1" }));
+        await getMcpAuthorization("p/1");
+        expect(lastCall().url).toMatch(/\/mcp-oauth\/pedido\/p%2F1$/);
+
+        fetchMock.mockResolvedValueOnce(jsonResponse({ redirect: "https://app.exemplo.test/cb?code=x" }));
+        expect(await decideMcpAuthorization({ pedido: "p1", aprovar: true, espaco: "org-1" })).toEqual({ redirect: "https://app.exemplo.test/cb?code=x" });
+        expect(lastCall().init.method).toBe("POST");
+        expect(JSON.parse(lastCall().init.body as string)).toEqual({ pedido: "p1", aprovar: true, espaco: "org-1" });
     });
 });

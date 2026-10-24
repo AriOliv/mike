@@ -34,7 +34,7 @@ export async function buildContext(
         scopes: token.scopes,
         clientName,
         tokenId: token.id,
-        tokenKind: token.kind,
+        tokenKind: token.kind === "servico" ? "servico" : token.kind === "oauth" ? "oauth" : "pessoal",
         linkId: token.linkId,
         actor: {
             actorType: "agent",
