@@ -9,6 +9,8 @@ const api = vi.hoisted(() => ({
     listNotionDatabases: vi.fn(),
     describeNotionBoard: vi.fn(),
     saveNotionMapping: vi.fn(),
+    previewNotionImport: vi.fn(),
+    applyNotionImport: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (actual) => ({ ...(await actual<typeof import("@/app/lib/mikeApi")>()), ...api }));
 vi.mock("./OrganizationSettingsShell", () => ({ useOrganizationSettings: () => ({ orgId: "org-1" }) }));
@@ -189,5 +191,57 @@ describe("NotionIntegration", () => {
         await act(async () => fireEvent.click(screen.getByRole("button", { name: "Conectar" })));
         expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ action: "conectar o Notion" }));
         expect(screen.getByDisplayValue(TOKEN)).toBeInTheDocument();
+    });
+
+    it("simulates the import, shows duplicates and warnings, then imports", async () => {
+        const plan = {
+            total: 6,
+            counts: { linked: 1, project: 1, duplicate: 1, new: 2, skipped: 1 },
+            items: [
+                { page_id: "p1", name: "Contrato A", counterparty: null, lane: "revisao" as const, tag: null, match: "project" as const, project_id: "x", warnings: ["O link aponta para localhost."] },
+                { page_id: "p2", name: "Contrato B", counterparty: null, lane: null, tag: null, match: "new" as const, project_id: null, warnings: [] },
+            ],
+            skipped: [{ page_id: "p3", reason: "A página não tem nome de contrato." }],
+        };
+        api.getNotionConnection.mockResolvedValue(conn({ connected: true, database_id: "db1", database_title: "Esteira (fictícia)", field_map: { Contrato: "name", Etapa: "lane" } }));
+        api.previewNotionImport.mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, counts: { linked: 5, project: 0, duplicate: 0, new: 0, skipped: 1 } });
+        api.applyNotionImport.mockResolvedValueOnce({ created: 2, linked: 2, skipped: 1, failed: 0 });
+        render(<NotionIntegration />);
+        const simulate = await screen.findByRole("button", { name: "Simular importação" });
+        expect(screen.queryByRole("button", { name: "Importar agora" })).not.toBeInTheDocument();
+        await act(async () => fireEvent.click(simulate));
+        const summary = screen.getByRole("list", { name: "Resumo da simulação" });
+        expect(within(summary).getByText("2 novos")).toBeInTheDocument();
+        expect(within(summary).getByText("1 duplicados")).toBeInTheDocument();
+        expect(within(summary).getByText("1 ficam de fora")).toBeInTheDocument();
+        expect(within(screen.getByRole("list", { name: "Avisos da importação" })).getByText("O link aponta para localhost.")).toBeInTheDocument();
+        await act(async () => fireEvent.click(screen.getByRole("button", { name: "Importar agora" })));
+        expect(api.applyNotionImport).toHaveBeenCalledWith("org-1");
+        expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: "success", message: "Importação feita: 2 novos, 2 ligados a cards existentes." }));
+        // Nothing left to import after it.
+        expect(screen.getByRole("button", { name: "Importar agora" })).toBeDisabled();
+    });
+
+    it("tells a partial import and keeps going when the re-read fails", async () => {
+        api.getNotionConnection.mockResolvedValue(conn({ connected: true, database_id: "db1", field_map: { Contrato: "name", Etapa: "lane" } }));
+        const plan = { total: 1, counts: { linked: 0, project: 0, duplicate: 0, new: 1, skipped: 0 }, items: [], skipped: [] };
+        api.previewNotionImport.mockResolvedValueOnce(plan).mockRejectedValueOnce(new Error("x")).mockRejectedValueOnce(new Error("y"));
+        api.applyNotionImport.mockResolvedValueOnce({ created: 0, linked: 0, skipped: 0, failed: 1 }).mockRejectedValueOnce(new Error("x"));
+        render(<NotionIntegration />);
+        const simulate = await screen.findByRole("button", { name: "Simular importação" });
+        await act(async () => fireEvent.click(simulate));
+        expect(screen.queryByRole("list", { name: "Avisos da importação" })).not.toBeInTheDocument();
+        await act(async () => fireEvent.click(screen.getByRole("button", { name: "Importar agora" })));
+        expect(toasts.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: "error", message: expect.stringContaining("1 com erro") }));
+        expect(screen.queryByRole("list", { name: "Resumo da simulação" })).not.toBeInTheDocument();
+        await act(async () => fireEvent.click(screen.getByRole("button", { name: "Simular importação" })));
+        expect(errors.notifyError).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ action: "simular a importação" }));
+    });
+
+    it("hides the import until the mapping is saved", async () => {
+        api.getNotionConnection.mockResolvedValue(conn({ connected: true, database_id: "db1", field_map: { Contrato: "name" } }));
+        render(<NotionIntegration />);
+        await screen.findByRole("heading", { name: "Base" });
+        expect(screen.queryByRole("button", { name: "Simular importação" })).not.toBeInTheDocument();
     });
 });

@@ -11,6 +11,8 @@ vi.mock("@/app/lib/errorReporting", () => ({
 }));
 
 import {
+    applyNotionImport,
+    previewNotionImport,
     connectNotion,
     describeNotionBoard,
     disconnectNotion,
@@ -61,5 +63,18 @@ describe("notion integration", () => {
         expect(lastFetchCall().url).toMatch(/\/integrations\/notion\/mapping$/);
         expect(lastFetchCall().init.method).toBe("PUT");
         expect(jsonBody()).toEqual(mapping);
+    });
+});
+
+describe("notion import", () => {
+    it("simulates with GET and imports with POST, writing back only when asked", async () => {
+        await previewNotionImport("org-1");
+        expect(lastFetchCall().url).toMatch(/\/integrations\/notion\/import$/);
+        expect(lastFetchCall().init.method ?? "GET").toBe("GET");
+        await applyNotionImport("org-1");
+        expect(lastFetchCall().init.method).toBe("POST");
+        expect(jsonBody()).toEqual({ write_back: false });
+        await applyNotionImport("org-1", true);
+        expect(jsonBody()).toEqual({ write_back: true });
     });
 });

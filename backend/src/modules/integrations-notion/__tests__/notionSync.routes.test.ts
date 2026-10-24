@@ -9,6 +9,8 @@ const service = vi.hoisted(() => ({
     listNotionDatabases: vi.fn(),
     describeNotionBoard: vi.fn(),
     saveNotionMapping: vi.fn(),
+    previewNotionImport: vi.fn(),
+    applyNotionImport: vi.fn(),
 }));
 vi.mock("../notionSync.service", () => service);
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: () => ({}) }));
@@ -53,6 +55,15 @@ describe("notion integration routes", () => {
             .send({ database_id: "abc", field_map: {}, stage_map: {}, poll_minutes: 10, sync_enabled: true })
             .expect(200);
         expect(service.saveNotionMapping).toHaveBeenCalledWith({}, caller, "o1", { database_id: "abc", field_map: {}, stage_map: {}, poll_minutes: 10 });
+    });
+
+    it("previews and applies the import, writing back only when asked", async () => {
+        await request(app).get("/orgs/o1/integrations/notion/import").expect(200);
+        expect(service.previewNotionImport).toHaveBeenCalledWith({}, caller, "o1");
+        await request(app).post("/orgs/o1/integrations/notion/import").send({ write_back: true }).expect(200);
+        expect(service.applyNotionImport).toHaveBeenLastCalledWith({}, caller, "o1", { writeBack: true });
+        await request(app).post("/orgs/o1/integrations/notion/import").send({ write_back: "sim" }).expect(200);
+        expect(service.applyNotionImport).toHaveBeenLastCalledWith({}, caller, "o1", { writeBack: false });
     });
 
     it("answers a refusal with its status and sentence", async () => {

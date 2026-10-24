@@ -30,3 +30,13 @@ export {
     type MikeField,
 } from "./notion.mapping";
 export { notionClient, notionErrorMessage, NotionError, type Fetch, type NotionClient } from "./notion.client";
+export {
+    previewNotionImport,
+    applyNotionImport,
+    planImport,
+    readAllPages,
+    type ImportPlan,
+    type ImportItem,
+    type ImportMatch,
+    type ImportResult,
+} from "./notion.import";

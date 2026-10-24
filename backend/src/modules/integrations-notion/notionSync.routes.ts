@@ -5,6 +5,8 @@
 //   GET    /orgs/:orgId/integrations/notion/databases   the bases the integration can see
 //   GET    /orgs/:orgId/integrations/notion/board?database_id=…  schema + suggested mapping
 //   PUT    /orgs/:orgId/integrations/notion/mapping     save base and mapping
+//   GET    /orgs/:orgId/integrations/notion/import      dry run: what would come in
+//   POST   /orgs/:orgId/integrations/notion/import      import (writes back only with sync on)
 
 import { Router, type Response } from "express";
 import { requireAuth } from "../../middleware/auth";
@@ -18,6 +20,8 @@ import {
     getNotionConnection,
     listNotionDatabases,
     saveNotionMapping,
+    previewNotionImport,
+    applyNotionImport,
     type Caller,
 } from "./notionSync.service";
 
@@ -90,6 +94,23 @@ notionIntegrationRouter.put(
                 poll_minutes,
             }),
         );
+    }),
+);
+
+// What an import would do (dry run), and doing it.
+notionIntegrationRouter.get(
+    "/import",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await previewNotionImport(createServerSupabase(), caller(res), req.params.orgId));
+    }),
+);
+
+notionIntegrationRouter.post(
+    "/import",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        send(res, await applyNotionImport(createServerSupabase(), caller(res), req.params.orgId, { writeBack: body(req).write_back === true }));
     }),
 );
 

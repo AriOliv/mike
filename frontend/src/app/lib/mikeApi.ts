@@ -6061,6 +6061,35 @@ export async function saveNotionMapping(
     return apiRequest(notionPath(orgId, "/mapping"), notionJson("PUT", mapping));
 }
 
+export type NotionImportMatch = "linked" | "project" | "duplicate" | "new";
+
+export interface NotionImportPlan {
+    total: number;
+    counts: Record<NotionImportMatch, number> & { skipped: number };
+    items: {
+        page_id: string;
+        name: string;
+        counterparty: string | null;
+        lane: NotionLane | null;
+        tag: string | null;
+        match: NotionImportMatch;
+        project_id: string | null;
+        warnings: string[];
+    }[];
+    skipped: { page_id: string; reason: string }[];
+}
+
+export async function previewNotionImport(orgId: string): Promise<NotionImportPlan> {
+    return apiRequest(notionPath(orgId, "/import"));
+}
+
+export async function applyNotionImport(
+    orgId: string,
+    writeBack = false,
+): Promise<{ created: number; linked: number; skipped: number; failed: number }> {
+    return apiRequest(notionPath(orgId, "/import"), notionJson("POST", { write_back: writeBack }));
+}
+
 
 // ── Agente do Legal (org settings) ──────────────────────────────────────────
 
