@@ -4829,7 +4829,7 @@ export async function inviteRequestParticipant(
     return apiRequest(`/requests/${id}/participants`, jsonPost(body));
 }
 
-export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money" | "choice" | "multi_choice";
+export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money" | "choice" | "multi_choice" | "contract";
 
 export interface IntakeItem {
     key: string;
@@ -4879,6 +4879,15 @@ export interface RequestIntake {
     kind_changed?: { from: string; to: string } | null;
     /** No question is required for this kind (a legal question): the screen says so instead of "0 de 0". */
     nothing_to_fill?: boolean;
+    /** The contract an amendment changes, when one was picked from the Mike. */
+    parent_contract?: ContractChoice | null;
+}
+
+/** A contract of the Mike to tie a request to: only its name and counterparty. */
+export interface ContractChoice {
+    id: string;
+    name: string;
+    counterparty: string | null;
 }
 
 export type RequestTermKey = "counterparty" | "term_start" | "term_months";
@@ -4926,7 +4935,17 @@ export type IntakeAnswerInput =
     | boolean
     | string[]
     | { value: string | boolean; detail?: string }
+    | { project_id: string }
     | { unknown: true };
+
+/** Contracts of the Mike matching a name or counterparty (two letters at least). */
+export async function searchRequestContracts(q: string, signal?: AbortSignal): Promise<ContractChoice[]> {
+    const { contracts } = await apiRequest<{ contracts: ContractChoice[] }>(
+        `/requests/contracts?q=${encodeURIComponent(q)}`,
+        { signal },
+    );
+    return contracts;
+}
 
 export async function getRequestIntake(id: string): Promise<RequestIntake> {
     return apiRequest(`/requests/${id}/intake`);

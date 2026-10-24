@@ -1,15 +1,15 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RequestIntake } from "@/app/lib/mikeApi";
 
-const api = vi.hoisted(() => ({ getRequestIntake: vi.fn(), answerRequestIntake: vi.fn() }));
+const api = vi.hoisted(() => ({ getRequestIntake: vi.fn(), answerRequestIntake: vi.fn(), searchRequestContracts: vi.fn() }));
 vi.mock("@/app/lib/mikeApi", () => api);
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock("@/app/components/ui/toast", () => toast);
 const errors = vi.hoisted(() => ({ notifyError: vi.fn() }));
 vi.mock("@/app/lib/userFacingError", () => errors);
 
-import { IntakeChecklist, PREFILL_POLL_MS, RequestIntakeSection } from "./IntakeChecklist";
+import { CONTRACT_SEARCH_MS, IntakeChecklist, PREFILL_POLL_MS, RequestIntakeSection } from "./IntakeChecklist";
 
 const at = "2026-10-22T12:00:00Z";
 function intake(over: Partial<RequestIntake> = {}): RequestIntake {
@@ -59,6 +59,7 @@ function intake(over: Partial<RequestIntake> = {}): RequestIntake {
 beforeEach(() => {
     api.getRequestIntake.mockReset();
     api.answerRequestIntake.mockReset();
+    api.searchRequestContracts.mockReset();
     toast.showToast.mockReset();
     errors.notifyError.mockReset();
 });
@@ -210,6 +211,72 @@ describe("IntakeChecklist por tipo", () => {
     it("explains why the number of questions changed when the type did", () => {
         render(<IntakeChecklist intake={nda({ kind_changed: { from: "revisao", to: "nda" }, total: 6 })} onAnswer={vi.fn()} />);
         expect(screen.getByRole("status")).toHaveTextContent("O tipo mudou de Revisar um contrato para NDA: agora são 6 perguntas.");
+    });
+});
+
+describe("Contrato original", () => {
+    const original: RequestIntake["items"] = [
+        { key: "contrato_original", label: "Qual é o contrato original?", kind: "contract", required: true, answer: null, state: "pendente" },
+    ];
+    const aditivo = (over: Partial<RequestIntake> = {}) =>
+        intake({ items: original, pending: ["contrato_original"], to_confirm: [], answered: 0, total: 1, kind: "aditivo", ...over });
+    const fictitious = [
+        { id: "11111111-1111-4111-8111-111111111111", name: "Prestação de serviços Alfa", counterparty: "Nuvem Fictícia S.A." },
+        { id: "22222222-2222-4222-8222-222222222222", name: "Licença Beta", counterparty: null },
+    ];
+
+    it("searches the Mike after two letters and sends the picked contract by id", async () => {
+        api.searchRequestContracts.mockResolvedValue(fictitious);
+        const onAnswer = vi.fn();
+        render(<IntakeChecklist intake={aditivo()} onAnswer={onAnswer} />);
+        const box = screen.getByRole("combobox");
+        fireEvent.change(box, { target: { value: "a" } });
+        await new Promise((r) => setTimeout(r, CONTRACT_SEARCH_MS + 50));
+        expect(api.searchRequestContracts).not.toHaveBeenCalled();
+        fireEvent.change(box, { target: { value: "alf" } });
+        const list = await screen.findByRole("listbox", { name: "Contratos encontrados" });
+        expect(api.searchRequestContracts).toHaveBeenCalledWith("alf", expect.anything());
+        fireEvent.click(within(list).getByRole("button", { name: /Prestação de serviços Alfa/ }));
+        expect(screen.getByText("Nuvem Fictícia S.A.", { exact: false })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Salvar respostas" }));
+        expect(onAnswer).toHaveBeenCalledWith({ answers: { contrato_original: { project_id: fictitious[0].id } } });
+    });
+
+    it("says when nothing matches, and lets the person change the pick", async () => {
+        api.searchRequestContracts.mockResolvedValueOnce([]).mockResolvedValueOnce(fictitious);
+        render(<IntakeChecklist intake={aditivo()} onAnswer={vi.fn()} />);
+        fireEvent.change(screen.getByRole("combobox"), { target: { value: "zzz" } });
+        expect(await screen.findByText("Nenhum contrato com esse nome.")).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("combobox"), { target: { value: "lic" } });
+        fireEvent.click(await screen.findByRole("button", { name: /Licença Beta/ }));
+        fireEvent.click(screen.getByRole("button", { name: "Trocar" }));
+        expect(screen.getByRole("combobox")).toBeInTheDocument();
+    });
+
+    it("sends plain text for 'não está no Mike', which unties the link", () => {
+        const onAnswer = vi.fn();
+        render(<IntakeChecklist intake={aditivo()} onAnswer={onAnswer} />);
+        fireEvent.click(screen.getByRole("button", { name: "Não está no Mike, vou anexar" }));
+        fireEvent.click(screen.getByRole("button", { name: "Salvar respostas" }));
+        expect(onAnswer).toHaveBeenCalledWith({ answers: { contrato_original: "Não está no Mike, vou anexar" } });
+    });
+
+    it("keeps typing possible when the search fails", async () => {
+        api.searchRequestContracts.mockRejectedValue(new Error("offline"));
+        render(<IntakeChecklist intake={aditivo()} onAnswer={vi.fn()} />);
+        fireEvent.change(screen.getByRole("combobox"), { target: { value: "alf" } });
+        expect(await screen.findByRole("status")).toHaveTextContent("Não consegui buscar agora");
+        expect(screen.getByRole("button", { name: "Não está no Mike, vou anexar" })).toBeInTheDocument();
+    });
+
+    it("shows a contract already tied, and picks again to change it", () => {
+        const answered = original.map((i) => ({ ...i, state: "confirmado" as const, answer: { value: "Prestação de serviços Alfa · Nuvem Fictícia S.A.", source: "requester" as const, confirmed: true, updated_at: at } }));
+        const onAnswer = vi.fn();
+        render(<IntakeChecklist intake={aditivo({ items: answered, answered: 1, complete: true, pending: [] })} onAnswer={onAnswer} />);
+        expect(screen.getByText("Prestação de serviços Alfa · Nuvem Fictícia S.A.")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Mudar" }));
+        expect(screen.getByRole("combobox")).toHaveValue("");
+        expect(screen.getByRole("button", { name: "Salvar" })).toBeDisabled();
     });
 });
 
