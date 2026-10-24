@@ -363,6 +363,19 @@ export function AnalystAnalysisView({
                         {result.open_points.map((point) => (
                             <li key={point.id}>
                                 {point.text} <span className="text-xs text-gray-500">· depende de: {DEPENDS_ON[point.depends_on] ?? point.depends_on}</span>
+                                {point.quote ? (
+                                    // Read from the contract for a question the requester did not know: a suggestion, never a decision.
+                                    <span className="ml-1.5 inline-flex items-center gap-1 align-middle">
+                                        <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700 dark:bg-violet-500/10">
+                                            Sugestão: confirmar com quem pediu
+                                        </span>
+                                        {onLocate && (
+                                            <CitationPillUI aria-label="Ver o trecho no documento" title="Ver o trecho no documento" onClick={() => onLocate(point.quote!)}>
+                                                Ver no contrato
+                                            </CitationPillUI>
+                                        )}
+                                    </span>
+                                ) : null}
                             </li>
                         ))}
                     </ul>
