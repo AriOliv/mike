@@ -3,6 +3,7 @@ import { EditCardsSectionUI } from "@/shared/ui/EditCardsSectionUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { RESPONSE_GLASS_SURFACE } from "./messageStyles";
 import { resolveDocumentEdit } from "@/app/lib/mikeApi";
+import { editFailureMessage } from "@/app/lib/editFailureMessage";
 import type { EditAnnotation } from "../../shared/types";
 import { applyOptimisticResolution } from "../EditCard";
 
@@ -111,10 +112,7 @@ function BulkEditActions({
                         editId: annotation.edit_id,
                         documentId: annotation.document_id,
                         versionId: annotation.version_id ?? null,
-                        message:
-                            verb === "accept"
-                                ? "Couldn't save one or more accepts."
-                                : "Couldn't save one or more rejects.",
+                        message: editFailureMessage(e, verb, pending.length),
                     });
                 }
                 done++;

@@ -53,6 +53,7 @@ vi.mock("../../user/user.service", () => ({
 }));
 const playbooks = vi.hoisted(() => ({
     createPlaybook: vi.fn(),
+    findPlaybookForContractType: vi.fn(),
     getPlaybookRunById: vi.fn(),
     listPlaybooks: vi.fn(),
     playbookConfiguration: vi.fn(),
@@ -65,7 +66,7 @@ const playbooks = vi.hoisted(() => ({
     },
 }));
 vi.mock("../../playbooks/playbooks.service", () => playbooks);
-const documents = vi.hoisted(() => ({ applyTrackedEditsToDocument: vi.fn(), resolveEdit: vi.fn() }));
+const documents = vi.hoisted(() => ({ applyTrackedEditsToDocument: vi.fn(), resolveEdit: vi.fn(), DOCUMENT_BUSY: "document_busy" }));
 vi.mock("../../documents/documents.service", () => documents);
 const events = vi.hoisted(() => ({ recordCardEvent: vi.fn(async () => 1) }));
 vi.mock("../../contracts/contracts.service", () => events);
@@ -158,6 +159,21 @@ describe("startContractReview", () => {
             playbook_id: "pb-1",
             user_id: "u1",
         });
+    });
+
+    it("reviews an NDA with the organization's NDA playbook instead of the Avenia one", async () => {
+        const fake = fakeDb({ documents: [{ data: [{ id: "d1" }] }], projects: [{ data: { contract_type: "NDA" } }] });
+        playbooks.findPlaybookForContractType.mockResolvedValueOnce({ id: "pb-nda", name: "NDA Avenia" });
+        playbooks.startPlaybookReview.mockResolvedValue({ run: { id: "run-3", status: "running" }, done: Promise.resolve() });
+        await startContractReview(fake.db, caller, "p1", {});
+        expect(playbooks.findPlaybookForContractType).toHaveBeenCalledWith(expect.anything(), {
+            userId: "u1",
+            userEmail: "duda@avenia.io",
+            orgId: "org-1",
+            contractType: "NDA",
+        });
+        expect(playbooks.listPlaybooks).not.toHaveBeenCalled();
+        expect(playbooks.startPlaybookReview).toHaveBeenCalledWith(expect.objectContaining({ playbookId: "pb-nda" }));
     });
 
     it("uses the playbook and model asked for", async () => {
@@ -517,6 +533,20 @@ describe("decideReviewClause", () => {
         expect(await decideReviewClause(db, caller, "p1", "run-1", "f", { decision: "editado", edited_text: " " })).toMatchObject({ kind: "validation" });
     });
 
+    it("a rejection that lost the race to another write says document_busy in Portuguese and records nothing", async () => {
+        playbooks.getPlaybookRunById.mockResolvedValue(RUN);
+        documents.resolveEdit.mockResolvedValue({ ok: false, status: 409, code: "document_busy", detail: "x" });
+        const fake = fakeDb(linked());
+        const decided = await decideReviewClause(fake.db, caller, "p1", "run-1", "f-foro", { decision: "rejeitado" });
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "document_busy" });
+        expect(decided).toMatchObject({ detail: expect.stringMatching(/não foi gravada/) });
+        // Any OTHER failure keeps the generic message and no code: it must not claim a race that did not happen.
+        documents.resolveEdit.mockResolvedValue({ ok: false, detail: "Failed to resolve edit", error: new Error("db") });
+        const other = await decideReviewClause(fakeDb(linked()).db, caller, "p1", "run-1", "f-foro", { decision: "rejeitado" });
+        expect(other).toMatchObject({ ok: false, kind: "conflict" });
+        expect(other).not.toHaveProperty("code");
+    });
+
     it("reports a document that changed, a missing suggestion and a viewer", async () => {
         playbooks.getPlaybookRunById.mockResolvedValue(RUN);
         documents.resolveEdit.mockResolvedValue({ ok: false, detail: "Edit not found" });
@@ -585,6 +615,16 @@ describe("Ficha service", () => {
         expect(await getFicha(fakeDb({ contract_fichas: [{ error: { m: 1 } }] }).db, caller, "p1")).toMatchObject({ kind: "error" });
         access.checkProjectAccess.mockResolvedValueOnce({ ok: false });
         expect(await getFicha(fakeDb({}).db, caller, "p1")).toMatchObject({ kind: "not_found" });
+    });
+
+    it("points the viewer at the contract before any Ficha, and keeps the Ficha's own document", async () => {
+        versions.loadActiveVersion.mockResolvedValueOnce({ id: "v1", version_number: 1, filename: "Contrato.docx", file_type: "docx", storage_path: "s" });
+        expect(
+            await getFicha(fakeDb({ contract_fichas: [{ data: null }], documents: [{ data: [{ id: "d9" }] }] }).db, caller, "p1"),
+        ).toMatchObject({ ok: true, data: { ficha: null, document_id: "d9" } });
+        const kept = fakeDb({ contract_fichas: [{ data: { project_id: "p1", ficha: {}, document_id: "d1" } }] });
+        expect(await getFicha(kept.db, caller, "p1")).toMatchObject({ ok: true, data: { document_id: "d1" } });
+        expect(kept.calls.some((call) => call.table === "documents")).toBe(false);
     });
 
     it("confirms and corrects a field, re-running the rules and keeping the trail", async () => {

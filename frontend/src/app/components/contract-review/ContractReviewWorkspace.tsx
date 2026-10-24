@@ -23,6 +23,7 @@ import {
 } from "@/app/lib/mikeApi";
 import {
     isRunning,
+    attentionProgress,
     pendingAligned,
     plural,
     relativeTime,
@@ -52,6 +53,7 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { SkeletonLine } from "@/app/components/shared/TablePrimitive";
 import { DocxView } from "@/app/components/shared/views/DocxView";
 import { EDITOR_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import { AnalystAnalysisView } from "./AnalystAnalysisView";
 import { ContractFichaPanel } from "./ContractFichaPanel";
 import { ReviewClauseCard } from "./ReviewClauseCard";
 
@@ -66,8 +68,12 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 type Pending = {
     timer: ReturnType<typeof setTimeout>;
     toastId: string;
+    /** What was decided, to tell a repeat of it from a different decision. */
+    input: { decision: "aceito" | "editado" | "rejeitado"; edited_text?: string; reason?: string };
     /** Enough to send the decision without the component, when it unmounts. */
     send: () => Promise<unknown>;
+    /** The same, for a page going away: the browser finishes it after the tab is gone. */
+    sendNow: () => Promise<unknown>;
 };
 
 /**
@@ -113,7 +119,7 @@ export function ContractReviewWorkspace({
     const [starting, setStarting] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
-    const [tab, setTab] = useState<"revisao" | "ficha" | "atividade">("revisao");
+    const [tab, setTab] = useState<"revisao" | "analise" | "ficha" | "atividade">("revisao");
     const [activity, setActivity] = useState<CardEvent[] | null>(null);
     // Verificar waits out its undo window too, and can't be pressed twice.
     const [confirming, setConfirming] = useState<ReadonlySet<string>>(new Set());
@@ -259,6 +265,7 @@ export function ContractReviewWorkspace({
     const shown = useMemo(() => visibleClauses(clauses, filter), [clauses, filter]);
     const counts = useMemo(() => verdictCounts(clauses), [clauses]);
     const aligned = useMemo(() => pendingAligned(clauses), [clauses]);
+    const progress = useMemo(() => attentionProgress(clauses), [clauses]);
 
     // ── actions ──────────────────────────────────────────────────────────────
     async function startReview() {
@@ -350,7 +357,13 @@ export function ContractReviewWorkspace({
                     applyDecision(runId, clause.id, result.decision, result.edit);
                     setDocRevision((n) => n + 1);
                 } catch (error) {
-                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
+                    // A refusal (a conflict, a slow server) says so and offers to send the same
+                    // decision again: the person never has to find the point and decide twice.
+                    notifyError(error, {
+                        lang: "pt",
+                        action: "registrar a decisão",
+                        onRetry: () => void commit(clause, input),
+                    });
                 } finally {
                     setOptimistic((current) => without(current, clause.id));
                     setBusy((id) => (id === clause.id ? null : id));
@@ -406,6 +419,14 @@ export function ContractReviewWorkspace({
      * notice whose Desfazer takes back every one of them.
      */
     function queueDecisions(targets: ReviewClause[], input: DecisionInput, message: string) {
+        // A second click, or a held key, on a point that is already decided or already waiting
+        // for the same decision is the same decision: it must not queue twice. Read from the
+        // refs, not from what was last drawn, because the repeat arrives before the redraw.
+        targets = targets.filter((clause) => {
+            if (clause.decision) return false;
+            const waiting = pending.current.get(clause.id);
+            return !(waiting && waiting.input.decision === input.decision && waiting.input.edited_text === input.edited_text);
+        });
         if (!targets.length) return;
         for (const clause of targets) cancelPending(clause.id);
         const at = new Date().toISOString();
@@ -449,7 +470,9 @@ export function ContractReviewWorkspace({
             const entry: Pending = {
                 timer,
                 toastId,
+                input,
                 send: () => (runId ? decideReviewClause(projectId, runId, clause.id, input) : Promise.resolve()),
+                sendNow: () => (runId ? decideReviewClause(projectId, runId, clause.id, input, { keepalive: true }) : Promise.resolve()),
             };
             entries.push(entry);
             pending.current.set(clause.id, entry);
@@ -468,7 +491,11 @@ export function ContractReviewWorkspace({
                     const result = await decideReviewClause(projectId, runId, clause.id, input);
                     applyDecision(runId, clause.id, result.decision, result.edit);
                 } catch (error) {
-                    notifyError(error, { lang: "pt", action: "registrar a decisão" });
+                    notifyError(error, {
+                        lang: "pt",
+                        action: "registrar a decisão",
+                        onRetry: () => void commit(clause, input),
+                    });
                 } finally {
                     setOptimistic((current) => without(current, clause.id));
                 }
@@ -510,6 +537,38 @@ export function ContractReviewWorkspace({
             queue.clear();
         };
     }, [enqueue]);
+
+    // The tab closing or reloading inside the undo window would lose the decisions only
+    // held in memory. When the page is hidden or going away, send them now (keepalive lets the
+    // browser finish the request), and ask before leaving while any is still waiting.
+    useEffect(() => {
+        const queue = pending.current;
+        const flush = () => {
+            for (const [clauseId, item] of [...queue.entries()]) {
+                clearTimeout(item.timer);
+                dismissToast(item.toastId);
+                queue.delete(clauseId);
+                void item.sendNow().catch(() => undefined);
+            }
+        };
+        const onHide = () => {
+            if (document.visibilityState === "hidden") flush();
+        };
+        const onBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (queue.size === 0) return;
+            event.preventDefault();
+            // Some browsers still need a return value to show the prompt.
+            event.returnValue = "";
+        };
+        window.addEventListener("pagehide", flush);
+        document.addEventListener("visibilitychange", onHide);
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => {
+            window.removeEventListener("pagehide", flush);
+            document.removeEventListener("visibilitychange", onHide);
+            window.removeEventListener("beforeunload", onBeforeUnload);
+        };
+    }, []);
 
     async function exportDocx() {
         const documentId = review?.document.id;
@@ -693,6 +752,36 @@ export function ContractReviewWorkspace({
         <div className="space-y-3" onKeyDown={onListKey}>
             <VerdictCountsUI variant="tiles" {...counts} selected={filter} onSelect={setFilter} />
             {review.summary && <p className="text-sm leading-relaxed text-gray-700">{review.summary}</p>}
+            {progress.total > 0 && (
+                <div role="status" aria-live="polite" className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className={progress.left === 0 ? "font-medium text-emerald-700" : "font-medium text-gray-800"}>
+                            {progress.left === 0
+                                ? "Tudo tratado"
+                                : `Falta${progress.left === 1 ? "" : "m"} ${progress.left} de ${plural(progress.total, "ponto de atenção", "pontos de atenção")}`}
+                        </span>
+                        {progress.left === 0 && (
+                            <PillButtonUI tone="black" size="xs" onClick={exportDocx} disabled={!review.document.id}>
+                                <Download aria-hidden="true" className="h-3 w-3" />
+                                Exportar .docx
+                            </PillButtonUI>
+                        )}
+                    </div>
+                    <div
+                        role="progressbar"
+                        aria-label="Pontos de atenção tratados"
+                        aria-valuemin={0}
+                        aria-valuemax={progress.total}
+                        aria-valuenow={progress.decided}
+                        className="h-1.5 overflow-hidden rounded-full bg-gray-100"
+                    >
+                        <div
+                            className={`h-full rounded-full transition-[width] ${progress.left === 0 ? "bg-emerald-500" : "bg-amber-400"}`}
+                            style={{ width: `${(progress.decided / progress.total) * 100}%` }}
+                        />
+                    </div>
+                </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
                 <span>
                     {review.playbook.name} · {relativeTime(review.completed_at ?? review.started_at)}
@@ -779,6 +868,9 @@ export function ContractReviewWorkspace({
                         <TabPillButtonUI role="tab" aria-selected={tab === "revisao"} active={tab === "revisao"} onClick={() => setTab("revisao")}>
                             Primeira revisão
                         </TabPillButtonUI>
+                        <TabPillButtonUI role="tab" aria-selected={tab === "analise"} active={tab === "analise"} onClick={() => setTab("analise")}>
+                            Análise do analista
+                        </TabPillButtonUI>
                         <TabPillButtonUI role="tab" aria-selected={tab === "ficha"} active={tab === "ficha"} onClick={() => setTab("ficha")}>
                             Ficha
                             {ficha?.ficha && (
@@ -794,6 +886,13 @@ export function ContractReviewWorkspace({
                     <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-4">
                         {tab === "revisao" ? (
                             reviewBody
+                        ) : tab === "analise" ? (
+                            <AnalystAnalysisView
+                                projectId={projectId}
+                                canDecide={canEdit}
+                                onChanged={() => setDocRevision((n) => n + 1)}
+                                onLocate={(quote) => setHighlight((current) => ({ quote, key: (current?.key ?? 0) + 1 }))}
+                            />
                         ) : tab === "atividade" ? (
                             <ActivityFeed
                                 items={toActivityItems(activity ?? [])}

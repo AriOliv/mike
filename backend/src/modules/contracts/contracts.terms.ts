@@ -6,6 +6,7 @@
 // recorded — a tracked obligation nobody can trace is worse than a blank.
 
 import type { Db } from "../../lib/supabase";
+import { recordCardEvent } from "./contracts.events";
 import { listAccessibleProjectIds } from "../../lib/access";
 import { completeText } from "../../lib/llm";
 import {
@@ -218,10 +219,57 @@ ${excerpt(text, HEAD_CHARS, TAIL_CHARS)}`,
     return terms;
 }
 
+type GeneratedKind = "vigencia" | "aviso_previo" | "renovacao";
+
+type GeneratedDeadline = {
+    kind: GeneratedKind;
+    title: string;
+    mark: "critico" | "tarefa" | "recorrente";
+    due_date: string;
+};
+
 /**
- * Turn a renewal window into dated obligations: the notice deadline itself, and
- * an alert far enough ahead to still act on it. Both are marked `renewal` so a
- * re-extraction refreshes them without disturbing hand-entered deadlines.
+ * The deadlines a contract's terms imply, one per kind: the end of the term,
+ * the notice deadline itself, and an alert far enough ahead to still act on
+ * the renewal. Pure, so it is tested without a database.
+ */
+export function deadlinesFromTerms(terms: ContractTerms): GeneratedDeadline[] {
+    const out: GeneratedDeadline[] = [];
+    if (terms.term_end) {
+        out.push({
+            kind: "vigencia",
+            title: terms.auto_renewal ? "Fim da vigência (renova automaticamente)" : "Fim da vigência",
+            mark: "recorrente",
+            due_date: terms.term_end,
+        });
+    }
+    if (terms.notice_deadline) {
+        out.push(
+            {
+                kind: "aviso_previo",
+                title: `Prazo limite para avisar não renovação (${terms.notice_days} dias de aviso prévio)`,
+                mark: "critico",
+                due_date: terms.notice_deadline,
+            },
+            {
+                kind: "renovacao",
+                title: "Decidir sobre renovação — janela de aviso fecha em breve",
+                mark: "tarefa",
+                due_date: shiftDays(terms.notice_deadline, -ALERT_LEAD_DAYS),
+            },
+        );
+    }
+    return out;
+}
+
+/**
+ * Keep a contract's generated deadlines in step with its terms. They are
+ * updated in place, one row per kind, never deleted and recreated: a contract
+ * read again (by a person, or by the agent on its own) must not undo what the
+ * team did to a deadline: its owner, its warning lead time, a baixa or a
+ * dismissal. A deadline the terms no longer imply is removed only while it is
+ * still open; one the team already closed stays as history. Deadlines entered
+ * by hand are never touched.
  */
 async function syncRenewalObligations(
     db: Db,
@@ -229,31 +277,143 @@ async function syncRenewalObligations(
     userId: string,
     terms: ContractTerms,
 ): Promise<void> {
-    await db.from("obligations").delete().eq("project_id", projectId).eq("origin", "renewal");
-    if (!terms.notice_deadline) return;
-
+    const wanted = deadlinesFromTerms(terms);
     const quote = terms.sources?.notice_days ?? terms.sources?.auto_renewal ?? null;
-    const rows = [
-        {
-            user_id: userId,
-            project_id: projectId,
-            title: `Prazo limite para avisar não renovação (${terms.notice_days} dias de aviso prévio)`,
-            mark: "critico",
-            due_date: terms.notice_deadline,
-            source_quote: quote,
-            origin: "renewal",
-        },
-        {
-            user_id: userId,
-            project_id: projectId,
-            title: "Decidir sobre renovação — janela de aviso fecha em breve",
-            mark: "tarefa",
-            due_date: shiftDays(terms.notice_deadline, -ALERT_LEAD_DAYS),
-            source_quote: quote,
-            origin: "renewal",
-        },
-    ];
-    await db.from("obligations").insert(rows);
+
+    const { data, error } = await db
+        .from("obligations")
+        .select("id, kind, due_date, title, status")
+        .eq("project_id", projectId)
+        .eq("origin", "renewal");
+    if (error) throw error;
+    const existing = new Map(
+        ((data ?? []) as { id: string; kind: GeneratedKind; due_date: string; title: string; status: string }[]).map(
+            (row) => [row.kind, row],
+        ),
+    );
+
+    for (const deadline of wanted) {
+        const row = existing.get(deadline.kind);
+        if (!row) {
+            const { error: insertError } = await db.from("obligations").insert({
+                user_id: userId,
+                project_id: projectId,
+                ...deadline,
+                source_quote: quote,
+                origin: "renewal",
+            });
+            if (insertError) throw insertError;
+            continue;
+        }
+        // Same date and title: nothing to say. A moved date reopens a deadline
+        // the team had closed for the old date, since it is a new date.
+        if (row.due_date === deadline.due_date && row.title === deadline.title) continue;
+        const moved = row.due_date !== deadline.due_date;
+        const { error: updateError } = await db
+            .from("obligations")
+            .update({
+                title: deadline.title,
+                mark: deadline.mark,
+                due_date: deadline.due_date,
+                source_quote: quote,
+                ...(moved && row.status !== "aberto" ? { status: "aberto", done: false } : {}),
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+        if (updateError) throw updateError;
+    }
+
+    const kept = new Set(wanted.map((d) => d.kind));
+    const stale = [...existing.values()].filter((row) => !kept.has(row.kind) && row.status === "aberto").map((row) => row.id);
+    if (stale.length > 0) {
+        const { error: deleteError } = await db.from("obligations").delete().in("id", stale);
+        if (deleteError) throw deleteError;
+    }
+}
+
+export type AmendedTerm = { applied: boolean; before: string | null; after: string | null };
+
+/**
+ * An amendment that was delivered changes the term of the contract it amends.
+ * The end of the term and the notice deadline are recomputed from it (the
+ * notice period itself stays the contract's), the generated deadlines move in
+ * place, and the card says what changed and why. Nothing to do when the term
+ * already ends that day, or when the contract is not in the team's
+ * organization. `source` is a label ("Aditivo LEG-0042 …"), never contract text.
+ */
+export async function applyAmendedTerm(
+    db: Db,
+    input: {
+        projectId: string;
+        orgId: string;
+        termEnd: string;
+        source: string;
+        actor: { userId: string; name: string | null };
+    },
+): Promise<AmendedTerm> {
+    const none: AmendedTerm = { applied: false, before: null, after: null };
+    const { data: card, error: cardError } = await db
+        .from("projects")
+        .select("id, user_id, org_id, archived_at")
+        .eq("id", input.projectId)
+        .maybeSingle();
+    if (cardError) throw cardError;
+    const project = card as { id: string; user_id: string; org_id: string | null; archived_at: string | null } | null;
+    if (!project || project.archived_at || project.org_id !== input.orgId) return none;
+
+    const { data: current, error: termsError } = await db
+        .from("contract_terms")
+        .select(COLUMNS + ", user_id")
+        .eq("project_id", input.projectId)
+        .maybeSingle();
+    if (termsError) throw termsError;
+    const existing = current as unknown as (ContractTerms & { user_id: string }) | null;
+    if (existing?.term_end === input.termEnd) return { applied: false, before: input.termEnd, after: input.termEnd };
+
+    const noticeDays = existing?.notice_days ?? null;
+    const terms: ContractTerms = {
+        auto_renewal: existing?.auto_renewal ?? null,
+        term_end: input.termEnd,
+        notice_days: noticeDays,
+        notice_deadline: noticeDays !== null ? shiftDays(input.termEnd, -noticeDays) : null,
+        penalty_value: existing?.penalty_value ?? null,
+        penalty_recurrence: existing?.penalty_recurrence ?? null,
+        liability_cap: existing?.liability_cap ?? null,
+        unilateral_amendment: existing?.unilateral_amendment ?? null,
+        amendment_notes: existing?.amendment_notes ?? null,
+        price_regulatory_impact: existing?.price_regulatory_impact ?? null,
+        sources: { ...(existing?.sources ?? {}), term_end: input.source },
+    };
+    const now = new Date().toISOString();
+    const owner = existing?.user_id ?? project.user_id;
+    const write = existing
+        ? await db
+              .from("contract_terms")
+              .update({
+                  term_end: terms.term_end,
+                  notice_deadline: terms.notice_deadline,
+                  sources: terms.sources,
+                  updated_at: now,
+              })
+              .eq("project_id", input.projectId)
+        : await db
+              .from("contract_terms")
+              .insert({ project_id: input.projectId, user_id: owner, ...terms, extracted_at: now, updated_at: now });
+    if (write.error) throw write.error;
+
+    await syncRenewalObligations(db, input.projectId, owner, terms);
+    await recordCardEvent(db, {
+        projectId: input.projectId,
+        orgId: project.org_id,
+        actorType: "user",
+        actorId: input.actor.userId,
+        actorName: input.actor.name,
+        action: "terms.amended",
+        field: "term_end",
+        before: existing?.term_end ?? null,
+        after: { term_end: terms.term_end, notice_deadline: terms.notice_deadline, from: input.source },
+    });
+    return { applied: true, before: existing?.term_end ?? null, after: terms.term_end };
 }
 
 export type TermsSyncSummary = { extracted: number; skipped: number; errors: number };

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { FileText } from "lucide-react";
+import { Download, FileText } from "lucide-react";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { pillButtonUIClassName } from "@/shared/ui/PillButtonUI.styles";
@@ -20,18 +20,30 @@ import {
 } from "@/app/components/shared/TablePrimitive";
 import { describeError } from "@/app/lib/userFacingError";
 import {
+    assigneeOptions,
     brDate,
+    contractTypeLabel,
     daysUntil,
     fichaProgress,
+    filterPortfolio,
+    NO_ASSIGNEE,
+    portfolioCsv,
+    situationOf,
+    SITUATION_TABS,
     sortPortfolio,
+    stageLabel,
     type PortfolioLoad,
     type PortfolioSort,
+    type SituationTab,
 } from "@/app/lib/contractsPortfolio";
+import { downloadBlob } from "@/app/lib/downloadDocument";
 import { cn } from "@/app/lib/utils";
 
 const COLUMNS = [
     { label: "Contrato", width: "w-72" },
-    { label: "Tipo", width: "w-32" },
+    { label: "Tipo", width: "w-40" },
+    { label: "Etapa", width: "w-28" },
+    { label: "Responsável", width: "w-32" },
     { label: "Vencimento", width: "w-28" },
     { label: "Aviso até", width: "w-36" },
     { label: "Ficha", width: "w-40" },
@@ -54,6 +66,9 @@ export function ContractsPortfolioView({
     const [error, setError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
     const [sort, setSort] = useState<PortfolioSort>("aviso");
+    const [tab, setTab] = useState<SituationTab>("todos");
+    const [query, setQuery] = useState("");
+    const [assignee, setAssignee] = useState("");
 
     useEffect(() => {
         let cancelled = false;
@@ -70,21 +85,76 @@ export function ContractsPortfolioView({
         };
     }, [load, attempt]);
 
+    const all = useMemo(() => (result?.status === "ok" ? result.rows : []), [result]);
+    const counts = useMemo(() => {
+        const next: Record<SituationTab, number> = { todos: all.length, andamento: 0, assinatura: 0, vigente: 0, vencido: 0 };
+        for (const row of all) next[situationOf(row, today)] += 1;
+        return next;
+    }, [all, today]);
+    const owners = useMemo(() => assigneeOptions(all), [all]);
     const rows = useMemo(
-        () => (result?.status === "ok" ? sortPortfolio(result.rows, sort) : []),
-        [result, sort],
+        () => sortPortfolio(filterPortfolio(all, { tab, query, assignee }, today), sort),
+        [all, tab, query, assignee, sort, today],
     );
+    const filtered = tab !== "todos" || query.trim() !== "" || assignee !== "";
 
     return (
         <div className="flex h-full flex-col">
             <PageHeader>Contratos</PageHeader>
-            <div className="mx-3 mt-1 flex flex-wrap items-center gap-2 md:mx-6.5">
+            {result?.status === "ok" && all.length > 0 && (
+                <div className="mx-3 mt-1 flex flex-wrap items-center gap-2 md:mx-6.5">
+                    {SITUATION_TABS.map((t) => (
+                        <TabPillButtonUI key={t.id} active={tab === t.id} onClick={() => setTab(t.id)}>
+                            {t.label} · {counts[t.id]}
+                        </TabPillButtonUI>
+                    ))}
+                </div>
+            )}
+            <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 md:mx-6.5">
                 <TabPillButtonUI active={sort === "aviso"} onClick={() => setSort("aviso")}>
                     Aviso mais próximo
                 </TabPillButtonUI>
                 <TabPillButtonUI active={sort === "nome"} onClick={() => setSort("nome")}>
                     Nome
                 </TabPillButtonUI>
+                {result?.status === "ok" && all.length > 0 && (
+                    <>
+                        <input
+                            type="search"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder="Buscar contrato, contraparte ou tipo"
+                            aria-label="Buscar contrato"
+                            className="h-8 w-64 rounded-full border border-gray-200 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        />
+                        <select
+                            value={assignee}
+                            onChange={(e) => setAssignee(e.target.value)}
+                            aria-label="Responsável"
+                            className="h-8 rounded-full border border-gray-200 bg-white px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        >
+                            <option value="">Todos os responsáveis</option>
+                            <option value={NO_ASSIGNEE}>Sem responsável</option>
+                            {owners.map((name) => (
+                                <option key={name} value={name}>
+                                    {name}
+                                </option>
+                            ))}
+                        </select>
+                        <PillButtonUI
+                            tone="white"
+                            disabled={rows.length === 0}
+                            onClick={() =>
+                                downloadBlob(
+                                    new Blob([portfolioCsv(rows, today)], { type: "text/csv;charset=utf-8" }),
+                                    "contratos.csv",
+                                )
+                            }
+                        >
+                            <Download className="size-3.5" /> Exportar ({rows.length})
+                        </PillButtonUI>
+                    </>
+                )}
             </div>
             <TableScrollArea
                 className="mt-3"
@@ -135,6 +205,28 @@ export function ContractsPortfolioView({
                                 }
                             />
                         </TableEmptyState>
+                    ) : all.length > 0 && rows.length === 0 ? (
+                        <TableEmptyState>
+                            <EmptyState
+                                icon={<FileText />}
+                                title="Nenhum contrato nesse filtro"
+                                description="Tente outra aba ou limpe a busca."
+                                action={
+                                    filtered ? (
+                                        <PillButtonUI
+                                            tone="white"
+                                            onClick={() => {
+                                                setTab("todos");
+                                                setQuery("");
+                                                setAssignee("");
+                                            }}
+                                        >
+                                            Limpar filtros
+                                        </PillButtonUI>
+                                    ) : undefined
+                                }
+                            />
+                        </TableEmptyState>
                     ) : rows.length === 0 ? (
                         <TableEmptyState>
                             <EmptyState
@@ -164,7 +256,11 @@ export function ContractsPortfolioView({
                                             {row.counterparty ?? "Contraparte não informada"}
                                         </span>
                                     </TableCell>
-                                    <TableCell className="w-32">{row.contract_type ?? "—"}</TableCell>
+                                    <TableCell className="w-40">{contractTypeLabel(row.contract_type)}</TableCell>
+                                    <TableCell className="w-28">{stageLabel(row.lane)}</TableCell>
+                                    <TableCell className="w-32 break-words">
+                                        {row.assignee ?? <span className="text-gray-400">Sem responsável</span>}
+                                    </TableCell>
                                     <TableCell className="w-28">{brDate(row.term_end)}</TableCell>
                                     <TableCell
                                         className={cn(

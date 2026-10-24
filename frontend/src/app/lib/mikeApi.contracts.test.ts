@@ -26,6 +26,10 @@ import {
     deliverRequest,
     getRequest,
     getRequestRole,
+    getRequestIntake,
+    answerRequestIntake,
+    listCriticalAlerts,
+    requestContractAnalysis,
     inviteRequestParticipant,
     listRequests,
     postRequestMessage,
@@ -37,6 +41,11 @@ import {
     watchProject,
     getDossier,
     getIntegrationStatus,
+    downloadObligationIcs,
+    getContractAlerts,
+    getContractAmendments,
+    getObligationAlerts,
+    getObligationOwners,
     getObligations,
     getPipeline,
     updateObligation,
@@ -218,6 +227,56 @@ describe("radar", () => {
         });
     });
 
+    it("reads the alerts waiting for the caller", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ id: "o1", days_left: -2 }]));
+        expect(await getObligationAlerts()).toEqual([{ id: "o1", days_left: -2 }]);
+        expect(lastFetchCall().url).toMatch(/\/obligations\/alerts$/);
+    });
+
+    it("lists the amendments tied to a contract, the id encoded in the path", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ id: "r1", code: "LEG-0001" }]));
+        expect(await getContractAmendments("p/1")).toEqual([{ id: "r1", code: "LEG-0001" }]);
+        expect(lastFetchCall().url).toMatch(/\/projects\/p%2F1\/amendments$/);
+    });
+
+    it("lists a contract's alerts, the id encoded in the path", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ id: "o1", days_left: 4 }]));
+        expect(await getContractAlerts("p/1")).toEqual([{ id: "o1", days_left: 4 }]);
+        expect(lastFetchCall().url).toMatch(/\/projects\/p%2F1\/alerts$/);
+    });
+
+    it("downloads a deadline as a calendar file, named by the server or by default", async () => {
+        fetchMock.mockImplementation(async () =>
+            new Response("BEGIN:VCALENDAR", { status: 200, headers: { "content-disposition": 'attachment; filename="prazo-2026-12-31.ics"' } }),
+        );
+        const file = await downloadObligationIcs("o 1");
+        expect(lastFetchCall().url).toMatch(/\/obligations\/o%201\/ics$/);
+        expect(file.filename).toBe("prazo-2026-12-31.ics");
+        expect(await file.blob.text()).toBe("BEGIN:VCALENDAR");
+        fetchMock.mockImplementation(async () => new Response("x", { status: 200 }));
+        expect((await downloadObligationIcs("o1")).filename).toBe("prazo.ics");
+    });
+
+    it("sends a status when closing or reopening a deadline", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ id: "o1" }));
+        await updateObligation("o1", { status: "dispensado" });
+        expect(jsonBody()).toEqual({ status: "dispensado" });
+    });
+
+    it("lists the people who can own a deadline", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse([{ user_id: "b", email: "bia@x.io", name: "Bia" }]));
+        expect(await getObligationOwners()).toEqual([{ user_id: "b", email: "bia@x.io", name: "Bia" }]);
+        expect(lastFetchCall().url).toMatch(/\/obligations\/owners$/);
+    });
+
+    it("sends the owner and the warning lead time", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ id: "o1" }));
+        await createObligation({ title: "Aviso", due_date: "2026-12-01", owner_email: "bia@x.io", alert_days: 7 });
+        expect(jsonBody()).toEqual({ title: "Aviso", due_date: "2026-12-01", owner_email: "bia@x.io", alert_days: 7 });
+        await updateObligation("o1", { owner_email: null, alert_days: 0 });
+        expect(jsonBody()).toEqual({ owner_email: null, alert_days: 0 });
+    });
+
     it("creates, updates and deletes an obligation", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ id: "o1" }, { status: 201 }));
         await createObligation({ title: "Aviso", due_date: "2026-12-01" });
@@ -282,5 +341,27 @@ describe("requests to the legal team", () => {
         await revokeRequestParticipant("r1", "p1");
         expect(lastFetchCall().url).toMatch(/\/requests\/r1\/participants\/p1$/);
         expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+
+    it("lists the Head's critical alerts and asks for the contract analysis", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await listCriticalAlerts();
+        expect(lastFetchCall().url).toMatch(/\/requests\/alerts$/);
+        await requestContractAnalysis("r1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/analysis$/);
+        expect(lastFetchCall().init.method).toBe("POST");
+    });
+
+    it("reads the intake checklist and answers or confirms it", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({}));
+        await getRequestIntake("r1");
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/intake$/);
+        await answerRequestIntake("r1", { answers: { inicio: "01/11/2026", confidencial: { value: "sim", detail: "As duas" } }, confirm: ["valor"] });
+        expect(lastFetchCall().url).toMatch(/\/requests\/r1\/intake$/);
+        expect(lastFetchCall().init.method).toBe("POST");
+        expect(jsonBody()).toEqual({
+            answers: { inicio: "01/11/2026", confidencial: { value: "sim", detail: "As duas" } },
+            confirm: ["valor"],
+        });
     });
 });

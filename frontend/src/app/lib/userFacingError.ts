@@ -181,6 +181,8 @@ export function describeError(
  * Retry and the cancellation rule; the web app adds its upstream copy, its
  * Sentry reporting, "Sign in", and a `mailto:` support link.
  */
+import { feedbackOffered, feedbackStore, seedFromError } from "@/app/lib/feedback";
+
 export const notifyError = createErrorNotifier<NotifyErrorOptions>({
     describeOptions: withReportedUpstreamMessage,
     beforeShow: (error, described, options) => {
@@ -191,16 +193,23 @@ export const notifyError = createErrorNotifier<NotifyErrorOptions>({
         // "Your session has expired" with nothing to click leaves the user to
         // find the way back to the login screen themselves.
         const signInHref = signInActionHref();
+        // "Relatar este problema" opens the report box with the failure and the page
+        // already written down: the person is at the moment of the pain (doc 13 §2).
+        const reportAction = wantsSupport && feedbackOffered()
+            ? [{ label: "Relatar este problema", onClick: () => feedbackStore.open(seedFromError(described.title, described.message, window.location.pathname)) }]
+            : [];
         return {
-            actions:
-                described.kind === "unauthenticated" && signInHref
+            actions: [
+                ...reportAction,
+                ...(described.kind === "unauthenticated" && signInHref
                     ? [
                           {
                               label: NOTICE_LABELS[options.lang ?? "en"].signIn,
                               onClick: () => window.location.assign(signInHref),
                           },
                       ]
-                    : [],
+                    : []),
+            ],
             supportHref: wantsSupport
                 ? supportMailtoFor(described, options.supportNote)
                 : undefined,

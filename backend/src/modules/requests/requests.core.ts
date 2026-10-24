@@ -15,7 +15,7 @@ import {
     ok,
     type ServiceResult,
 } from "../../lib/serviceResult";
-import { recordCardEvent } from "../contracts/contracts.service";
+import { applyAmendedTerm, LANES, recordCardEvent, type Lane } from "../contracts/contracts.service";
 import {
     HEAD_ONLY,
     isHead,
@@ -28,6 +28,7 @@ import {
     TEAM_ONLY,
     type Audience,
     type Caller,
+    type McpActor,
     type RequestRow,
 } from "./requests.access";
 import { queueNotifications } from "./requests.notifications";
@@ -39,7 +40,12 @@ import {
     effectiveDueAt,
     isEmail,
     KIND_LABELS,
+    LANE_LABELS,
     OPEN_STATUSES,
+    parseRequestCode,
+    requestPlan,
+    type PlanInput,
+    type PlanStep,
     REQUEST_KINDS,
     REQUESTER_AREAS,
     requestCode,
@@ -50,7 +56,12 @@ import {
     type RequestStatus,
     type Urgency,
 } from "./requests.shared";
+import { parseTerms, termEnd, type Terms } from "./requests.terms";
+import { buildStrip, loadStageHistory, syncStage, type StageRow, type StageStrip } from "./requests.stages";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
+import { forKind, loadTemplate, queueIntakePrefill } from "./requests.checklist";
+import { applyAssignmentRules } from "./requests.rules";
+import { applyAnswers, intakeStatus } from "./requests.intake";
 
 export const TRIAGE_JOB_KIND = "request.triage";
 
@@ -68,8 +79,15 @@ export type CreateRequestInput = {
     requester_name?: unknown;
     /** The requesting area; remembered for next time. The chat bot sends it from the person's profile. */
     requester_area?: unknown;
-    /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp", ...} */
+    /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp" | "sistema", ...}; "sistema" is the platform itself (a renewal opened by a contract's end). */
     source?: unknown;
+    /** Checklist answers given with the request: {key: value | {value, detail}}. */
+    intake?: unknown;
+    /** The other party's e-mail: only kept (for the validation by link), never mailed. */
+    counterparty_email?: unknown;
+    /** When the contract starts (YYYY-MM-DD) and for how many months; the end is computed. */
+    term_start?: unknown;
+    term_months?: unknown;
     idempotency_key?: unknown;
 };
 
@@ -110,6 +128,21 @@ export type RequestTeamView = RequestPublicView & {
     participants: Participant[];
     source: Record<string, unknown>;
     can_decide: boolean;
+    /** The intake checklist closed (the contract analysis may run). */
+    intake_completed_at: string | null;
+    /** The analysis found a critical risk and the Head was alerted. */
+    critical_alert_at: string | null;
+    /** What the form asked about the contract. The end is computed; the e-mail is only kept, never mailed. */
+    terms: {
+        counterparty_email: string | null;
+        term_start: string | null;
+        term_months: number | null;
+        term_end: string | null;
+    };
+    /** The spine: current stage, who holds the ball and since when, and the strip. */
+    stage: StageStrip;
+    /** The stages it went through, oldest first; the open one is the current stage. */
+    stages: StageRow[];
 };
 
 export type RequestMessage = {
@@ -131,12 +164,12 @@ export type Participant = {
 };
 
 function sourceOf(value: unknown): Record<string, unknown> {
-    const allowed = ["form", "slack", "whatsapp", "email", "mcp"];
+    const allowed = ["form", "slack", "whatsapp", "email", "mcp", "sistema"];
     if (!value || typeof value !== "object") return { channel: "form" };
     const src = value as Record<string, unknown>;
     const channel = allowed.includes(String(src.channel)) ? String(src.channel) : "form";
     const out: Record<string, unknown> = { channel };
-    for (const key of ["channel_id", "thread_ts", "permalink", "bot"]) {
+    for (const key of ["channel_id", "thread_ts", "permalink", "bot", "client"]) {
         const v = cleanText(src[key], 500);
         if (v) out[key] = v;
     }
@@ -153,8 +186,9 @@ function validateCreate(input: CreateRequestInput):
           urgency: Urgency;
           neededBy: string | null;
           documentIds: string[];
+          terms: Terms;
       }
-    | { ok: false; detail: string } {
+    | { ok: false; detail: string; field?: string } {
     const kind = REQUEST_KINDS.includes(input.kind as RequestKind) ? (input.kind as RequestKind) : null;
     if (!kind) return { ok: false, detail: "Escolha o tipo de pedido." };
     const context = cleanText(input.context, 8000) ?? "";
@@ -180,7 +214,87 @@ function validateCreate(input: CreateRequestInput):
     if (documentIds.length > MAX_ATTACHMENTS) {
         return { ok: false, detail: `Anexe no máximo ${MAX_ATTACHMENTS} arquivos.` };
     }
-    return { ok: true, kind, title, counterparty, context, urgency, neededBy, documentIds };
+    const terms = parseTerms(input);
+    if (!terms.ok) return { ok: false, detail: terms.detail, field: terms.field };
+    return {
+        ok: true,
+        kind,
+        title,
+        counterparty,
+        context,
+        urgency,
+        neededBy,
+        documentIds,
+        terms: { counterpartyEmail: terms.counterpartyEmail, termStart: terms.termStart, termMonths: terms.termMonths },
+    };
+}
+
+/**
+ * What createRequest would do, without doing it: the kind, the title, the
+ * deadline the team's SLA gives and the area that would be recorded. The
+ * MCP's first step shows this to the person before anything is created.
+ */
+export async function previewCreateRequest(
+    db: Db,
+    caller: Caller,
+    input: CreateRequestInput,
+): Promise<
+    ServiceResult<{
+        kind: RequestKind;
+        kind_label: string;
+        title: string;
+        counterparty: string | null;
+        urgency: Urgency;
+        due_at: string;
+        area: string | null;
+        attachments: number;
+    }>
+> {
+    if (!normalizeEmail(caller.userEmail)) return failure("validation", "Sua conta não tem e-mail.");
+    const valid = validateCreate(input);
+    if (!valid.ok) return failure("validation", valid.detail);
+    let team;
+    try {
+        team = await loadLegalTeam(db);
+    } catch (error) {
+        return internalFailure(error);
+    }
+    if (!team) return NO_LEGAL_TEAM;
+    let area = normalizeArea(input.requester_area);
+    if (!area) {
+        const { data } = await db
+            .from("legal_requester_areas")
+            .select("area")
+            .eq("user_id", caller.userId)
+            .maybeSingle();
+        area = normalizeArea((data as { area?: string } | null)?.area);
+    }
+    return ok({
+        kind: valid.kind,
+        kind_label: KIND_LABELS[valid.kind],
+        title: valid.title,
+        counterparty: valid.counterparty,
+        urgency: valid.urgency,
+        due_at: computeDueAt(new Date(), valid.kind, valid.urgency, valid.neededBy, team.sla_days).toISOString(),
+        area,
+        attachments: valid.documentIds.length,
+    });
+}
+
+/**
+ * The request's id from what a person or an assistant would type: its code
+ * ("LEG-0042", "42") or its id. Says nothing about access: the caller still
+ * goes through loadRequestFor, which answers "not found" to outsiders.
+ */
+export async function resolveRequestRef(db: Db, ref: string): Promise<ServiceResult<string>> {
+    const value = ref.trim();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return ok(value);
+    const number = parseRequestCode(value);
+    if (number === null) return failure("validation", "Informe o código do pedido, como LEG-0042.");
+    const { data, error } = await db.from("legal_requests").select("id").eq("number", number).maybeSingle();
+    if (error) return internalFailure(error);
+    const id = (data as { id?: string } | null)?.id;
+    return id ? ok(id) : failure("not_found", "Pedido não encontrado.");
 }
 
 /**
@@ -240,13 +354,17 @@ async function resolveArea(
     given: unknown,
     channel: string,
 ): Promise<{ area: RequesterArea | null; source: "form" | "slack" | "perfil" | null }> {
+    // The platform has no requesting area, and must not borrow the one
+    // remembered for the person it acts through.
+    if (channel === "sistema") return { area: null, source: null };
     const area = normalizeArea(given);
     if (area) {
         const { error } = await db
             .from("legal_requester_areas")
             .upsert({ user_id: caller.userId, area, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
         if (error) console.error("[requests] remember area failed", { error: safeError(error) });
-        return { area, source: channel === "form" ? "form" : "slack" };
+        // Chosen by the person, on the form or through an assistant (MCP); sent by the chat bot otherwise.
+        return { area, source: channel === "form" || channel === "mcp" ? "form" : "slack" };
     }
     const { data } = await db
         .from("legal_requester_areas")
@@ -273,7 +391,7 @@ export async function createRequest(
     const requesterEmail = normalizeEmail(caller.userEmail);
     if (!requesterEmail) return failure("validation", "Sua conta não tem e-mail.");
     const valid = validateCreate(input);
-    if (!valid.ok) return failure("validation", valid.detail);
+    if (!valid.ok) return failure("validation", valid.detail, valid.field ? `field:${valid.field}` : undefined);
 
     let team;
     try {
@@ -352,12 +470,16 @@ export async function createRequest(
             requester_area: area.area,
             requester_area_source: area.source,
             kind: valid.kind,
+            intake_kind: valid.kind,
             title: valid.title,
             counterparty: valid.counterparty,
             context: valid.context,
             urgency: valid.urgency,
             needed_by: valid.neededBy,
             due_at: dueAt.toISOString(),
+            counterparty_email: valid.terms.counterpartyEmail,
+            term_start: valid.terms.termStart,
+            term_months: valid.terms.termMonths,
             source: sourceOf(input.source),
             idempotency_key: idempotencyKey,
         })
@@ -369,6 +491,7 @@ export async function createRequest(
         return internalFailure(insertError);
     }
     const row = created as unknown as RequestRow;
+    await syncStage(db, row, "pedido recebido");
 
     let attached = 0;
     try {
@@ -381,13 +504,18 @@ export async function createRequest(
     await recordCardEvent(db, {
         projectId,
         orgId: team.org_id,
-        actorType: channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
-        actorId: channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
-        actorName: requesterName ?? requesterEmail,
-        onBehalfOf: channel === "form" ? null : requesterEmail,
+        ...(caller.actor
+            ? actorFields(caller.actor)
+            : {
+                  // The platform opening a renewal is the system, not a chat bot acting for someone.
+                  actorType: channel === "sistema" ? "system" : channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
+                  actorId: channel === "sistema" ? `system:${String(row.source.bot ?? "sistema")}` : channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
+                  actorName: requesterName ?? requesterEmail,
+                  onBehalfOf: channel === "form" || channel === "sistema" ? null : requesterEmail,
+                  source: channel === "sistema" ? "cron" : channel === "form" ? "ui" : "mcp",
+              }),
         action: "request.created",
-        after: { code: requestCode(row.number), kind: valid.kind, channel, attachments: attached },
-        source: channel === "form" ? "ui" : "mcp",
+        after: { code: requestCode(row.number), kind: valid.kind, channel: channelLabel(row.source), attachments: attached },
     });
     await queueNotifications(db, [
         {
@@ -400,6 +528,8 @@ export async function createRequest(
             payload: { due: dueAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) },
         },
     ]);
+    // Fixed rules first: they name the owner without a model. The triage still runs and suggests the rest.
+    await applyAssignmentRules(db, row);
     try {
         await enqueueDbJob(db, {
             kind: TRIAGE_JOB_KIND,
@@ -409,6 +539,31 @@ export async function createRequest(
     } catch (error) {
         console.error("[requests] triage enqueue failed", { requestId: row.id, error: safeError(error) });
     }
+
+    // Checklist answers given on the form count as the requester's; the
+    // intake agent then reads the attached contract for what is still open.
+    // A kind with nothing required (an organization's own lists may have none)
+    // has nothing to wait for: the checklist is closed at once.
+    const kindItems = forKind(await loadTemplate(db, team.org_id), row.kind);
+    if (intakeStatus(kindItems, {}).complete) {
+        await db.from("legal_requests").update({ intake_completed_at: new Date().toISOString() }).eq("id", row.id);
+    }
+    if (input.intake && typeof input.intake === "object") {
+        try {
+            const items = forKind(await loadTemplate(db, team.org_id), row.kind);
+            const applied = applyAnswers(items, {}, { answers: input.intake }, new Date().toISOString());
+            if (applied.ok && applied.changed.length) {
+                const complete = intakeStatus(items, applied.answers).complete;
+                await db
+                    .from("legal_requests")
+                    .update({ intake: applied.answers, ...(complete ? { intake_completed_at: new Date().toISOString() } : {}) })
+                    .eq("id", row.id);
+            }
+        } catch (error) {
+            console.error("[requests] intake on create failed", { requestId: row.id, error: safeError(error) });
+        }
+    }
+    if (attached > 0) await queueIntakePrefill(db, row.id);
 
     const view = await getRequest(db, caller, row.id);
     if (!view.ok) return view;
@@ -526,8 +681,14 @@ async function buildView(
         .eq("request_id", row.id)
         .order("created_at", { ascending: true });
     if (error) throw error;
+    // The history follows the request: a card moved on the board, or a request
+    // older than the history, is recorded the first time anyone looks.
+    const current = await syncStage(db, row);
+    const stages = await loadStageHistory(db, row.id);
     return {
         ...base,
+        stage: buildStrip(current.stage, current.owner, stages),
+        stages,
         number: row.number,
         project_id: row.project_id,
         lane,
@@ -536,6 +697,14 @@ async function buildView(
         participants: (participants ?? []) as Participant[],
         source: row.source,
         can_decide: isHead(audience),
+        intake_completed_at: row.intake_completed_at,
+        critical_alert_at: row.critical_alert_at,
+        terms: {
+            counterparty_email: row.counterparty_email,
+            term_start: row.term_start,
+            term_months: row.term_months,
+            term_end: termEnd(row.term_start, row.term_months),
+        },
     };
 }
 
@@ -549,6 +718,39 @@ export async function getRequest(
     if (!loaded.ok) return loaded;
     try {
         return ok(await buildView(db, loaded.row, loaded.audience));
+    } catch (error) {
+        return internalFailure(error);
+    }
+}
+
+/**
+ * Where a request stands and what comes next, for whoever may see it: the
+ * caller's view plus the orchestration plan. The requester's plan has the
+ * triage's "what is missing" (it is theirs to send) but not the internal
+ * review step. MCP: `mike_pedidos_status_e_plano`.
+ */
+export async function getRequestPlan(
+    db: Db,
+    caller: Caller,
+    requestId: string,
+): Promise<ServiceResult<{ request: RequestPublicView | RequestTeamView; plan: PlanStep[] }>> {
+    const loaded = await loadRequestFor(db, caller, requestId);
+    if (!loaded.ok) return loaded;
+    try {
+        const view = await buildView(db, loaded.row, loaded.audience);
+        const triage = loaded.row.triage as PlanInput["triage"];
+        const plan = requestPlan(
+            {
+                status: view.status,
+                assignee_name: view.assignee_name,
+                requester_name: view.requester_name,
+                requester_email: view.requester_email,
+                triage,
+                answered: view.messages.some((m) => m.kind === "answer"),
+            },
+            { forRequester: !isTeam(loaded.audience) },
+        );
+        return ok({ request: view, plan });
     } catch (error) {
         return internalFailure(error);
     }
@@ -744,6 +946,30 @@ async function teamCallerName(db: Db, caller: Caller): Promise<string> {
     return (await displayName(db, caller.userId)) ?? normalizeEmail(caller.userEmail) ?? "Legal";
 }
 
+function actorFields(actor: McpActor) {
+    const { actorType, actorId, actorName, onBehalfOf, source } = actor;
+    return { actorType, actorId, actorName, onBehalfOf, source } as const;
+}
+
+/**
+ * Who an event is by: the MCP client acting for the person when the call
+ * came through it, the person otherwise.
+ */
+async function actorOf(db: Db, caller: Caller, name?: string) {
+    if (caller.actor) return actorFields(caller.actor);
+    return {
+        actorType: "user",
+        actorId: caller.userId,
+        actorName: name ?? (await teamCallerName(db, caller)),
+    } as const;
+}
+
+/** "mcp:<client>" for a request that came through an assistant, the channel otherwise. */
+function channelLabel(source: Record<string, unknown> | null | undefined): string {
+    const channel = String(source?.channel ?? "form");
+    return channel === "mcp" && source?.client ? `mcp:${String(source.client)}` : channel;
+}
+
 async function updateRow(
     db: Db,
     id: string,
@@ -793,6 +1019,7 @@ export async function assignRequest(
     const updated = await updateRow(db, row.id, {
         assignee_id: assigneeId,
         assigned_at: assigneeId ? new Date().toISOString() : null,
+        assigned_by: assigneeId ? "person" : null,
         status,
     });
     if (!updated.ok) return updated;
@@ -812,15 +1039,14 @@ export async function assignRequest(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: "assignee.changed",
             field: "assignee",
             before: row.assignee_id ? { id: row.assignee_id } : null,
             after: member ? { id: member.user_id, name: member.name } : null,
         });
     }
+    await syncStage(db, { ...row, ...updated.data }, member ? "responsável definido" : "responsável retirado");
     if (member) {
         await queueNotifications(db, [
             {
@@ -880,9 +1106,7 @@ export async function decideTriage(
             await recordCardEvent(db, {
                 projectId: row.project_id,
                 orgId: row.org_id,
-                actorType: "user",
-                actorId: caller.userId,
-                actorName: await teamCallerName(db, caller),
+                ...(await actorOf(db, caller)),
                 action: "triage.reopened",
                 before: { decision: triage.decision },
             });
@@ -941,9 +1165,7 @@ export async function decideTriage(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: `triage.${decision}`,
             after: { agent: TRIAGE_AGENT_NAME, ...applied, reason: cleanText(body.reason, 300) },
         });
@@ -1020,9 +1242,7 @@ export async function postMessage(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: authorName,
+            ...(await actorOf(db, caller, authorName)),
             action: kind === "question" ? "request.question" : kind === "answer" ? "request.answered" : "comment.added",
             after: { preview: text.slice(0, 140) },
         });
@@ -1044,10 +1264,82 @@ export async function postMessage(
 }
 
 /**
+ * Move the request's card to another stage of the pipeline (the team's six
+ * lanes). The requester's four steps follow from it: Assinatura shows as
+ * "Assinatura", Arquivado as "Concluído". Any team member can move it, as on
+ * the board.
+ */
+export async function moveRequestStage(
+    db: Db,
+    caller: Caller,
+    requestId: string,
+    body: { lane?: unknown },
+): Promise<ServiceResult<RequestTeamView>> {
+    const loaded = await loadRequestFor(db, caller, requestId);
+    if (!loaded.ok) return loaded;
+    if (!isTeam(loaded.audience)) return TEAM_ONLY;
+    const row = loaded.row;
+    if (!LANES.includes(body.lane as Lane)) {
+        return failure("validation", `Escolha uma etapa: ${LANES.map((l) => LANE_LABELS[l]).join(", ")}.`);
+    }
+    const lane = body.lane as Lane;
+    if (!row.project_id) return failure("conflict", "Este pedido não tem card na esteira.");
+    const { data: card, error: cardError } = await db
+        .from("projects")
+        .select("lane")
+        .eq("id", row.project_id)
+        .maybeSingle();
+    if (cardError) return internalFailure(cardError);
+    const before = (card as { lane?: string | null } | null)?.lane ?? null;
+    if (before === lane) return getTeamView(db, caller, requestId);
+    const now = new Date().toISOString();
+    const { error } = await db
+        .from("projects")
+        .update({ lane, lane_updated_at: now, updated_at: now })
+        .eq("id", row.project_id);
+    if (error) return internalFailure(error);
+    await recordCardEvent(db, {
+        projectId: row.project_id,
+        orgId: row.org_id,
+        ...(await actorOf(db, caller)),
+        action: "lane.changed",
+        field: "lane",
+        before,
+        after: lane,
+    });
+    return getTeamView(db, caller, requestId);
+}
+
+/**
  * Close the request with what the team sends back: a message and any of
  * the card's documents. The requester is mailed; the card's progress is
  * marked done (the lane stays the team's call).
  */
+/**
+ * A delivered amendment changes the term of the contract it amends: the end
+ * of the term and the notice deadline are recomputed from the start and the
+ * months the requester confirmed (never from the model's "confirme" reading).
+ * Only an amendment tied to a contract of the team's organization, with both
+ * values; anything else leaves the contract alone. The delivery is already
+ * done, so a failure here is logged, never returned.
+ */
+async function applyAmendmentToParent(db: Db, caller: Caller, row: RequestRow): Promise<void> {
+    if (row.kind !== "aditivo" || !row.parent_project_id) return;
+    const end = termEnd(row.term_start, row.term_months);
+    if (!end) return;
+    try {
+        await applyAmendedTerm(db, {
+            projectId: row.parent_project_id,
+            orgId: row.org_id,
+            termEnd: end,
+            source: `Aditivo ${requestCode(row.number)}`,
+            actor: { userId: caller.userId, name: await teamCallerName(db, caller) },
+        });
+    } catch (error) {
+        console.error("[requests] amended term not applied", { requestId: row.id, error: safeError(error) });
+    }
+}
+
 export async function deliverRequest(
     db: Db,
     caller: Caller,
@@ -1084,6 +1376,8 @@ export async function deliverRequest(
         delivery: { message, document_ids: documentIds, delivered_by: caller.userId },
     });
     if (!updated.ok) return updated;
+    await syncStage(db, updated.data, "devolutiva enviada");
+    await applyAmendmentToParent(db, caller, row);
     if (row.project_id) {
         await db
             .from("projects")
@@ -1092,9 +1386,7 @@ export async function deliverRequest(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: "request.delivered",
             after: { documents: documentIds.length },
         });
@@ -1153,9 +1445,7 @@ export async function inviteParticipant(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: inviter,
+            ...(await actorOf(db, caller, inviter)),
             action: "participant.invited",
             after: { email, role, label: cleanText(body.label, 120), expires_at: expiresAt },
         });
@@ -1199,9 +1489,7 @@ export async function revokeParticipant(
         await recordCardEvent(db, {
             projectId: loaded.row.project_id,
             orgId: loaded.row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: "participant.revoked",
             after: { email: (data as { email: string }).email },
         });
@@ -1236,4 +1524,21 @@ export async function whoAmI(
         area,
         areas: REQUESTER_AREAS,
     });
+}
+
+
+/** The legal team's people, for a picker ("who looks after this"). Team members only. */
+export async function listLegalTeamMembers(
+    db: Db,
+    caller: Caller,
+): Promise<ServiceResult<{ user_id: string; email: string; name: string }[]>> {
+    try {
+        const team = await loadLegalTeam(db);
+        if (!team) return NO_LEGAL_TEAM;
+        if (!(await teamRole(db, caller, team.org_id))) return TEAM_ONLY;
+        const members = await loadTeamMembers(db, team.org_id);
+        return ok(members.sort((a, b) => a.name.localeCompare(b.name, "pt-BR")));
+    } catch (error) {
+        return internalFailure(error);
+    }
 }

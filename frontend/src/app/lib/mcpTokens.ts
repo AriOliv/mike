@@ -1,0 +1,157 @@
+// The words and rules behind Configurações → Tokens de acesso para agentes
+// (doc 09 §3.1): what each permission means in the Legal team's words, a
+// token's state, and the ready-to-paste client configuration.
+
+import type { McpAccessToken, McpScope } from "./mikeApi";
+import { relativeTime } from "./activityFeed";
+
+/** Every permission, in the order the screen lists them, with what it lets an agent do. */
+export const SCOPE_OPTIONS: readonly { scope: McpScope; label: string; hint: string; readOnly: boolean }[] = [
+    { scope: "contratos:read", label: "Ler contratos", hint: "Carteira, Ficha com citações, texto e atividade", readOnly: true },
+    { scope: "prazos:read", label: "Ver prazos", hint: "Avisos prévios e renovações", readOnly: true },
+    { scope: "base:ask", label: "Perguntar à base", hint: "Respostas com citação dos contratos", readOnly: true },
+    { scope: "revisao:read", label: "Ler revisões", hint: "Resultado das revisões por playbook", readOnly: true },
+    { scope: "controle:read", label: "Ler o Controle de Contratos", hint: "Tabelas de análise", readOnly: true },
+    { scope: "radar:read", label: "Ver o radar regulatório", hint: "Mudanças e contratos afetados", readOnly: true },
+    { scope: "painel:read", label: "Ver o Painel do Legal", hint: "Só para a liderança do Legal", readOnly: true },
+    { scope: "pedidos:read", label: "Ver pedidos", hint: "Os pedidos que você vê na tela", readOnly: true },
+    { scope: "feedback:write", label: "Reportar problemas do Mike", hint: "Envia um relato ao time de tecnologia, com a sua confirmação", readOnly: false },
+];
+
+/** What a new token gets unless the person unticks it: reading only. */
+export const DEFAULT_SCOPES: McpScope[] = SCOPE_OPTIONS.filter((o) => o.readOnly).map((o) => o.scope);
+
+/**
+ * The permissions line under a token: one phrase when it has everything this
+ * role is offered (all of it reading), else the ones it has, in the screen's
+ * order.
+ */
+export function scopesSummary(scopes: readonly McpScope[], offered: typeof SCOPE_OPTIONS): string {
+    const has = new Set(scopes);
+    if (offered.length > 0 && offered.every((o) => has.has(o.scope))) return "Só leitura · todas as permissões";
+    return SCOPE_OPTIONS.filter((o) => has.has(o.scope))
+        .map((o) => o.label)
+        .join(" · ");
+}
+
+export type LegalRole = { configured: boolean; role: "head" | "team" | "requester" } | null;
+
+/**
+ * The permissions worth offering to this person: the server gates each tool
+ * by role too, so a scope the role cannot use would make a token that does
+ * nothing. A requester reads only their requests; the Painel is the head's.
+ * Unknown role (still loading, or no Legal team configured) offers what the
+ * team has, as the menu does.
+ */
+export function scopesFor(who: LegalRole): typeof SCOPE_OPTIONS {
+    const role = who && who.configured ? who.role : "team";
+    if (role === "requester") return SCOPE_OPTIONS.filter((o) => o.scope === "pedidos:read" || o.scope === "feedback:write");
+    if (role === "team") return SCOPE_OPTIONS.filter((o) => o.scope !== "painel:read");
+    return SCOPE_OPTIONS;
+}
+
+export const VALIDITY_OPTIONS = [
+    { days: 7, label: "7 dias" },
+    { days: 30, label: "30 dias" },
+    { days: 90, label: "90 dias" },
+] as const;
+
+const DAY = 86_400_000;
+
+export type TokenState = "ativo" | "expira_em_breve" | "expirado" | "revogado";
+
+export function tokenState(token: Pick<McpAccessToken, "revoked_at" | "expires_at">, now: number = Date.now()): TokenState {
+    if (token.revoked_at) return "revogado";
+    const left = Date.parse(token.expires_at) - now;
+    if (left <= 0) return "expirado";
+    return left <= 7 * DAY ? "expira_em_breve" : "ativo";
+}
+
+export const STATE_LABEL: Record<TokenState, string> = {
+    ativo: "Ativo",
+    expira_em_breve: "Expira em breve",
+    expirado: "Expirado",
+    revogado: "Revogado",
+};
+
+/** "Usado há 5 min pelo claude-code", or "Nunca usado". */
+export function lastUseLabel(token: Pick<McpAccessToken, "last_used_at" | "last_client">, now: number = Date.now()): string {
+    if (!token.last_used_at) return "Nunca usado";
+    const when = relativeTime(token.last_used_at, now);
+    return token.last_client ? `Usado ${when} pelo ${clientLabel(token.last_client)}` : `Usado ${when}`;
+}
+
+/** "Expira em 12 dias", "Expira hoje", "Expirou em 20/10/2026" or "Revogado em 21/10/2026". */
+export function validityLabel(token: Pick<McpAccessToken, "revoked_at" | "expires_at">, now: number = Date.now()): string {
+    const date = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    if (token.revoked_at) return `Revogado em ${date(token.revoked_at)}`;
+    const left = Date.parse(token.expires_at) - now;
+    if (left <= 0) return `Expirou em ${date(token.expires_at)}`;
+    const days = Math.floor(left / DAY);
+    if (days === 0) return "Expira hoje";
+    return days === 1 ? "Expira amanhã" : `Expira em ${days} dias`;
+}
+
+/**
+ * The public address agents connect to. /mcp is served by the backend at the
+ * site's root, not through the /api proxy (doc 09 §9): NEXT_PUBLIC_MCP_URL
+ * when a deployment puts it elsewhere, else this origin's /mcp.
+ */
+export function mcpServerUrl(configured: string | undefined, origin: string): string {
+    const explicit = configured?.trim();
+    return explicit ? explicit.replace(/\/+$/, "") : `${origin.replace(/\/+$/, "")}/mcp`;
+}
+
+/** Ready-to-run setup for the two clients the Legal team uses, with the token in it. */
+export function clientSetup(url: string, token: string): { label: string; text: string }[] {
+    return [
+        {
+            label: "Claude Code",
+            text: `claude mcp add --transport http mike ${url} --header "Authorization: Bearer ${token}"`,
+        },
+        {
+            // The token stays in an environment variable, not in the config file.
+            label: "Codex (~/.codex/config.toml)",
+            text: `[mcp_servers.mike]\nurl = "${url}"\nbearer_token_env_var = "MIKE_TOKEN"\n\n# no shell: export MIKE_TOKEN="${token}"`,
+        },
+    ];
+}
+
+const CLIENT_LABELS: Record<string, string> = {
+    "claude-code": "Claude Code",
+    "claude-ai": "Claude",
+    claude: "Claude",
+    codex: "Codex",
+    "codex-mcp-client": "Codex",
+    cursor: "Cursor",
+    hermes: "Hermes",
+    "hermes-docbot": "Hermes",
+};
+
+/** "Claude Code" for claude-code; an unknown client keeps its own name. */
+export function clientLabel(client: string): string {
+    return CLIENT_LABELS[client.toLowerCase()] ?? client;
+}
+
+/** Each MCP tool, in the Legal team's words, for the activity history. */
+export const TOOL_LABELS: Record<string, string> = {
+    mike_quem_sou: "conferiu o acesso",
+    mike_contratos_buscar: "buscou na carteira",
+    mike_contratos_ficha: "leu a Ficha de um contrato",
+    mike_contratos_documento: "leu o texto de um contrato",
+    mike_contratos_atividade: "leu a atividade de um contrato",
+    mike_pedidos_listar_meus: "listou os seus pedidos ao Legal",
+    mike_pedidos_ler: "leu um pedido ao Legal",
+    mike_pedidos_status_e_plano: "viu o andamento de um pedido",
+    mike_pedidos_fila: "leu a fila de pedidos do Legal",
+    mike_revisao_listar: "listou as revisões de um contrato",
+    mike_revisao_ler: "leu uma revisão por playbook",
+    mike_prazos_proximos: "consultou os prazos",
+    mike_base_perguntar: "perguntou à base de contratos",
+    mike_radar_mudancas: "consultou o radar regulatório",
+    mike_radar_contratos_afetados: "viu os contratos afetados por uma mudança",
+    mike_controle_listar: "listou as tabelas de análise",
+    mike_controle_ler: "leu uma tabela de análise",
+    mike_painel_metricas: "leu o Painel do Legal",
+    mike_agente_config: "leu a configuração do assistente do Legal",
+};

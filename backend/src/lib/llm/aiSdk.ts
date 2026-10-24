@@ -12,6 +12,7 @@ import type {
   ProviderWebSearchEvent,
   StreamChatParams,
   StreamChatResult,
+  TokenUsage,
 } from "./types";
 import type { WebSource } from "@mike/contracts";
 import { providerDeadlines } from "./providerDeadlines";
@@ -802,6 +803,7 @@ export async function completeAiSdkText(
     user: string;
     maxTokens?: number;
     abortSignal?: AbortSignal;
+    onUsage?: (usage: TokenUsage) => void;
   },
   config: AiSdkAdapterConfig,
 ): Promise<string> {
@@ -829,6 +831,15 @@ export async function completeAiSdkText(
       | Exclude<NonNullable<StreamChatParams["reasoning"]>, "max">
       | undefined,
   });
+  if (
+    params.onUsage &&
+    (result.usage.inputTokens !== undefined ||
+      result.usage.outputTokens !== undefined)
+  )
+    params.onUsage({
+      inputTokens: result.usage.inputTokens ?? 0,
+      outputTokens: result.usage.outputTokens ?? 0,
+    });
   return result.text;
 }
 

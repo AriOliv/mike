@@ -10,6 +10,7 @@
 // raised as `UploadSessionValidationError`, which carries the status and code
 // the route should answer with.
 
+import { uuidId } from "../../lib/ids";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -39,7 +40,7 @@ const clientFileSchema = z
         "filename is invalid",
       ),
     size_bytes: z.number().int().positive().max(MAX_UPLOAD_SIZE_BYTES),
-    folder_id: z.string().uuid().nullable().optional(),
+    folder_id: uuidId().nullable().optional(),
   })
   .strict();
 
@@ -47,7 +48,7 @@ const clientFileSchema = z
 // library — belongs to the workspace it is uploaded in: `org_id` names that
 // organization, and its absence is Personal. A project or workflow decides
 // for the documents uploaded into it.
-const workspaceOrgId = z.string().uuid().nullable().optional();
+const workspaceOrgId = uuidId().nullable().optional();
 
 const documentDestinationSchema = z.discriminatedUnion("scope", [
   z
@@ -56,22 +57,22 @@ const documentDestinationSchema = z.discriminatedUnion("scope", [
   z
     .object({
       scope: z.literal("project"),
-      project_id: z.string().uuid(),
-      folder_id: z.string().uuid().nullable().optional(),
+      project_id: uuidId(),
+      folder_id: uuidId().nullable().optional(),
     })
     .strict(),
   z
     .object({
       scope: z.literal("library"),
       library_kind: z.enum(["file", "template"]),
-      folder_id: z.string().uuid().nullable().optional(),
+      folder_id: uuidId().nullable().optional(),
       org_id: workspaceOrgId,
     })
     .strict(),
   z
     .object({
       scope: z.literal("workflow"),
-      workflow_id: z.string().uuid(),
+      workflow_id: uuidId(),
     })
     .strict(),
 ]);
@@ -89,7 +90,7 @@ const requestSchema = z.discriminatedUnion("purpose", [
       purpose: z.literal("document_version_create"),
       destination: z
         .object({
-          document_id: z.string().uuid(),
+          document_id: uuidId(),
           filename: z.string().trim().min(1).max(200).optional(),
         })
         .strict(),
@@ -101,8 +102,8 @@ const requestSchema = z.discriminatedUnion("purpose", [
       purpose: z.literal("document_version_replace"),
       destination: z
         .object({
-          document_id: z.string().uuid(),
-          version_id: z.string().uuid(),
+          document_id: uuidId(),
+          version_id: uuidId(),
           expected_content_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
           generate_pdf: z.boolean().optional(),
         })
@@ -115,7 +116,7 @@ const requestSchema = z.discriminatedUnion("purpose", [
   z
     .object({
       purpose: z.literal("workflow_reference_create"),
-      destination: z.object({ workflow_id: z.string().uuid() }).strict(),
+      destination: z.object({ workflow_id: uuidId() }).strict(),
       files: z.array(clientFileSchema).min(1).max(MAX_UPLOAD_SESSION_FILES),
     })
     .strict(),
@@ -124,8 +125,8 @@ const requestSchema = z.discriminatedUnion("purpose", [
       purpose: z.literal("workflow_reference_replace"),
       destination: z
         .object({
-          workflow_id: z.string().uuid(),
-          reference_id: z.string().uuid(),
+          workflow_id: uuidId(),
+          reference_id: uuidId(),
         })
         .strict(),
       files: z.tuple([clientFileSchema]),

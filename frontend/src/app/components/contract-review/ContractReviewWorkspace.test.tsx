@@ -195,6 +195,240 @@ describe("ContractReviewWorkspace", () => {
         await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" }));
     });
 
+    it("sends every decision made in quick succession, each after its own undo window", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        // A server that remembers what it was sent, as the real one does: the review it
+        // returns on a refresh carries every decision recorded so far.
+        const stored = new Map<string, ReviewClause["decision"]>();
+        const three = {
+            ...REVIEW,
+            clauses: [clause("a", "diverge"), clause("b", "diverge"), clause("c", "precisa_revisao")],
+        };
+        api.getContractReview.mockImplementation(async () => ({
+            ...three,
+            clauses: three.clauses.map((c) => (stored.has(c.id) ? { ...c, decision: stored.get(c.id)! } : c)),
+        }));
+        api.decideReviewClause.mockImplementation(async (_p: string, _r: string, clauseId: string, input: { decision: string }) => {
+            const decision = { decision: input.decision, edited_text: null, reason: null, decided_by: "você", decided_at: "t" } as ReviewClause["decision"];
+            stored.set(clauseId, decision);
+            return { decision, edit: null };
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        const cards = await screen.findAllByRole("article");
+        expect(cards).toHaveLength(3);
+        // Three clicks back to back, as a person working through the list does.
+        for (const card of cards) fireEvent.click(within(card).getByRole("button", { name: /Aceitar/ }));
+        expect(api.decideReviewClause).not.toHaveBeenCalled();
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(3));
+        expect(api.decideReviewClause.mock.calls.map((c) => c[2]).sort()).toEqual(["a", "b", "c"]);
+        // And the screen agrees with the server: all three are decided, none sprang back.
+        await waitFor(() => expect(screen.getAllByRole("button", { name: "Reabrir: Aceito" })).toHaveLength(3));
+        expect(screen.getByRole("status")).toHaveTextContent("Tudo tratado");
+    });
+
+    it("keeps every decision when they are made one after another while the server is slow", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const stored = new Map<string, ReviewClause["decision"]>();
+        const three = {
+            ...REVIEW,
+            clauses: [clause("a", "diverge"), clause("b", "diverge"), clause("c", "precisa_revisao")],
+        };
+        const slow = () => new Promise((resolve) => setTimeout(resolve, 3_000));
+        api.getContractReview.mockImplementation(async () => {
+            const snapshot = three.clauses.map((c) => (stored.has(c.id) ? { ...c, decision: stored.get(c.id)! } : c));
+            await slow();
+            return { ...three, clauses: snapshot };
+        });
+        api.decideReviewClause.mockImplementation(async (_p: string, _r: string, clauseId: string, input: { decision: string }) => {
+            await slow();
+            const decision = { decision: input.decision, edited_text: null, reason: null, decided_by: "você", decided_at: "t" } as ReviewClause["decision"];
+            stored.set(clauseId, decision);
+            return { decision, edit: null };
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        for (let i = 0; i < 4; i += 1) {
+            await act(async () => {
+                vi.advanceTimersByTime(3_000);
+            });
+        }
+        const cards = await screen.findAllByRole("article");
+        // The first, then a pause longer than the undo window's start, then the next two.
+        fireEvent.click(within(cards[0]).getByRole("button", { name: /Aceitar/ }));
+        await act(async () => {
+            vi.advanceTimersByTime(4_000);
+        });
+        fireEvent.click(within(screen.getAllByRole("article")[1]).getByRole("button", { name: /Aceitar/ }));
+        await act(async () => {
+            vi.advanceTimersByTime(4_000);
+        });
+        fireEvent.click(within(screen.getAllByRole("article")[2]).getByRole("button", { name: /Aceitar/ }));
+        for (let i = 0; i < 12; i += 1) {
+            await act(async () => {
+                vi.advanceTimersByTime(3_000);
+            });
+        }
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(3));
+        await waitFor(() => expect(screen.getAllByRole("button", { name: "Reabrir: Aceito" })).toHaveLength(3));
+    });
+
+    it("says how many attention points are left, and points to the export when none is", async () => {
+        render(<ContractReviewWorkspace {...props()} />);
+        const status = await screen.findByRole("status");
+        expect(status).toHaveTextContent("Falta 1 de 1 ponto de atenção");
+        expect(screen.getByRole("progressbar", { name: "Pontos de atenção tratados" })).toHaveAttribute("aria-valuenow", "0");
+        expect(within(status).queryByRole("button", { name: "Exportar .docx" })).not.toBeInTheDocument();
+
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Tudo tratado"));
+        expect(screen.getByRole("progressbar", { name: "Pontos de atenção tratados" })).toHaveAttribute("aria-valuenow", "1");
+        expect(within(screen.getByRole("status")).getByRole("button", { name: "Exportar .docx" })).toBeEnabled();
+    });
+
+    it("takes two clicks on Aceitar for one decision, not two", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        const accept = within(foro).getByRole("button", { name: /Aceitar/ });
+        // Both clicks in one batch, so the card has not been redrawn as decided between them.
+        act(() => {
+            accept.click();
+            accept.click();
+        });
+        expect(toasts.showToast).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(1));
+        expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" });
+    });
+
+    it("hands the next point the focus, and leaves the decided card without a decision button", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        api.getContractReview.mockResolvedValue({
+            ...REVIEW,
+            clauses: [clause("a", "diverge"), clause("b", "diverge")],
+        });
+        render(<ContractReviewWorkspace {...props()} />);
+        const [first] = await screen.findAllByRole("article");
+        fireEvent.click(within(first).getByRole("button", { name: /Aceitar/ }));
+        const decided = (await screen.findAllByRole("article"))[0];
+        expect(within(decided).queryByRole("button", { name: /^Aceitar/ })).not.toBeInTheDocument();
+        expect(within(decided).getByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
+    });
+
+    it("offers Tentar de novo when the server refuses a decision, and sends the same one again", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const decided = { decision: "aceito" as const, edited_text: null, reason: null, decided_by: "você", decided_at: "t" };
+        let recorded = false;
+        // As the real server: once the decision is recorded, the review carries it.
+        api.getContractReview.mockImplementation(async () => ({
+            ...REVIEW,
+            clauses: REVIEW.clauses.map((c) => (recorded && c.id === "foro" ? { ...c, decision: decided } : c)),
+        }));
+        api.decideReviewClause
+            .mockRejectedValueOnce(Object.assign(new Error("O documento mudou desde a revisão."), { status: 409 }))
+            .mockImplementation(async () => {
+                recorded = true;
+                return { decision: decided, edit: null };
+            });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        await waitFor(() => expect(errors.notifyError).toHaveBeenCalledTimes(1));
+        const [, options] = errors.notifyError.mock.calls[0];
+        expect(options).toMatchObject({ lang: "pt", action: "registrar a decisão" });
+        expect(typeof options.onRetry).toBe("function");
+        // The card is back to open (nothing was recorded), and Tentar de novo sends it again.
+        expect(within((await screen.findAllByRole("article"))[0]).getByRole("button", { name: /Aceitar/ })).toBeInTheDocument();
+        await act(async () => {
+            await options.onRetry();
+        });
+        await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(2));
+        expect(api.decideReviewClause).toHaveBeenLastCalledWith("p1", "run-1", "foro", { decision: "aceito" });
+        expect(await screen.findByRole("button", { name: "Reabrir: Aceito" })).toBeInTheDocument();
+    });
+
+    it("tells the person what happened to the document under an accepted point", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        render(<ContractReviewWorkspace {...props()} />);
+        const foro = (await screen.findAllByRole("article"))[0];
+        fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+        const decided = (await screen.findAllByRole("article"))[0];
+        expect(within(decided).getByText("Mantida como alteração rastreada para a contraparte.")).toBeInTheDocument();
+    });
+
+    describe("leaving the page inside the undo window", () => {
+        async function decideOne() {
+            vi.useFakeTimers({ shouldAdvanceTime: true });
+            render(<ContractReviewWorkspace {...props()} />);
+            const foro = (await screen.findAllByRole("article"))[0];
+            fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+            await screen.findByRole("button", { name: "Reabrir: Aceito" });
+            expect(api.decideReviewClause).not.toHaveBeenCalled();
+        }
+
+        it("sends the pending decision at once on pagehide, with keepalive", async () => {
+            await decideOne();
+            act(() => {
+                window.dispatchEvent(new Event("pagehide"));
+            });
+            expect(api.decideReviewClause).toHaveBeenCalledTimes(1);
+            expect(api.decideReviewClause).toHaveBeenCalledWith("p1", "run-1", "foro", { decision: "aceito" }, { keepalive: true });
+            // The timer is gone: the undo window ending later does not send it again.
+            await act(async () => {
+                vi.advanceTimersByTime(10_000);
+            });
+            expect(api.decideReviewClause).toHaveBeenCalledTimes(1);
+        });
+
+        it("sends it when the tab is hidden, but not while it is visible", async () => {
+            await decideOne();
+            act(() => {
+                document.dispatchEvent(new Event("visibilitychange"));
+            });
+            expect(api.decideReviewClause).not.toHaveBeenCalled();
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+            try {
+                act(() => {
+                    document.dispatchEvent(new Event("visibilitychange"));
+                });
+                expect(api.decideReviewClause).toHaveBeenCalledTimes(1);
+                expect(api.decideReviewClause.mock.calls[0][4]).toEqual({ keepalive: true });
+            } finally {
+                Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+            }
+        });
+
+        it("asks before leaving while a decision is waiting, and not otherwise", async () => {
+            vi.useFakeTimers({ shouldAdvanceTime: true });
+            render(<ContractReviewWorkspace {...props()} />);
+            const foro = (await screen.findAllByRole("article"))[0];
+            const quiet = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(quiet);
+            expect(quiet.defaultPrevented).toBe(false);
+            fireEvent.click(within(foro).getByRole("button", { name: /Aceitar/ }));
+            await screen.findByRole("button", { name: "Reabrir: Aceito" });
+            const waiting = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(waiting);
+            expect(waiting.defaultPrevented).toBe(true);
+            // After the undo window the decision is sent, and leaving is free again.
+            await act(async () => {
+                vi.advanceTimersByTime(10_000);
+            });
+            await waitFor(() => expect(api.decideReviewClause).toHaveBeenCalledTimes(1));
+            const after = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(after);
+            expect(after.defaultPrevented).toBe(false);
+        });
+    });
+
     it("undoes a decision from the toast without touching the document", async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
         render(<ContractReviewWorkspace {...props()} />);

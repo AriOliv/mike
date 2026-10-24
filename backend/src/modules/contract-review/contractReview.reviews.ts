@@ -21,6 +21,7 @@ import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serv
 import type { EditAnnotation } from "@mike/contracts";
 import {
     createPlaybook,
+    findPlaybookForContractType,
     getPlaybookRunById,
     listPlaybooks,
     playbookConfiguration,
@@ -28,7 +29,8 @@ import {
     startPlaybookReview,
     updatePlaybookContent,
 } from "../playbooks/playbooks.service";
-import { applyTrackedEditsToDocument, resolveEdit } from "../documents/documents.service";
+import { applyTrackedEditsToDocument, DOCUMENT_BUSY, resolveEdit } from "../documents/documents.service";
+import { SAVE_CONFLICT } from "./contractReview.analysisDecisions";
 import { AVENIA_PLAYBOOK_CONTENT, AVENIA_PLAYBOOK_NAME, RULE_RISK_RULES } from "./contractReview.playbook";
 import { fieldLabel, type Ficha, type FichaField, type FichaPath } from "./contractReview.ficha";
 import { RULES, type RiskFinding } from "./contractReview.rules";
@@ -178,6 +180,15 @@ export async function ensureAveniaPlaybook(db: Db, caller: Caller, orgId: string
     return updatePlaybookContent(caller.userId, created.id, AVENIA_PLAYBOOK_CONTENT, db, {}, caller.userEmail);
 }
 
+/** The organization's playbook written for this contract's type (an NDA's), if any. */
+async function playbookForProjectType(db: Db, caller: Caller, projectId: string, orgId: string | null) {
+    if (!orgId) return null;
+    const { data, error } = await db.from("projects").select("contract_type").eq("id", projectId).maybeSingle();
+    if (error) throw error;
+    const contractType = (data as { contract_type: string | null } | null)?.contract_type ?? null;
+    return findPlaybookForContractType(db, { userId: caller.userId, userEmail: caller.userEmail, orgId, contractType });
+}
+
 /** Starts a review of the contract's document; the run continues on the server. */
 export async function startContractReview(
     db: Db,
@@ -195,7 +206,8 @@ export async function startContractReview(
         const playbook =
             typeof body.playbook_id === "string" && body.playbook_id
                 ? { id: body.playbook_id }
-                : await ensureAveniaPlaybook(db, caller, orgId);
+                : ((await playbookForProjectType(db, caller, projectId, orgId)) ??
+                  (await ensureAveniaPlaybook(db, caller, orgId)));
         const model =
             typeof body.model === "string" && body.model
                 ? body.model
@@ -574,6 +586,7 @@ export async function decideReviewClause(
                 db,
                 edits: [{ find: target, replace: editedText, context_before: "", context_after: "", reason: finding.ruleName }],
             });
+            if (!applied.ok && applied.conflict) return failure("conflict", SAVE_CONFLICT, "document_busy");
             if (!applied.ok || !applied.annotations[0])
                 return failure("conflict", "Não consegui aplicar a redação editada no documento. Recarregue e tente de novo.");
             edit = applied.annotations[0];
@@ -598,11 +611,13 @@ export async function decideReviewClause(
                     },
                 ],
             });
+            if (!applied.ok && applied.conflict) return failure("conflict", SAVE_CONFLICT, "document_busy");
             if (!applied.ok || !applied.annotations[0])
                 return failure("conflict", "Não consegui colocar a sugestão no documento. Recarregue e tente de novo.");
             edit = applied.annotations[0];
         } else if (decision === "rejeitado" && pending && documentId) {
             const rejected = await resolveEdit("reject", documentId, pending.edit_id, caller.userId, caller.userEmail ?? undefined, db);
+            if (!rejected.ok && rejected.code === DOCUMENT_BUSY) return failure("conflict", SAVE_CONFLICT, "document_busy");
             if (!rejected.ok) return failure("conflict", "O documento mudou desde a revisão. Recarregue e tente de novo.");
         }
         const decided: Decision = {

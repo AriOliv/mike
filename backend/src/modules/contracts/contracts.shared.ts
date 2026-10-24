@@ -7,6 +7,7 @@ import { can } from "../../lib/permissions";
 import { downloadFile } from "../../lib/storage";
 import { extractPdfText } from "../../lib/pdfText";
 import { failure, type ServiceFailure } from "../../lib/serviceResult";
+import { hasApiKeyForModel } from "../../lib/modelSelection";
 import { getUserModelSettings, type UserModelSettings } from "../user/user.service";
 
 export type Caller = { userId: string; userEmail?: string | null };
@@ -157,15 +158,21 @@ export const MODEL_REQUIRED =
 
 /**
  * The model contract analysis runs on: the caller's tabular-review model,
- * else the model they last chatted with. There is no product default any
- * more — upstream removed it — so a caller with neither gets a clear 400.
+ * else the model they last chatted with, else the deployment's
+ * LEGAL_DEFAULT_MODEL (an id from the provider registry) when the caller's
+ * keys can run it — so Perguntar works on first use. A caller with none of
+ * these gets a clear 400 that points to Settings.
  */
 export async function analysisModel(
     db: Db,
     userId: string,
 ): Promise<{ ok: true; model: string; settings: UserModelSettings } | ServiceFailure> {
     const settings = await getUserModelSettings(userId, db);
-    const model = settings.tabular_model ?? settings.last_selected_chat_model;
+    const fallback = process.env.LEGAL_DEFAULT_MODEL?.trim();
+    const model =
+        settings.tabular_model ??
+        settings.last_selected_chat_model ??
+        (fallback && hasApiKeyForModel(fallback, settings.api_keys) ? fallback : null);
     if (!model) return failure("validation", MODEL_REQUIRED, "model_required");
     return { ok: true, model, settings };
 }

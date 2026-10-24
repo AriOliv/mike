@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewClause } from "./mikeApi";
 import {
+    attentionProgress,
     fichaStateLabel,
     isDecidable,
     isRunning,
@@ -146,5 +147,31 @@ describe("review URL", () => {
         expect(reviewSearch("quote=abc", "run-1", "diverge")).toBe("?quote=abc&run=run-1&veredito=diverge");
         expect(reviewSearch("?run=old&veredito=alinhado", "run-2", null)).toBe("?run=run-2");
         expect(reviewSearch("run=x", null, null)).toBe("");
+    });
+});
+
+describe("attention progress", () => {
+    it("counts only the points that need a person and propose wording", () => {
+        const clauses = [
+            clause("a", "alinhado", { suggestedText: "x" }),
+            clause("n", "nao_aplica"),
+            clause("d1", "diverge", { suggestedText: "novo" }),
+            clause("p", "precisa_revisao", { suggestedText: "novo" }),
+            clause("sem-texto", "diverge"),
+        ];
+        expect(attentionProgress(clauses)).toEqual({ total: 2, decided: 0, left: 2 });
+    });
+
+    it("moves a point from left to decided once it has a decision, whichever the decision", () => {
+        const decision = { decision: "rejeitado" as const, decided_by: "x", decided_at: "t" };
+        const clauses = [
+            clause("d1", "diverge", { suggestedText: "novo", decision: decision as ReviewClause["decision"] }),
+            clause("p", "precisa_revisao", { suggestedText: "novo" }),
+        ];
+        expect(attentionProgress(clauses)).toEqual({ total: 2, decided: 1, left: 1 });
+    });
+
+    it("is empty when nothing needs a person", () => {
+        expect(attentionProgress([clause("a", "alinhado", { suggestedText: "x" })])).toEqual({ total: 0, decided: 0, left: 0 });
     });
 });

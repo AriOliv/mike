@@ -14,6 +14,7 @@ const docs = vi.hoisted(() => ({
   loadCurrentVersionBytes: vi.fn(),
   loadActiveVersion: vi.fn(),
   extractDocxBodyText: vi.fn(),
+  extractPdfText: vi.fn(),
 }));
 vi.mock("../../documents/documents.service", async (original) => ({
   ...(await original<typeof import("../../documents/documents.service")>()),
@@ -23,6 +24,10 @@ vi.mock("../../documents/documents.service", async (original) => ({
 vi.mock("../../../lib/documentVersions", async (original) => ({
   ...(await original<typeof import("../../../lib/documentVersions")>()),
   loadActiveVersion: docs.loadActiveVersion,
+}));
+vi.mock("../../../lib/pdfText", async (original) => ({
+  ...(await original<typeof import("../../../lib/pdfText")>()),
+  extractPdfText: docs.extractPdfText,
 }));
 vi.mock("../../../lib/docxTrackedChanges", async (original) => ({
   ...(await original<typeof import("../../../lib/docxTrackedChanges")>()),
@@ -553,6 +558,41 @@ describe("playbook access and autosave", () => {
     ]);
     expect(tables.playbook_runs[0]).toMatchObject({ review_scope: "full" });
   });
+  it("reviews a long playbook in batches, so every rule gets the model's answer", async () => {
+    const ids = Array.from({ length: 10 }, (_, i) => `r${i + 1}`);
+    const content = {
+      ...blankPlaybookContent("Long"),
+      rules: ids.map((id) => ({ id, name: `Rule ${id}`, concept: `Concept ${id}.` })),
+    };
+    const { db, tables } = database([book({ content_json: content })]);
+    // Each call answers only the rules its prompt carries, as a model that
+    // reaches the end of the list does.
+    completeText.mockImplementation(async ({ user }: { user: string }) => {
+      const playbook = JSON.parse(user.split("PLAYBOOK:\n")[1].split("\n\nCONTRACT:")[0]);
+      return JSON.stringify({
+        summary: `Batch of ${playbook.rules.length}.`,
+        findings: playbook.rules.map((r: { id: string; name: string }) => ({
+          ruleId: r.id,
+          ruleName: r.name,
+          status: "acceptable",
+          analysis: `Checked ${r.id}.`,
+        })),
+      });
+    });
+    const result = await reviewWithPlaybook({
+      userId: "owner",
+      playbookId: "book",
+      documentText: "Contract",
+      model: "claude-opus-5",
+      reviewMode: "strict",
+      db,
+    });
+    expect(completeText).toHaveBeenCalledTimes(2);
+    expect(result.findings.map((item) => item.ruleId)).toEqual(ids);
+    expect(result.findings.every((item) => item.status === "acceptable")).toBe(true);
+    expect(tables.playbook_runs[0]).toMatchObject({ status: "completed", summary: "Batch of 8.\n\nBatch of 2." });
+    completeText.mockReset();
+  });
   it("records a failed review on its run", async () => {
     const { db, tables } = database([book()]);
     completeText.mockRejectedValueOnce(new Error("provider down"));
@@ -836,6 +876,19 @@ describe("playbook access and autosave", () => {
       expect(docs.applyTrackedEditsToDocument).not.toHaveBeenCalled();
       expect(result.editedVersionId).toBeNull();
       expect(result.status).toBe("completed");
+    });
+
+    it("reads a stored PDF's text itself, so a review by document id needs no caller text", async () => {
+      const { db } = setup("pdf");
+      docs.extractPdfText.mockResolvedValue(" Liability is unlimited. ");
+
+      const result = await review(db);
+
+      expect(docs.loadCurrentVersionBytes).toHaveBeenCalledWith("doc-1", db, "v1");
+      expect(docs.extractDocxBodyText).not.toHaveBeenCalled();
+      expect(docs.applyTrackedEditsToDocument).not.toHaveBeenCalled();
+      expect(result.status).toBe("completed");
+      expect(result.findings.find((item) => item.ruleId === "cap")?.quote).toBe("Liability is unlimited.");
     });
   });
   it("requires complete rules before a review, even though autosave accepts them", async () => {
