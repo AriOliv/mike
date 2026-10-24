@@ -10,9 +10,13 @@
 export {
     createRequest,
     getRequest,
+    getRequestPlan,
     listRequests,
+    previewCreateRequest,
+    resolveRequestRef,
     assignRequest,
     decideTriage,
+    moveRequestStage,
     postMessage,
     deliverRequest,
     inviteParticipant,
@@ -77,7 +81,7 @@ export {
     intakeForAnalysis,
     type IntakeItem,
 } from "./requests.intake";
-export { handleRequestNotify, renderNotification, SEND_JOB_KIND } from "./requests.notifications";
+export { handleRequestNotify, renderNotification, requestLink, SEND_JOB_KIND } from "./requests.notifications";
 export {
     requestCode,
     parseRequestCode,
@@ -85,9 +89,13 @@ export {
     slaState,
     requesterStep,
     normalizeArea,
+    requestPlan,
     REQUESTER_AREAS,
+    REQUEST_KINDS,
+    LANE_LABELS,
+    type PlanStep,
 } from "./requests.shared";
-export type { Caller } from "./requests.access";
+export type { Caller, McpActor } from "./requests.access";
 export {
     ANALYSIS_START_JOB_KIND,
     getRequestAnalysis,
@@ -97,3 +105,4 @@ export {
     requestAnalysis,
     type CriticalAlert,
 } from "./requests.analysis";
+export { REQUEST_TOOLS, REQUEST_READ_TOOLS, REQUEST_WRITE_TOOLS } from "./requests.mcp";
