@@ -26,6 +26,7 @@ import { startUploadProcessingWorkers } from "./modules/uploads/uploads.service"
 import { startContractMirrors } from "./modules/contracts/contracts.service";
 import { requeuePending } from "./modules/feedback/feedback.service";
 import { enqueueDueRegulatoryScans } from "./modules/regulatory/regulatory.service";
+import { enqueueDueNotionSyncs, notionSyncEnabled } from "./modules/integrations-notion/notionSync.service";
 import { enqueueRenewalSweep } from "./modules/requests/requests.service";
 import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
 import { createServerSupabase } from "./lib/supabase";
@@ -54,6 +55,7 @@ let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let regulatoryTimer: ReturnType<typeof setInterval> | null = null;
 let renewalTimer: ReturnType<typeof setInterval> | null = null;
 let feedbackTimer: ReturnType<typeof setInterval> | null = null;
+let notionTimer: ReturnType<typeof setInterval> | null = null;
 const FEEDBACK_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 
 /** How often to look for regulatory scans due a run (each job dedupes per scan). */
@@ -61,6 +63,11 @@ const REGULATORY_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 
 /** How often to look for contracts whose end is near (the job opens each renewal once). */
 const RENEWAL_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+// Organizations' Notion boards: each has its own polling interval (≥ 5 min);
+// the sweep also picks up cards waiting to go out, so a change in Mike
+// reaches Notion within about a minute.
+const NOTION_SWEEP_INTERVAL_MS = 60 * 1000;
 let stopUploadWorker: (() => void) | null = null;
 
 /**
@@ -171,6 +178,18 @@ export function startAllWorkers(): void {
         FEEDBACK_SWEEP_INTERVAL_MS,
     );
     feedbackTimer.unref();
+    // Two-way sync with each organization's own Notion board. The job is
+    // deduped per organization, so replicas and overlapping sweeps collapse.
+    const runNotionSweep = () =>
+        void enqueueDueNotionSyncs(createServerSupabase()).catch((err) => {
+            reportError(err, { tags: { component: "notion-sweep" } });
+            console.error("[notion-sweep] failed", err);
+        });
+    // Off unless NOTION_SYNC_ENABLED=true: then the timer is not even created.
+    if (notionSyncEnabled()) {
+        notionTimer = setInterval(runNotionSweep, NOTION_SWEEP_INTERVAL_MS);
+        notionTimer.unref();
+    }
 
     // Notion / Drive / Calendar mirrors of the contract pipeline. Each is
     // inert unless its credentials are set.
@@ -186,6 +205,8 @@ export async function stopAllWorkers(): Promise<void> {
     if (renewalTimer) clearInterval(renewalTimer);
     if (feedbackTimer) clearInterval(feedbackTimer);
     regulatoryTimer = null;
+    if (notionTimer) clearInterval(notionTimer);
+    notionTimer = null;
     renewalTimer = null;
     initialSweep = null;
     sweepTimer = null;

@@ -11,6 +11,9 @@ vi.mock("@/app/lib/errorReporting", () => ({
 }));
 
 import {
+    getNotionSyncStatus,
+    setNotionSyncEnabled,
+    syncNotionNow,
     applyNotionImport,
     previewNotionImport,
     connectNotion,
@@ -76,5 +79,18 @@ describe("notion import", () => {
         expect(jsonBody()).toEqual({ write_back: false });
         await applyNotionImport("org-1", true);
         expect(jsonBody()).toEqual({ write_back: true });
+    });
+});
+
+describe("notion sync", () => {
+    it("reads the state, turns the sync on or off and syncs now", async () => {
+        await getNotionSyncStatus("org-1");
+        expect(lastFetchCall().url).toMatch(/\/integrations\/notion\/sync$/);
+        await setNotionSyncEnabled("org-1", true);
+        expect(lastFetchCall().init.method).toBe("PUT");
+        expect(jsonBody()).toEqual({ enabled: true });
+        await syncNotionNow("org-1");
+        expect(lastFetchCall().url).toMatch(/\/integrations\/notion\/sync$/);
+        expect(lastFetchCall().init.method).toBe("POST");
     });
 });

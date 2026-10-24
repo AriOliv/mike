@@ -18,6 +18,7 @@ import {
   RENEWAL_JOB_KIND,
 } from "../modules/requests/requests.service";
 import { AUTO_REVIEW_JOB, handleAutoReview, markAutoReviewFailed } from "../modules/contracts/contracts.service";
+import { handleNotionSync, NOTION_SYNC_JOB } from "../modules/integrations-notion/notionSync.service";
 import { ANALYSIS_READY_JOB, ANALYST_ANALYSIS_JOB, handleAnalystAnalysis, markAnalystAnalysisFailed } from "../modules/contract-review/contractReview.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
 import { type DbJobHandlers } from "../lib/dbq/types";
@@ -44,6 +45,7 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   [ANALYSIS_START_JOB_KIND]: handleRequestAnalysisStart,
   [ANALYSIS_READY_JOB]: handleAnalysisReady,
   [AUTO_REVIEW_JOB]: handleAutoReview,
+  [NOTION_SYNC_JOB]: (db, job) => handleNotionSync(db, (job.payload ?? {}) as { org_id?: unknown }),
   [ANALYST_ANALYSIS_JOB]: handleAnalystAnalysis,
 };
 export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {

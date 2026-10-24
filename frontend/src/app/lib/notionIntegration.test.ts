@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assign, looksLikeToken, mappingProblems, propertiesFor, propertyOf } from "./notionIntegration";
+import { assign, looksLikeToken, mappingProblems, propertiesFor, propertyOf, sinceLabel } from "./notionIntegration";
 
 describe("notion integration helpers", () => {
     it("recognizes a token", () => {
@@ -25,5 +25,16 @@ describe("notion integration helpers", () => {
 
     it("filters properties by type", () => {
         expect(propertiesFor([{ name: "Prazo", type: "date" }, { name: "Contrato", type: "title" }], ["date"])).toEqual(["Prazo"]);
+    });
+
+    it("says when the last sync ran", () => {
+        const now = Date.parse("2026-10-22T12:00:00Z");
+        expect(sinceLabel(null, now)).toBe("ainda não sincronizou");
+        expect(sinceLabel("2026-10-22T11:59:50Z", now)).toBe("agora há pouco");
+        expect(sinceLabel("2026-10-22T11:57:00Z", now)).toBe("há 3 min");
+        expect(sinceLabel("2026-10-22T10:00:00Z", now)).toBe("há 2 h");
+        expect(sinceLabel("2026-10-20T10:00:00Z", now)).toMatch(/^em \d{2}\/\d{2}$/);
+        expect(sinceLabel("2026-10-22T12:05:00Z", now)).toBe("agora há pouco");
+        expect(sinceLabel("2026-10-22T11:00:00Z")).toMatch(/^(há|em)/);
     });
 });

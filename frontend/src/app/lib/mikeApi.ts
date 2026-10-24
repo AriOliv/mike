@@ -6090,6 +6090,26 @@ export async function applyNotionImport(
     return apiRequest(notionPath(orgId, "/import"), notionJson("POST", { write_back: writeBack }));
 }
 
+export interface NotionSyncStatus {
+    sync_enabled: boolean;
+    last_sync_at: string | null;
+    last_sync_error: string | null;
+    pending: number;
+    failed: number;
+    linked_cards: number;
+}
+
+export async function getNotionSyncStatus(orgId: string): Promise<NotionSyncStatus> {
+    return apiRequest(notionPath(orgId, "/sync"));
+}
+
+export async function setNotionSyncEnabled(orgId: string, enabled: boolean): Promise<{ sync_enabled: boolean }> {
+    return apiRequest(notionPath(orgId, "/sync"), notionJson("PUT", { enabled }));
+}
+
+export async function syncNotionNow(orgId: string): Promise<{ queued: true }> {
+    return apiRequest(notionPath(orgId, "/sync"), { method: "POST" });
+}
 
 // ── Agente do Legal (org settings) ──────────────────────────────────────────
 
