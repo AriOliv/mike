@@ -27,9 +27,13 @@ import {
     handleIntakePrefill,
     intakeForAnalysis,
     parsePrefill,
+    searchContracts,
     setIntakeTemplate,
 } from "../requests.service";
-import { applyAnswers, intakeStatus, mergeInferred, normalizeAnswer, parseIntakeTemplate } from "../requests.intake";
+import { cleanIntake } from "../../contract-review/contractReview.analysisService";
+import { parseTermsInferred } from "../requests.prefill";
+import { readDate, readMonths } from "../requests.terms";
+import { applicableItems, applyAnswers, DEFAULT_KIND_QUESTIONS, intakeStatus, mergeInferred, normalizeAnswer, parseIntakeTemplate, readAnswers } from "../requests.intake";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const HEAD = { userId: "aaaaaaaa-0000-4000-8000-000000000001", userEmail: "head@avenia.io" };
@@ -120,7 +124,14 @@ function withDocument(w: ReturnType<typeof world>, requestId: string) {
     });
 }
 
-const REQUIRED = DEFAULT_INTAKE_TEMPLATE.filter((i) => i.required).map((i) => i.key);
+/** A valid answer for every question of the generic checklist, by kind. */
+const BASE_KEYS = DEFAULT_KIND_QUESTIONS.revisao.map((q) => q.key);
+const BASE_ITEMS = DEFAULT_INTAKE_TEMPLATE.filter((i) => BASE_KEYS.includes(i.key));
+const ALL_ANSWERS = Object.fromEntries(
+    BASE_ITEMS.map((i) => [i.key, i.kind === "yes_no" ? "não" : i.kind === "date" ? "na assinatura" : "Validação técnica"]),
+);
+
+const REQUIRED = BASE_ITEMS.filter((i) => i.required).map((i) => i.key);
 const ready = () => ({ revision: "r1", status: "ready", text: CONTRACT, textless_page_count: 0 });
 
 beforeEach(() => {
@@ -145,6 +156,12 @@ describe("the checklist rules", () => {
             "valor_recorrencia",
             "confidencial",
             "dados_pessoais",
+            "quem_compartilha",
+            "finalidade",
+            "modelo",
+            "contrato_original",
+            "o_que_muda",
+            "duvida",
         ]);
         expect(JSON.stringify(DEFAULT_INTAKE_TEMPLATE)).not.toMatch(/avenia|brla|founder/i);
     });
@@ -383,7 +400,7 @@ describe("the intake agent", () => {
                 },
             }),
         );
-        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 3, dropped: 1 });
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 3, terms: 0, dropped: 1 });
         // The model is asked only about what is still open, and reads as the team.
         const prompt = (llm.completeText.mock.calls[0][0] as { systemPrompt: string }).systemPrompt;
         expect(prompt).not.toContain('"contraparte"');
@@ -444,7 +461,7 @@ describe("the intake agent", () => {
         withDocument(w, id);
         vi.spyOn(console, "error").mockImplementation(() => undefined);
         llm.completeText.mockResolvedValue("Desculpe, não consigo.");
-        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 0, dropped: 0, unparsed: true });
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ filled: 0, terms: 0, dropped: 0, unparsed: true });
         expect((llm.completeText.mock.calls[0][0] as { maxTokens: number }).maxTokens).toBeGreaterThanOrEqual(4000);
         expect(w.table("agent_runs").at(-1)).toMatchObject({ status: "succeeded", output: { filled: [], dropped: 0, unparsed: true } });
     });
@@ -472,5 +489,303 @@ describe("the intake agent", () => {
         expect(await state()).toBe("concluido");
         const answered = await answerIntake(w.db, REQUESTER, id, { answers: { contraparte: "Nuvem" } });
         expect(answered.ok && answered.data.prefill).toBe("concluido");
+    });
+});
+
+describe("the contract's terms read by the intake agent", () => {
+    const WITH_TERMS = `${CONTRACT}
+Cláusula 13. O prazo de vigência é de 24 (vinte e quatro) meses.
+Cláusula 14. Contratada: Nuvem Fictícia S.A.`;
+    const reply = (terms: Record<string, unknown>) => JSON.stringify({ answers: {}, terms });
+
+    it("reads dates and terms the way a person writes them, and refuses what it cannot normalize", () => {
+        expect(readDate("2026-11-12")).toBe("2026-11-12");
+        expect(readDate("12/11/2026")).toBe("2026-11-12");
+        expect(readDate("1º de novembro de 2026")).toBe("2026-11-01");
+        expect(readDate("12 de Março de 2027")).toBe("2027-03-12");
+        for (const bad of ["breve", "30/02/2026", "1 de novembr de 2026", "2026-13-01", ""]) expect(readDate(bad)).toBeNull();
+        expect(readMonths("24")).toBe(24);
+        expect(readMonths("12 meses")).toBe(12);
+        expect(readMonths("2 anos")).toBe(24);
+        expect(readMonths("1 mês")).toBe(1);
+        for (const bad of ["indeterminado", "0", "700", "1,5 anos", "doze"]) expect(readMonths(bad)).toBeNull();
+    });
+
+    it("keeps a term only with the contract's own words behind it", () => {
+        const read = parseTermsInferred(
+            reply({
+                counterparty: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A." },
+                term_start: { value: "1º de novembro de 2026", quote: "Vigência a partir de 1º de novembro de 2026." },
+                term_months: { value: 24, quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+            }),
+            WITH_TERMS,
+        );
+        expect(read.dropped).toBe(0);
+        expect(read.terms).toEqual({
+            counterparty: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A." },
+            term_start: { value: "2026-11-01", quote: "Vigência a partir de 1º de novembro de 2026." },
+            term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+        });
+    });
+
+    it("drops a term with an invented quote, no quote, or a value it cannot read, and counts it", () => {
+        const read = parseTermsInferred(
+            reply({
+                counterparty: { value: "Outra Empresa", quote: "trecho que não existe no contrato" },
+                term_start: { value: "em breve", quote: "Vigência a partir de 1º de novembro de 2026." },
+                term_months: { value: "24" },
+            }),
+            WITH_TERMS,
+        );
+        expect(read.terms).toEqual({});
+        expect(read.dropped).toBe(3);
+    });
+
+    it("says nothing for a reply without terms, a broken one, or entries that are not objects", () => {
+        expect(parseTermsInferred('{"answers": {}}', WITH_TERMS)).toEqual({ terms: {}, dropped: 0 });
+        expect(parseTermsInferred("não sei", WITH_TERMS)).toEqual({ terms: {}, dropped: 0 });
+        expect(parseTermsInferred(reply({ counterparty: "x", term_start: null, term_months: { value: "" } }), WITH_TERMS)).toEqual({ terms: {}, dropped: 0 });
+    });
+
+    it("stores them apart from what the requester typed, only where the form was left empty", async () => {
+        const w = world();
+        const id = await newRequest(w, { counterparty: "Nuvem (como a Ana escreveu)", term_months: 6 });
+        withDocument(w, id);
+        text.read.mockReturnValue({ revision: "r1", status: "ready", text: WITH_TERMS, textless_page_count: 0 });
+        llm.completeText.mockResolvedValue(
+            reply({
+                counterparty: { value: "Nuvem Fictícia S.A.", quote: "Contratada: Nuvem Fictícia S.A." },
+                term_start: { value: "2026-11-01", quote: "Vigência a partir de 1º de novembro de 2026." },
+                term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+            }),
+        );
+        const out = await handleIntakePrefill(w.db, { payload: { request_id: id } });
+        expect(out).toMatchObject({ terms: 1 });
+        const row = w.table("legal_requests").find((r) => r.id === id)!;
+        // what the person typed is untouched; only the empty start was filled
+        expect(row).toMatchObject({ counterparty: "Nuvem (como a Ana escreveu)", term_months: 6, term_start: null });
+        expect(row.terms_inferred).toEqual({ term_start: { value: "2026-11-01", quote: "Vigência a partir de 1º de novembro de 2026." } });
+    });
+
+    it("still reads the terms when every checklist question is already answered", async () => {
+        const w = world();
+        const id = await newRequest(w);
+        const answered = await answerIntake(w.db, REQUESTER, id, { answers: ALL_ANSWERS });
+        expect(answered.ok && answered.data.complete).toBe(true);
+        withDocument(w, id);
+        text.read.mockReturnValue({ revision: "r1", status: "ready", text: WITH_TERMS, textless_page_count: 0 });
+        llm.completeText.mockResolvedValue(reply({ term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" } }));
+        const out = await handleIntakePrefill(w.db, { payload: { request_id: id } });
+        expect(out).toMatchObject({ terms: 1 });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.terms_inferred).toEqual({
+            term_months: { value: "24", quote: "prazo de vigência é de 24 (vinte e quatro) meses" },
+        });
+    });
+
+    it("does not call the model at all once the checklist and the terms are all in", async () => {
+        const w = world();
+        const id = await newRequest(w, { counterparty: "Nuvem", term_start: "2026-11-01", term_months: 12 });
+        withDocument(w, id);
+        const answered = await answerIntake(w.db, REQUESTER, id, { answers: ALL_ANSWERS });
+        expect(answered.ok && answered.data.complete).toBe(true);
+        llm.completeText.mockClear();
+        expect(await handleIntakePrefill(w.db, { payload: { request_id: id } })).toEqual({ skipped: "answered" });
+        expect(llm.completeText).not.toHaveBeenCalled();
+    });
+});
+
+describe("questions by kind of request", () => {
+    const keysFor = (kind: string) => applicableItems([...DEFAULT_INTAKE_TEMPLATE], "padrao", kind, {}).map((i) => i.key);
+
+    it("asks an NDA its own questions, without value or commercial terms", () => {
+        const nda = keysFor("nda");
+        expect(nda).toEqual(expect.arrayContaining(["quem_compartilha", "finalidade", "modelo", "confidencial", "dados_pessoais", "inicio"]));
+        expect(nda).not.toContain("valor_recorrencia");
+        expect(nda).not.toContain("motivo_condicoes");
+        expect(nda).not.toContain("de_acordo");
+    });
+
+    it("asks an amendment for the original contract and what changes, and a legal question only what it wants to know", () => {
+        expect(keysFor("aditivo")).toEqual(expect.arrayContaining(["contrato_original", "o_que_muda", "valor_recorrencia"]));
+        const parecer = applicableItems([...DEFAULT_INTAKE_TEMPLATE], "padrao", "parecer", {});
+        expect(parecer.map((i) => [i.key, i.required])).toEqual([["duvida", true], ["contraparte", false]]);
+        expect(keysFor("revisao")).toHaveLength(9);
+        expect(keysFor("outro")).toEqual(["contraparte", "empresa_signataria", "motivo_condicoes"]);
+    });
+
+    it("leaves an organization's own checklist whole unless it sets a map", () => {
+        const own = [{ key: "a", label: "A", kind: "text" as const, required: true }, { key: "b", label: "B", kind: "text" as const, required: true }];
+        expect(applicableItems(own, "org", "nda", {}).map((i) => i.key)).toEqual(["a", "b"]);
+        expect(applicableItems(own, "org", "nda", { nda: ["b"] }).map((i) => i.key)).toEqual(["b"]);
+    });
+
+    it("counts only the kind's questions, keeps the other answers, and tells when the kind changed", async () => {
+        const w = world();
+        const id = await newRequest(w);
+        await answerIntake(w.db, REQUESTER, id, { answers: { valor_recorrencia: "R$ 1.000 por mês", contraparte: "Nuvem Fictícia S.A." } });
+        w.table("legal_requests").find((r) => r.id === id)!.kind = "nda";
+        const got = await getIntake(w.db, REQUESTER, id);
+        if (!got.ok) throw new Error("no intake");
+        expect(got.data.kind).toBe("nda");
+        expect(got.data.kind_changed).toEqual({ from: "revisao", to: "nda" });
+        expect(got.data.total).toBe(9);
+        expect(got.data.items.map((i) => i.key)).not.toContain("valor_recorrencia");
+        expect(got.data.pending).not.toContain("valor_recorrencia");
+        // The answer to a question that stopped applying is still stored.
+        expect(readAnswers(w.table("legal_requests").find((r) => r.id === id)!.intake).valor_recorrencia).toBeTruthy();
+        // Answering once more clears the notice.
+        const again = await answerIntake(w.db, REQUESTER, id, { answers: { aprovacao: "Diretoria" } });
+        expect(again.ok && again.data.kind_changed).toBeNull();
+    });
+
+    it("closes an NDA's checklist without value and commercial terms, which starts the analysis", async () => {
+        const w = world();
+        const id = await newRequest(w, { kind: "nda" });
+        const answers = {
+            aprovacao: "Diretoria",
+            contraparte: "Nuvem Fictícia S.A.",
+            empresa_signataria: "Exemplo Pagamentos Ltda.",
+            quem_compartilha: "ambos",
+            finalidade: "Avaliar parceria",
+            modelo: "nosso",
+            confidencial: "sim",
+            dados_pessoais: { value: "não sei", unknown: true },
+            inicio: "na assinatura",
+        };
+        enqueue.enqueueDbJob.mockClear();
+        const done = await answerIntake(w.db, REQUESTER, id, { answers });
+        expect(done).toMatchObject({ ok: true, data: { complete: true, pending: [] } });
+        expect(enqueue.enqueueDbJob).toHaveBeenCalledWith(w.db, expect.objectContaining({ kind: "request.analysis_start" }));
+    });
+
+    it("takes a pick from a list only from its options", async () => {
+        const w = world();
+        const id = await newRequest(w, { kind: "nda" });
+        const bad = await answerIntake(w.db, REQUESTER, id, { answers: { quem_compartilha: "ninguém" } });
+        expect(bad).toMatchObject({ ok: false, kind: "validation" });
+        const good = await answerIntake(w.db, REQUESTER, id, { answers: { quem_compartilha: "ambos" } });
+        expect(good.ok && good.data.items.find((i) => i.key === "quem_compartilha")?.answer).toMatchObject({ selected: ["ambos"], value: "Os dois" });
+        const many = await answerIntake(w.db, REQUESTER, id, { answers: { quem_compartilha: ["nos", "eles"] } });
+        expect(many).toMatchObject({ ok: false, kind: "validation" });
+        const amend = await newRequest(w, { kind: "aditivo" });
+        const multi = await answerIntake(w.db, REQUESTER, amend, { answers: { o_que_muda: ["prazo", "valor"] } });
+        expect(multi.ok && multi.data.items.find((i) => i.key === "o_que_muda")?.answer).toMatchObject({ selected: ["prazo", "valor"], value: "Prazo, Valor" });
+    });
+
+    it("says there is nothing to fill when no question is required, and the legal question is its own required field", async () => {
+        expect(intakeStatus([{ key: "x", label: "X", kind: "text", required: false }], {})).toMatchObject({ nothing_to_fill: true, complete: true });
+        const w = world();
+        const id = await newRequest(w, { kind: "parecer", counterparty: "" });
+        const got = await getIntake(w.db, REQUESTER, id);
+        expect(got).toMatchObject({ ok: true, data: { total: 2, pending: ["duvida"], nothing_to_fill: false, complete: false } });
+        const noUnknown = await answerIntake(w.db, REQUESTER, id, { answers: { duvida: { unknown: true } } });
+        expect(noUnknown).toMatchObject({ ok: false, kind: "validation" });
+        const done = await answerIntake(w.db, REQUESTER, id, { answers: { duvida: "Podemos assinar sem testemunhas?" } });
+        expect(done).toMatchObject({ ok: true, data: { complete: true } });
+    });
+
+    it("keeps 'não sei' explicit: counted as answered, marked for the analysis, never read from text", async () => {
+        const w = world();
+        const id = await newRequest(w, { kind: "nda" });
+        const typed = await answerIntake(w.db, REQUESTER, id, { answers: { confidencial: "não sei" } });
+        expect(typed).toMatchObject({ ok: false });
+        const unknown = await answerIntake(w.db, REQUESTER, id, { answers: { dados_pessoais: { unknown: true } } });
+        if (!unknown.ok) throw new Error("no answer");
+        const item = unknown.data.items.find((i) => i.key === "dados_pessoais")!;
+        expect(item).toMatchObject({ state: "confirmado", answer: { value: "Não sei", unknown: true } });
+        const flat = intakeForAnalysis(unknown.data.items, readAnswers(w.table("legal_requests").find((r) => r.id === id)!.intake));
+        expect(flat).toEqual([{ key: "dados_pessoais", label: expect.any(String), value: "Não sei", source: "requester", unknown: true }]);
+        expect(cleanIntake(flat)).toEqual([expect.objectContaining({ key: "dados_pessoais", unknown: true })]);
+        expect(cleanIntake([{ key: "a", label: "A", value: "x", unknown: "true" }])?.[0]).not.toHaveProperty("unknown");
+    });
+
+    it("only puts the kind's questions to the model, and keeps a pick only by its option codes", () => {
+        const items = applicableItems([...DEFAULT_INTAKE_TEMPLATE], "padrao", "nda", {});
+        const raw = JSON.stringify({
+            answers: {
+                modelo: { value: "nosso", quote: "Cláusula 3" },
+                quem_compartilha: { value: "talvez", quote: "Cláusula 3" },
+                valor_recorrencia: { value: "R$ 12.000,00", quote: "R$ 12.000,00" },
+            },
+        });
+        const parsed = parsePrefill(raw, items, CONTRACT);
+        expect(Object.keys(parsed.inferred)).toEqual(["modelo"]);
+        expect(parsed.inferred.modelo.selected).toEqual(["nosso"]);
+        const merged = mergeInferred(items, {}, parsed.inferred, "2026-10-23T00:00:00Z");
+        expect(merged.answers.modelo).toMatchObject({ value: "Nosso", selected: ["nosso"], source: "inferred", confirmed: false });
+    });
+
+    it("lets the Head set which questions apply to each kind, and refuses a map that cites nothing", async () => {
+        const w = world();
+        const bad = await setIntakeTemplate(w.db, HEAD, { items: [], by_kind: { nda: ["nao_existe"] } });
+        expect(bad).toMatchObject({ ok: false, kind: "validation" });
+        const badKind = await setIntakeTemplate(w.db, HEAD, { items: [], by_kind: { inventado: ["aprovacao"] } });
+        expect(badKind).toMatchObject({ ok: false, kind: "validation" });
+        const set = await setIntakeTemplate(w.db, HEAD, { items: [], by_kind: { nda: ["aprovacao", "contraparte"] } });
+        expect(set).toMatchObject({ ok: true, data: { by_kind: { nda: ["aprovacao", "contraparte"] } } });
+        const id = await newRequest(w, { kind: "nda" });
+        const got = await getIntake(w.db, REQUESTER, id);
+        expect(got.ok && got.data.items.map((i) => i.key)).toEqual(["aprovacao", "contraparte"]);
+    });
+});
+
+describe("the contract an amendment changes", () => {
+    const PARENT = "cccccccc-0000-4000-8000-000000000001";
+    const OTHER_ORG_CARD = "cccccccc-0000-4000-8000-000000000002";
+    function withContracts() {
+        const w = world({
+            projects: [
+                { id: PARENT, org_id: ORG, name: "Contrato de Nuvem 2025", counterparty: "Nuvem Fictícia S.A.", archived_at: null },
+                { id: "cccccccc-0000-4000-8000-000000000003", org_id: ORG, name: "Licença de Software", counterparty: "Código Ágil Ltda.", archived_at: null },
+                { id: "cccccccc-0000-4000-8000-000000000004", org_id: ORG, name: "Contrato antigo", counterparty: "Nuvem Fictícia S.A.", archived_at: "2026-01-01" },
+                { id: OTHER_ORG_CARD, org_id: "22222222-2222-4222-8222-222222222222", name: "Contrato de Nuvem de outra org", counterparty: "Nuvem Outra", archived_at: null },
+            ],
+        });
+        return w;
+    }
+
+    it("finds contracts by name or counterparty, accents aside, only of the team's org and not archived", async () => {
+        const w = withContracts();
+        const byName = await searchContracts(w.db, "licenca");
+        expect(byName.ok && byName.data.contracts.map((c) => c.name)).toEqual(["Licença de Software"]);
+        const byParty = await searchContracts(w.db, "nuvem fict");
+        expect(byParty.ok && byParty.data.contracts.map((c) => c.id)).toEqual([PARENT]);
+        expect(await searchContracts(w.db, "n")).toMatchObject({ ok: false, kind: "validation" });
+    });
+
+    it("ties the amendment to the picked contract, and 'não está no Mike' unties it", async () => {
+        const w = withContracts();
+        const id = await newRequest(w, { kind: "aditivo" });
+        const tied = await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: { project_id: PARENT } } });
+        expect(tied).toMatchObject({ ok: true, data: { parent_contract: { id: PARENT, name: "Contrato de Nuvem 2025" } } });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id).toBe(PARENT);
+        expect(readAnswers(w.table("legal_requests").find((r) => r.id === id)!.intake).contrato_original).toMatchObject({ project_id: PARENT });
+        const seen = await getIntake(w.db, REQUESTER, id);
+        expect(seen.ok && seen.data.parent_contract?.id).toBe(PARENT);
+        const typed = await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: "Não está no Mike, vou anexar" } });
+        expect(typed).toMatchObject({ ok: true, data: { parent_contract: null } });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id).toBeNull();
+    });
+
+    it("refuses a contract that is archived, from another organization or not a card", async () => {
+        const w = withContracts();
+        const id = await newRequest(w, { kind: "aditivo" });
+        for (const project_id of ["cccccccc-0000-4000-8000-000000000004", OTHER_ORG_CARD, "não-é-id"]) {
+            const r = await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: { project_id } } });
+            expect(r).toMatchObject({ ok: false, kind: "validation" });
+        }
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id ?? null).toBeNull();
+    });
+
+    it("does not leave the link when other questions are answered, and the agent never guesses the contract", async () => {
+        const w = withContracts();
+        const id = await newRequest(w, { kind: "aditivo" });
+        await answerIntake(w.db, REQUESTER, id, { answers: { contrato_original: { project_id: PARENT } } });
+        await answerIntake(w.db, REQUESTER, id, { answers: { aprovacao: "Diretoria" } });
+        expect(w.table("legal_requests").find((r) => r.id === id)!.parent_project_id).toBe(PARENT);
+        withDocument(w, id);
+        llm.completeText.mockResolvedValue(JSON.stringify({ answers: { contrato_original: { value: "Contrato X", quote: "Cláusula 3" } } }));
+        await handleIntakePrefill(w.db, { payload: { request_id: id } });
+        expect(llm.completeText.mock.calls[0]?.[0]).toMatchObject({ systemPrompt: expect.not.stringContaining('"contrato_original"') });
     });
 });

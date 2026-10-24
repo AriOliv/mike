@@ -44,6 +44,8 @@ import {
   projectContractRouter,
   watchedFoldersRouter,
 } from "./modules/contracts/contracts.routes";
+import { feedbackRouter } from "./modules/feedback/feedback.routes";
+import { cnpjRouter } from "./modules/cnpj/cnpj.routes";
 import { regulatoryRouter } from "./modules/regulatory/regulatory.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
 import { mcpRouter, mcpTokensRouter } from "./modules/mcp/mcp.routes";
@@ -395,6 +397,8 @@ app.use("/integrations", integrationsRouter);
 app.use("/acervo", acervoRouter);
 app.use("/contracts", contractPortfolioRouter);
 app.use("/regulatory", regulatoryRouter);
+app.use("/cnpj", cnpjRouter);
+app.use("/feedback", feedbackRouter);
 app.use("/dashboard", dashboardRouter);
 app.use("/mcp-tokens", mcpTokensRouter);
 app.use("/requests", requestsRouter);

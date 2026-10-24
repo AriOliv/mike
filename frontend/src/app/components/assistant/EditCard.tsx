@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { EditCardUI } from "@/shared/ui/EditCardUI";
 import { resolveDocumentEdit } from "@/app/lib/mikeApi";
+import { editFailureMessage } from "@/app/lib/editFailureMessage";
 import type { EditAnnotation } from "../shared/types";
 import { RESPONSE_GLASS_SURFACE } from "./message/messageStyles";
 import { docxRevisionElements } from "../shared/views/docxRevisionElements";
@@ -217,10 +218,7 @@ export function EditCard({
                 editId: annotation.edit_id,
                 documentId: annotation.document_id,
                 versionId: annotation.version_id ?? null,
-                message:
-                    verb === "accept"
-                        ? "Couldn't save accept — reverted."
-                        : "Couldn't save reject — reverted.",
+                message: editFailureMessage(e, verb),
             });
         } finally {
             setBusyAction(null);

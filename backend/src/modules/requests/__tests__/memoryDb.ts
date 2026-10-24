@@ -1,6 +1,6 @@
 // A tiny in-memory stand-in for the supabase-js query builder, enough for
 // the requests module's queries: select/insert/update/upsert/delete with
-// eq/in/is/not/or/order/limit, single/maybeSingle, and named rpc handlers.
+// eq/in/is/not/or/gte/lte/order/limit, single/maybeSingle, and named rpc handlers.
 // The requests service reads in parallel, so a strict call script would test
 // the order of reads; this tests what ends up in the tables instead.
 
@@ -68,6 +68,10 @@ export function memoryDb(
                     if (unique && item[unique] && rows.some((r) => r[unique] === item[unique])) {
                         return { data: null, error: { code: "23505", message: "duplicate" } };
                     }
+                    // A composite primary key: the renewal claim.
+                    if (name === "contract_renewal_requests" && rows.some((r) => r.project_id === item.project_id && r.term_end === item.term_end)) {
+                        return { data: null, error: { code: "23505", message: "duplicate" } };
+                    }
                     const row: Row = { ...(options.defaults?.[name]?.() ?? {}), id: uuid(), ...item };
                     rows.push(row);
                     out.push(row);
@@ -123,6 +127,8 @@ export function memoryDb(
             delete: () => ((op = "delete"), b),
             eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), b),
             in: (c: string, v: unknown[]) => (filters.push((r) => v.includes(r[c])), b),
+            gte: (c: string, v: unknown) => (filters.push((r) => r[c] !== null && r[c] !== undefined && String(r[c]) >= String(v)), b),
+            lte: (c: string, v: unknown) => (filters.push((r) => r[c] !== null && r[c] !== undefined && String(r[c]) <= String(v)), b),
             is: (c: string, v: unknown) => (filters.push((r) => (r[c] ?? null) === v), b),
             not: (c: string, _op: string, v: unknown) => (filters.push((r) => (r[c] ?? null) !== v), b),
             or: (expr: string) => (filters.push(parseOr(expr)), b),

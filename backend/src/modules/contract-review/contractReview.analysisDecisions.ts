@@ -26,6 +26,14 @@ export type RedlineDecision = {
     edit: EditAnnotation | null;
 };
 
+/** Two people wrote the same contract at once and this one lost every retry: nothing was saved, and the person is told. */
+export const SAVE_CONFLICT = "O contrato foi alterado por outra pessoa ao mesmo tempo. Sua decisão não foi gravada; tente de novo.";
+
+/** The redline's quote is no longer in the contract (someone changed that clause since the analysis). */
+export const TEXT_CHANGED = "Esse trecho já foi alterado no contrato. Peça uma nova análise para esta cláusula.";
+/** The quote is in the contract more than once: the server does not guess where. */
+export const TEXT_AMBIGUOUS = "Esse trecho aparece em mais de um lugar do contrato; aplique pela tela de revisão.";
+
 const DECISIONS = new Set(["aceito", "editado", "rejeitado"]);
 
 async function callerName(db: Db, caller: Caller): Promise<string> {
@@ -103,9 +111,11 @@ export async function decideAnalysisRedline(
         let edit: EditAnnotation | null = null;
         if (decision !== "rejeitado") {
             const doc = await contractDocument(db, projectId);
-            // The redline quotes the version that was analysed; a newer one may not hold it.
-            if (!doc || doc.versionId !== analysis.version_id)
-                return failure("conflict", "O contrato tem uma versão mais nova que a analisada. Peça uma nova análise.", "stale_analysis");
+            // What decides is the FACT, not the version: the applier places the redline's "from" in the
+            // ACTIVE document only when it is there exactly once. A decision taken on another clause of the
+            // contract (a playbook review, another redline) makes a newer version without touching this
+            // quote, and must not stop it; a quote that changed, or that is repeated, is told to the person.
+            if (!doc) return failure("not_found", "O contrato não tem documento para aplicar a redação.");
             if (doc.isDocx) {
                 const applied = await applyTrackedEditsToDocument({
                     documentId: doc.documentId,
@@ -122,6 +132,9 @@ export async function decideAnalysisRedline(
                         },
                     ],
                 });
+                if (!applied.ok && applied.conflict) return failure("conflict", SAVE_CONFLICT, "document_busy");
+                if (!applied.ok && applied.reason === "not_found") return failure("conflict", TEXT_CHANGED, "analysis_text_changed");
+                if (!applied.ok && applied.reason === "ambiguous") return failure("conflict", TEXT_AMBIGUOUS, "analysis_text_ambiguous");
                 if (!applied.ok || !applied.annotations[0])
                     return failure("conflict", "Não consegui colocar a redação no documento. Recarregue e tente de novo.");
                 edit = applied.annotations[0];

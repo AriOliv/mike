@@ -1,5 +1,5 @@
 // A small table-backed stand-in for supabase-js, enough for the MCP module:
-// select/insert/update with eq/is/gt, single/maybeSingle, head counts, and
+// select/insert/update with eq/is/gt/gte, single/maybeSingle, head counts, and
 // auth.admin.getUserById. Fictional data only.
 
 import type { Db } from "../../../lib/supabase";
@@ -41,6 +41,7 @@ export function fakeDb(
             eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), b),
             is: (c: string, v: unknown) => (filters.push((r) => (r[c] ?? null) === v), b),
             gt: (c: string, v: string) => (filters.push((r) => String(r[c]) > v), b),
+            gte: (c: string, v: string) => (filters.push((r) => String(r[c]) >= v), b),
             order: () => b,
             limit: () => b,
             single: () => Promise.resolve({ data: run()[0] ?? null, error: null }),

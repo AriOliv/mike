@@ -13,7 +13,8 @@ vi.mock("../../contracts/contracts.service", () => contracts);
 vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn(async () => undefined) }));
 
 import { analysisDocx, analysisMarkdown, decideAnalysisRedline, exportAnalysis, listRedlineDecisions } from "../contractReview.service";
-import type { AnalysisResult } from "../contractReview.analysis";
+import { withMissingIntake, type AnalysisResult } from "../contractReview.analysis";
+import JSZip from "jszip";
 
 const caller = { userId: "u1", userEmail: "time@example.com" };
 const ID = "11111111-2222-4333-8444-555555555555";
@@ -95,14 +96,73 @@ describe("decideAnalysisRedline", () => {
         expect(documents.applyTrackedEditsToDocument).not.toHaveBeenCalled();
     });
 
-    it("refuses a stale analysis, a decided redline, an unplaceable change and bad input", async () => {
-        shared.contractDocument.mockResolvedValueOnce({ ...docx, versionId: "v2" });
-        const stale = scriptedDb([
+    const decideR1 = (fake: ReturnType<typeof scriptedDb>) => decideAnalysisRedline(fake.db, caller, "p1", ID, "r1", { decision: "aceito" });
+    const readyDb = () =>
+        scriptedDb([
             { table: "contract_analyses", data: analysis() },
             { table: "contract_analysis_decisions", data: null },
         ]);
-        expect(await decideAnalysisRedline(stale.db, caller, "p1", ID, "r1", { decision: "aceito" })).toMatchObject({ ok: false, kind: "conflict", code: "stale_analysis" });
 
+    it("applies a redline on a NEWER version when its quote is still there once: a decision on another clause is not 'stale'", async () => {
+        // A playbook review (or another redline) already made v2; this redline's quote is untouched in it.
+        shared.contractDocument.mockResolvedValueOnce({ ...docx, versionId: "v2" });
+        const fake = scriptedDb([
+            { table: "contract_analyses", data: analysis() },
+            { table: "contract_analysis_decisions", data: null },
+            { table: "user_profiles", data: { display_name: "Pessoa", email: "time@example.com" } },
+            { table: "contract_analysis_decisions", op: "insert" },
+        ]);
+        expect(await decideR1(fake)).toMatchObject({ ok: true, data: { decision: "aceito" } });
+        // It was applied to the ACTIVE document, whatever version that is.
+        expect(documents.applyTrackedEditsToDocument).toHaveBeenCalledWith(expect.objectContaining({ documentId: "d1" }));
+        fake.done();
+    });
+
+    it("tells the person the quote was changed when it is no longer in the contract, and records nothing", async () => {
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", reason: "not_found" });
+        const fake = readyDb();
+        const decided = await decideR1(fake);
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "analysis_text_changed" });
+        expect(decided).toMatchObject({ detail: "Esse trecho já foi alterado no contrato. Peça uma nova análise para esta cláusula." });
+        expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
+        fake.done();
+    });
+
+    it("does not guess when the quote is in the contract more than once: it says where to go, and records nothing", async () => {
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", reason: "ambiguous" });
+        const fake = readyDb();
+        const decided = await decideR1(fake);
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "analysis_text_ambiguous" });
+        expect(decided).toMatchObject({ detail: "Esse trecho aparece em mais de um lugar do contrato; aplique pela tela de revisão." });
+        expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
+        fake.done();
+    });
+
+    it("keeps the three failures apart: changed, repeated and written-at-the-same-time have different codes", async () => {
+        const codes: string[] = [];
+        for (const outcome of [{ reason: "not_found" }, { reason: "ambiguous" }, { conflict: true }]) {
+            documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", ...outcome });
+            const r = await decideR1(readyDb());
+            if (!r.ok && "code" in r) codes.push(String(r.code));
+        }
+        expect(codes).toEqual(["analysis_text_changed", "analysis_text_ambiguous", "document_busy"]);
+    });
+
+    it("says so, and saves nothing, when the contract was written by someone else at the same time and every retry lost", async () => {
+        documents.applyTrackedEditsToDocument.mockResolvedValueOnce({ ok: false, error: "x", conflict: true });
+        const fake = scriptedDb([
+            { table: "contract_analyses", data: analysis() },
+            { table: "contract_analysis_decisions", data: null },
+        ]);
+        const decided = await decideAnalysisRedline(fake.db, caller, "p1", ID, "r1", { decision: "aceito" });
+        expect(decided).toMatchObject({ ok: false, kind: "conflict", code: "document_busy" });
+        expect(decided).toMatchObject({ detail: expect.stringMatching(/não foi gravada/) });
+        // No decision row was written: the person can try again.
+        expect(fake.calls.some((call) => call.op === "insert")).toBe(false);
+        fake.done();
+    });
+
+    it("refuses a decided redline, an unplaceable change and bad input", async () => {
         const decided = scriptedDb([
             { table: "contract_analyses", data: analysis() },
             { table: "contract_analysis_decisions", data: { redline_id: "r1" } },
@@ -147,6 +207,20 @@ describe("export", () => {
         expect(md).not.toContain("prazo de 30 dias");
         expect(md).toContain("- Aprovação do founder. (depende de: founder)");
         expect(md).toContain("🟡 *Pontos de atenção*\n- Nenhum.");
+    });
+
+    it("exports the three server-added 'não sei' open points, after the model's, in .md and .docx", async () => {
+        const intake = ["Valor estimado", "Prazo desejado", "Foro"].map((label, i) => ({ key: `k${i}`, label, value: "Não sei", unknown: true }));
+        const withUnknown = withMissingIntake(result, intake);
+        const md = analysisMarkdown("Contrato Exemplo", withUnknown);
+        const lines = md.split("\n");
+        const at = lines.findIndex((l) => l.includes("Aprovação do founder"));
+        expect(lines.slice(at + 1, at + 4).map((l) => l.replace(/^- Pedido sem resposta: "(.*)" \(marcado.*$/, "$1"))).toEqual(["Valor estimado", "Prazo desejado", "Foro"]);
+        const file = await analysisDocx(md);
+        expect(file.subarray(0, 2).toString()).toBe("PK");
+        const xml = (await JSZip.loadAsync(file).then((z) => z.file("word/document.xml")!.async("string")));
+        for (const label of ["Valor estimado", "Prazo desejado", "Foro"]) expect(xml).toContain(label);
+        expect(xml.indexOf("Aprovação do founder")).toBeLessThan(xml.indexOf("Valor estimado"));
     });
 
     it("builds a Word file from it", async () => {

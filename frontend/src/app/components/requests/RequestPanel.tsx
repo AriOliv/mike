@@ -6,6 +6,7 @@ import { ExternalLink, Send, UserPlus, X } from "lucide-react";
 import { DetailPanel } from "@/app/components/shared/DetailPanel";
 import { ActivityFeed } from "@/app/components/shared/ActivityFeed";
 import { AgentPlan } from "@/app/components/shared/AgentPlan";
+import { StageStrip } from "./StageStrip";
 import { StatusChip } from "@/app/components/ui/status-chip";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
@@ -24,6 +25,7 @@ import { toActivityItems } from "@/app/lib/activityFeed";
 import {
     CHANNEL_LABEL,
     formatDate,
+    nextAction,
     requestPlan,
     slaText,
     requestChip,
@@ -32,6 +34,7 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { showToast } from "@/app/components/ui/toast";
 import { RequestConversation } from "./RequestConversation";
 import { RequestIntakeSection } from "./IntakeChecklist";
+import { RequestTermsSection } from "./RequestTermsSection";
 import { CriticalAlertBanner } from "./CriticalAlerts";
 import { AnalystAnalysisView } from "@/app/components/contract-review/AnalystAnalysisView";
 import { ExternalChip } from "./ExternalChip";
@@ -47,9 +50,9 @@ function criticalCount(events: { action: string; after?: unknown }[]): number {
     return n > 0 ? n : 1;
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, id, children }: { title: string; id?: string; children: ReactNode }) {
     return (
-        <section className="mt-6">
+        <section id={id} className="mt-6 scroll-mt-4">
             <h3 className="mb-2 text-xs font-medium text-gray-500">{title}</h3>
             {children}
         </section>
@@ -65,11 +68,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export function RequestPanel({
     requestId,
     team,
+    userId = null,
     onClose,
     onChanged,
 }: {
     requestId: string;
     team: { id: string; name: string; email: string }[];
+    /** The signed-in person, to show their next task first. */
+    userId?: string | null;
     onClose: () => void;
     onChanged: () => void;
 }) {
@@ -177,6 +183,7 @@ export function RequestPanel({
         );
     };
     const focusAssignee = () => document.getElementById(`assignee-${r.id}`)?.focus();
+    const next = nextAction(r, userId);
     const chip = requestChip(r.status, { triaged: !!r.triage, pending: !!r.triage && !r.triage.decision });
 
     return (
@@ -196,6 +203,55 @@ export function RequestPanel({
                     >
                         Abrir card <ExternalLink aria-hidden="true" className="h-3 w-3" />
                     </Link>
+                ) : null
+            }
+            banner={
+                next || r.stage ? (
+                    <div className="space-y-3">
+                        {next ? (
+                    <div
+                        role="region"
+                        aria-label="Sua tarefa"
+                        className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 ${
+                            next.tone === "wait"
+                                ? "border-amber-200 bg-amber-50"
+                                : "border-blue-200 bg-blue-50"
+                        }`}
+                    >
+                        <div className="min-w-0 flex-1 basis-40">
+                            <p className="text-[11px] text-gray-500">
+                                {next.tone === "mine" ? "Sua tarefa" : next.tone === "head" ? "Falta decidir" : "Na vez de quem pediu"}
+                            </p>
+                            <p className="text-sm font-medium text-gray-900">{next.title}</p>
+                            <p className="text-xs text-gray-600">{next.detail}</p>
+                        </div>
+                        {next.action === "review" && r.project_id ? (
+                            <Link
+                                href={`/projects/${r.project_id}/review`}
+                                className="shrink-0 rounded-full bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                Abrir o documento
+                            </Link>
+                        ) : next.action === "assign" ? (
+                            <button
+                                type="button"
+                                onClick={focusAssignee}
+                                className="shrink-0 rounded-full bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                Escolher responsável
+                            </button>
+                        ) : next.action === "checklist" ? (
+                            <a
+                                href="#checklist-do-pedido"
+                                className="shrink-0 rounded-full bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                Preencher no lugar
+                            </a>
+                        ) : null}
+                    </div>
+                ) : null}
+                        {r.stage ? <StageStrip stage={r.stage} stages={r.stages} /> : null}
+                    </div>
                 ) : null
             }
             fields={[
@@ -270,14 +326,20 @@ export function RequestPanel({
                     ) : (
                         <StatusChip status="rodando" label="Fazendo a triagem…" />
                     )}
-                    <AgentPlan
-                        className="mt-5"
-                        title="Plano"
-                        steps={requestPlan(r)}
-                        onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
-                    />
+                    {r.stage ? null : (
+                        <AgentPlan
+                            className="mt-5"
+                            title="Plano"
+                            steps={requestPlan(r)}
+                            onChangeOwner={open && r.can_decide !== undefined ? focusAssignee : undefined}
+                        />
+                    )}
 
-                    <Section title="Checklist do pedido">
+                    <Section title="O contrato">
+                        <RequestTermsSection requestId={r.id} reloadKey={reloadKey} onChanged={onChanged} />
+                    </Section>
+
+                    <Section title="Checklist do pedido" id="checklist-do-pedido">
                         <RequestIntakeSection
                             requestId={r.id}
                             audience="team"

@@ -180,6 +180,10 @@ export function describeEvent(event: CardEventRow): { verb: string; object?: str
             return { verb: "respondeu" };
         case "request.delivered":
             return { verb: "entregou o pedido" };
+        case "terms.amended": {
+            const end = text(after.term_end);
+            return { verb: "atualizou a vigência a partir de um aditivo", object: end && `fim em ${end.slice(8, 10)}/${end.slice(5, 7)}/${end.slice(0, 4)}` };
+        }
         case "analysis.completed":
             return { verb: "analisou o contrato" };
         case "analysis.failed":
