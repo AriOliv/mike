@@ -1068,6 +1068,18 @@ create index if not exists idx_obligations_user_due
 create index if not exists idx_obligations_project
   on public.obligations(project_id);
 
+-- A deadline with an owner and its own warning lead time (20261022_98).
+alter table public.obligations
+  add column if not exists owner_email text,
+  add column if not exists alert_days integer not null default 30;
+alter table public.obligations
+  drop constraint if exists obligations_alert_days_check;
+alter table public.obligations
+  add constraint obligations_alert_days_check check (alert_days between 0 and 365);
+create index if not exists idx_obligations_owner_due
+  on public.obligations(lower(owner_email), due_date)
+  where owner_email is not null and done = false;
+
 -- AI contract analysis: structured review whose every item quotes the clause
 -- it came from, so a finding can be traced back to the document text.
 create table if not exists public.dossiers (
@@ -1286,6 +1298,56 @@ create table if not exists public.mcp_confirmations (
 
 create index if not exists idx_mcp_confirmations_expires
   on public.mcp_confirmations(expires_at);
+
+create table if not exists public.cnpj_lookups (
+  cnpj text primary key check (cnpj ~ '^[0-9]{14}$'),
+  payload jsonb not null,
+  fetched_at timestamptz not null default now()
+);
+
+alter table public.cnpj_lookups enable row level security;
+revoke all on public.cnpj_lookups from anon, authenticated;
+grant select, insert, update, delete on public.cnpj_lookups to service_role;
+
+create sequence if not exists public.feedback_report_seq;
+
+create table if not exists public.feedback_reports (
+  id uuid primary key default gen_random_uuid(),
+  -- The number the person is given ("REL-0042"): ours, it exists before any issue does.
+  number integer not null unique default nextval('public.feedback_report_seq'),
+  user_id uuid references auth.users(id) on delete set null,
+  org_id uuid references public.organizations(id) on delete set null,
+  source text not null check (source in ('app', 'agent')),
+  -- The MCP client's name when an agent reported; null from the app.
+  client text,
+  kind text not null check (kind in ('bug', 'feature')),
+  body text not null,
+  expected text,
+  route text,
+  app_version text,
+  browser text,
+  role text,
+  status text not null default 'pending' check (status in ('pending', 'sent', 'failed')),
+  issue_number integer,
+  attempts integer not null default 0,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+
+-- The verdict of the backend's check of the base's names (doc 13): only this leaves the cluster.
+alter table public.feedback_reports
+  add column if not exists names_verdict text
+    check (names_verdict is null or names_verdict in ('names-clear', 'sensitive'));
+
+create index if not exists idx_feedback_reports_user_created
+  on public.feedback_reports(user_id, created_at desc);
+create index if not exists idx_feedback_reports_status
+  on public.feedback_reports(status) where status <> 'sent';
+
+alter table public.feedback_reports enable row level security;
+revoke all on public.feedback_reports from anon, authenticated;
+grant select, insert, update, delete on public.feedback_reports to service_role;
+grant usage, select on sequence public.feedback_report_seq to service_role;
 
 alter table public.mcp_confirmations enable row level security;
 revoke all on public.mcp_confirmations from anon, authenticated;
@@ -11982,6 +12044,254 @@ grant select, insert, update, delete on public.contract_analyses, public.contrac
   to service_role;
 
 
+-- ── Fork: a contract's end opens its renewal request (20261022_99) ──
+alter table public.legal_teams
+  add column if not exists renewal_enabled boolean not null default false,
+  add column if not exists renewal_lead_days integer not null default 60;
+
+alter table public.legal_teams
+  drop constraint if exists legal_teams_renewal_lead_days_check;
+alter table public.legal_teams
+  add constraint legal_teams_renewal_lead_days_check check (renewal_lead_days between 1 and 365);
+
+create table if not exists public.contract_renewal_requests (
+  project_id uuid not null references public.projects(id) on delete cascade,
+  term_end date not null,
+  request_id uuid references public.legal_requests(id) on delete set null,
+  created_at timestamptz not null default now(),
+  primary key (project_id, term_end)
+);
+
+alter table public.contract_renewal_requests enable row level security;
+revoke all on public.contract_renewal_requests from anon, authenticated;
+grant select, insert, update, delete on public.contract_renewal_requests to service_role;
+-- ── Fork: a deadline says what it is and where it stands (20261023_90) ──
+alter table public.obligations
+  add column if not exists kind text not null default 'manual',
+  add column if not exists status text not null default 'aberto';
+
+alter table public.obligations drop constraint if exists obligations_kind_check;
+alter table public.obligations
+  add constraint obligations_kind_check
+  check (kind in ('vigencia', 'aviso_previo', 'renovacao', 'manual'));
+
+alter table public.obligations drop constraint if exists obligations_status_check;
+alter table public.obligations
+  add constraint obligations_status_check
+  check (status in ('aberto', 'feito', 'dispensado'));
+
+-- Rows already marked done are done; the renewal ones created by the terms
+-- extraction get their kind from their title.
+update public.obligations set status = 'feito' where done and status = 'aberto';
+update public.obligations set kind = 'aviso_previo'
+  where origin = 'renewal' and kind = 'manual' and mark = 'critico';
+update public.obligations set kind = 'renovacao'
+  where origin = 'renewal' and kind = 'manual' and mark = 'tarefa';
+
+-- An old concurrent extraction could leave two generated rows of one kind;
+-- keep the newest of each (only generated rows, never a hand-made one) so the
+-- unique index below can be built.
+delete from public.obligations o
+  using public.obligations newer
+  where o.origin = 'renewal' and newer.origin = 'renewal'
+    and o.project_id = newer.project_id and o.kind = newer.kind
+    and (o.created_at, o.id) < (newer.created_at, newer.id);
+
+-- One generated deadline per kind per contract; hand-made ones are free.
+create unique index if not exists uq_obligations_generated_kind
+  on public.obligations(project_id, kind)
+  where origin = 'renewal' and project_id is not null;
+
+-- Migration date: 2026-10-23 (20261023_91_assignment_rules.sql)
+--
+-- Assignment rules of the legal team (L-33): fixed, predictable, no model.
+-- legal_teams.assignment_rules is an ordered list of
+-- {when: {area?, kind?, value_min?, value_max?}, assign_to, note?}; the first
+-- rule that matches a request names who takes it. Empty means no rule: the
+-- triage agent's suggestion (open load) decides, as before.
+--
+-- legal_requests.assigned_by records how the current assignee was set:
+-- 'rule' (a rule above), 'triage' (the Head accepted or auto-assign applied
+-- the agent's suggestion) or 'person'. Only a rule's own assignment may be
+-- replaced by a later rule; a person's choice is never undone.
+
+alter table public.legal_teams
+  add column if not exists assignment_rules jsonb not null default '[]'::jsonb;
+
+alter table public.legal_teams
+  drop constraint if exists legal_teams_assignment_rules_check;
+alter table public.legal_teams
+  add constraint legal_teams_assignment_rules_check
+    check (jsonb_typeof(assignment_rules) = 'array');
+
+alter table public.legal_requests
+  add column if not exists assigned_by text;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_assigned_by_check;
+alter table public.legal_requests
+  add constraint legal_requests_assigned_by_check
+    check (assigned_by is null or assigned_by in ('rule', 'triage', 'person'));
+
+-- Migration date: 2026-10-23 (20261023_92_request_stages.sql)
+--
+-- The history of a request's stages (U-13): which stage, with whom, since
+-- when. One row per entry into a stage; the open row is the current stage
+-- (left_at is null). The stage itself is computed from the status, the card's
+-- lane and the checklist (requests.stages.ts); this table remembers the path.
+--
+-- It does not replace card_events (the card's activity log): it answers "in
+-- what stage and since when" without scanning the log, and it is what the
+-- time-per-stage report (L-45) and the stage SLA (L-16) will read.
+--
+-- note is a short label ("movido na Esteira", "checklist fechado"), never text
+-- from a contract. Requests that already exist get one row with their current
+-- stage, dated from the card's last lane change: the past is not invented.
+
+create table if not exists public.legal_request_stages (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.legal_requests(id) on delete cascade,
+  stage text not null,
+  owner_kind text not null default 'none',
+  owner_id uuid references auth.users(id) on delete set null,
+  owner_name text,
+  entered_at timestamptz not null default now(),
+  left_at timestamptz,
+  note text
+);
+
+alter table public.legal_request_stages
+  drop constraint if exists legal_request_stages_stage_check;
+alter table public.legal_request_stages
+  add constraint legal_request_stages_stage_check
+    check (stage in ('recebido', 'triagem', 'checklist', 'analise', 'negociacao', 'assinatura', 'concluido'));
+
+alter table public.legal_request_stages
+  drop constraint if exists legal_request_stages_owner_kind_check;
+alter table public.legal_request_stages
+  add constraint legal_request_stages_owner_kind_check
+    check (owner_kind in ('agent', 'person', 'requester', 'none'));
+
+-- At most one open row per request: the current stage.
+create unique index if not exists uq_legal_request_stages_open
+  on public.legal_request_stages(request_id)
+  where left_at is null;
+
+create index if not exists idx_legal_request_stages_request
+  on public.legal_request_stages(request_id, entered_at);
+
+alter table public.legal_request_stages enable row level security;
+revoke all on public.legal_request_stages from anon, authenticated;
+grant select, insert, update, delete on public.legal_request_stages to service_role;
+
+-- Backfill: one open row for each request that has none, at its present stage.
+-- The stage is the pipeline lane's (a closed request is concluded), dated from
+-- the card's last lane change or, failing that, from the request itself.
+insert into public.legal_request_stages (request_id, stage, owner_kind, entered_at, note)
+select r.id,
+       case
+         when r.status in ('entregue', 'cancelado') or p.lane = 'arquivado' then 'concluido'
+         when p.lane = 'assinatura' then 'assinatura'
+         when p.lane = 'negociacao' then 'negociacao'
+         when p.lane = 'revisao' then 'analise'
+         when r.status in ('em_andamento', 'aguardando_solicitante') then 'analise'
+         when r.status = 'em_triagem' or p.lane = 'triagem' then 'triagem'
+         else 'recebido'
+       end,
+       'none',
+       coalesce(p.lane_updated_at, r.created_at),
+       'etapa em que o pedido já estava'
+from public.legal_requests r
+left join public.projects p on p.id = r.project_id
+where not exists (select 1 from public.legal_request_stages s where s.request_id = r.id);
+
+-- Migration date: 2026-10-23 (20261023_94_request_contract_terms.sql)
+--
+-- Part 2 of asking the legal team, "the contract" (U-05, U-07, U-08): the
+-- other party's e-mail, when the contract starts and for how many months.
+-- The end date is computed from the two (term_end), never stored.
+--
+-- counterparty_email is only kept, for the external validation by link
+-- (U-16) that comes later. Nothing is sent to that address; it stays out of
+-- notifications, the card's activity and the MCP tools.
+--
+-- All three are optional: a request without a contract file (an NDA, a
+-- question) leaves them empty.
+
+alter table public.legal_requests
+  add column if not exists counterparty_email text,
+  add column if not exists term_start date,
+  add column if not exists term_months integer;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_term_months_check;
+alter table public.legal_requests
+  add constraint legal_requests_term_months_check
+    check (term_months is null or (term_months >= 1 and term_months <= 600));
+
+
+-- Migration date: 2026-10-23 (20261023_95_request_terms_inferred.sql)
+--
+-- What the intake agent read from the contract about its terms (U-05 part
+-- 2): the other party, when it starts and for how many months. It is kept
+-- apart from what the requester typed (counterparty, term_start,
+-- term_months) so the form can show it as "preenchido pela IA, confirme"
+-- and a person's answer is never overwritten.
+--
+-- {counterparty?: {value, quote}, term_start?: {value, quote},
+--  term_months?: {value, quote}}. A key is there only with the contract's own
+-- words (quote) behind it. Confirming copies the value into the real column
+-- and drops the key.
+
+alter table public.legal_requests
+  add column if not exists terms_inferred jsonb not null default '{}'::jsonb;
+
+alter table public.legal_requests
+  drop constraint if exists legal_requests_terms_inferred_check;
+alter table public.legal_requests
+  add constraint legal_requests_terms_inferred_check
+    check (jsonb_typeof(terms_inferred) = 'object');
+
+
+-- Migration date: 2026-10-23 (20261023_98_intake_by_kind.sql)
+--
+-- Intake questions by kind of request (U-05).
+--
+-- legal_teams.intake_by_kind: optional map kind -> list of question keys
+-- that apply to that kind, for an organization with its own checklist.
+-- Without it the generic checklist is cut by the code's defaults.
+--
+-- legal_requests.intake_kind: the kind the checklist was last shown or
+-- answered for. When the triage corrects the kind, the screen tells the
+-- requester the number of questions changed (kind_changed).
+
+alter table public.legal_teams
+  add column if not exists intake_by_kind jsonb not null default '{}'::jsonb;
+alter table public.legal_teams
+  drop constraint if exists legal_teams_intake_by_kind_check;
+alter table public.legal_teams
+  add constraint legal_teams_intake_by_kind_check
+    check (jsonb_typeof(intake_by_kind) = 'object');
+
+alter table public.legal_requests
+  add column if not exists intake_kind text;
+
+
+-- Migration date: 2026-10-23 (20261023_99_request_parent_contract.sql)
+--
+-- An amendment or renewal request points at the contract it changes (U-05).
+-- parent_project_id is that contract's card: what ties the amendment to the
+-- term and the renewal the obligations track. It is kept when the card goes
+-- (set null), like the request itself.
+
+alter table public.legal_requests
+  add column if not exists parent_project_id uuid references public.projects(id) on delete set null;
+
+create index if not exists legal_requests_parent_project_idx
+  on public.legal_requests (parent_project_id)
+  where parent_project_id is not null;
+
+
 insert into public.schema_migrations (filename) values
   ('20260419_tabular_chat_jsonb.sql'),
   ('20260421_01_docx_editing.sql'),
@@ -12163,5 +12473,17 @@ insert into public.schema_migrations (filename) values
   ('20261022_92_contract_analyses.sql'),
   ('20261022_95_mcp_confirmations.sql'),
   ('20261022_96_mcp_oauth.sql'),
-  ('20261022_97_card_events_cascade.sql')
+  ('20261022_97_card_events_cascade.sql'),
+  ('20261022_98_obligation_owner.sql'),
+  ('20261022_99_renewal_requests.sql'),
+  ('20261023_90_obligation_kind_status.sql'),
+  ('20261023_91_assignment_rules.sql'),
+  ('20261023_92_request_stages.sql'),
+  ('20261023_93_cnpj_lookups.sql'),
+  ('20261023_94_request_contract_terms.sql'),
+  ('20261023_95_request_terms_inferred.sql'),
+  ('20261023_96_feedback_reports.sql'),
+  ('20261023_97_feedback_names_verdict.sql'),
+  ('20261023_98_intake_by_kind.sql'),
+  ('20261023_99_request_parent_contract.sql')
 on conflict (filename) do nothing;

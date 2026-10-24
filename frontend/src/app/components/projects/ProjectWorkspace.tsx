@@ -161,6 +161,7 @@ function activeSectionFromSegments(
     if (segments[0] === "tabular-reviews") return "reviews";
     if (segments[0] === "dossier") return "dossier";
     if (segments[0] === "review") return "review";
+    if (segments[0] === "alerts") return "alerts";
     return "documents";
 }
 
@@ -172,7 +173,8 @@ function shouldShowWorkspaceShell(segments: string[]) {
         segments[0] === "assistant" ||
         segments[0] === "tabular-reviews" ||
         segments[0] === "dossier" ||
-        segments[0] === "review"
+        segments[0] === "review" ||
+        segments[0] === "alerts"
     );
 }
 
@@ -188,7 +190,7 @@ export function ProjectWorkspaceProvider({
     const [projectLoading, setProjectLoading] = useState(true);
     const [searchBySection, setSearchBySection] = useState<
         Record<ProjectWorkspaceSection, string>
-    >({ documents: "", assistant: "", reviews: "", dossier: "", review: "" });
+    >({ documents: "", assistant: "", reviews: "", dossier: "", review: "", alerts: "" });
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
     const [projectChatsLoading, setProjectChatsLoading] = useState(false);
     const [accessModalOpen, setAccessModalOpen] = useState(false);
@@ -766,6 +768,7 @@ export function ProjectSectionToolbar({
                           { id: "reviews", label: "Tabela" },
                           { id: "review", label: "Revisão" },
                           { id: "dossier", label: "Análise" },
+                          { id: "alerts", label: "Alertas" },
                       ]
             }
             active={activeSection}
@@ -779,7 +782,9 @@ export function ProjectSectionToolbar({
                             ? `/projects/${projectId}/review`
                             : next === "dossier"
                               ? `/projects/${projectId}/dossier`
-                              : `/projects/${projectId}`;
+                              : next === "alerts"
+                                ? `/projects/${projectId}/alerts`
+                                : `/projects/${projectId}`;
                 router.push(href);
             }}
             leading={

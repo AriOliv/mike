@@ -133,6 +133,11 @@ describe("describeEvent", () => {
         expect(describeEvent(event({ action: "request.question" })).verb).toBe("perguntou ao solicitante");
         expect(describeEvent(event({ action: "request.answered" })).verb).toBe("respondeu");
         expect(describeEvent(event({ action: "request.delivered" })).verb).toBe("entregou o pedido");
+        expect(describeEvent(event({ action: "terms.amended", after: { term_end: "2028-01-05" } }))).toMatchObject({
+            verb: "atualizou a vigência a partir de um aditivo",
+            object: "fim em 05/01/2028",
+        });
+        expect(describeEvent(event({ action: "terms.amended", after: {} })).object).toBeUndefined();
         expect(
             describeEvent(event({ action: "participant.invited", after: { email: "a@b.c", label: "Escritório X" } })).object,
         ).toBe("Escritório X");

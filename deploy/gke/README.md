@@ -1,0 +1,168 @@
+# Mike no GKE (staging e prévia de integração)
+
+Cluster `mike-gke` (Autopilot, southamerica-east1, nós privados, kubectl só pelo
+DNS endpoint). Os scripts sempre fixam o contexto `gke_ari-teste-492120_southamerica-east1_mike-gke` (`scripts/kube.sh`, sobrescrevível com `KUBE_CONTEXT`), qualquer que seja o contexto ativo do shell. À mão, use sempre `kubectl --context …mike-gke -n <ns>`, e nunca `kubectl config use-context`, que muda o contexto das outras sessões desta máquina. Produção continua na VM `mike-clm`.
+
+- **staging** recebe os **contratos reais** da Avenia (decisão de 21/10/2026). Não tem seed. Os discos têm snapshot diário com 14 dias de retenção (`mike-staging-daily`). **Nunca** aponte script de captura ou e2e para ele.
+- **preview** é 100% fictícia. É o único lugar de capturas e e2e.
+
+| Ambiente | Namespace | URL | O que roda | Atualiza com |
+|---|---|---|---|---|
+| staging | `staging` | https://staging.clm.avenia.tech (provisório: https://34-120-191-197.nip.io) | `infra/gke-staging` | `scripts/deploy.sh staging` |
+| prévia de integração | `preview` | https://preview.34-120-191-197.nip.io | `integration/preview` = sync + PRs abertos | `scripts/update-preview.sh` |
+
+Os dois passam pelo mesmo HTTPS LB (Gateway `staging/mike-edge`, IP
+`mike-staging-ip`) e pelo IAP, que libera:
+- no **staging** só as pessoas listadas em `scripts/grant-iap.sh` (`STAGING_MEMBERS`), uma a uma, sem domínio e sem service account;
+- na **prévia**, todo `@avenia.io` e a SA de E2E. O preview
+não tem Gateway próprio. As rotas dele se penduram no do staging com
+`hostnames: [preview…]`, e o listener aceita rotas de namespaces com o label
+`app.kubernetes.io/part-of: mike`.
+
+## Acesso de pessoas
+
+1. Abra a URL e entre com o Google `@avenia.io` (IAP).
+2. No Mike, entre com uma conta demo:
+   - `legal.demo@avenia.io`: time do Legal (owner da org "Avenia Legal (demo)");
+   - `solicitante.demo@avenia.io`: quem pede.
+   A senha está no Secret do namespace e nunca vai para o git:
+   `kubectl -n <ns> get secret mike-secrets -o jsonpath='{.data.DEMO_PASSWORD}' | base64 -d`
+
+## Clientes MCP (só na prévia)
+
+Na **prévia**, `POST /mcp` (caminho exato) vai direto ao backend, **fora do IAP**
+(`preview-mcp/`): Claude Code, Codex ou um script falam com
+`https://preview.34-120-191-197.nip.io/mcp` usando só o token de acesso do Mike
+(`Authorization: Bearer mike_pat_...`). O resto do host segue atrás do IAP.
+Para o OAuth (Fase 2), também ficam fora do IAP `/.well-known/oauth-protected-resource`,
+`/.well-known/oauth-authorization-server` e `/oauth/{register,authorize,token,revoke}`.
+A tela de consentimento (`/oauth/consentir`, frontend) continua atrás do IAP e do login. No
+**staging**, tudo continua atrás do IAP: esse componente nunca entra lá
+(docs/product/09-mcp-integral.md §9).
+
+## Acesso de agentes (Playwright/curl atrás do IAP)
+
+A service account `mike-preview-e2e@ari-teste-492120.iam.gserviceaccount.com`:
+- não tem chave;
+- tem `roles/iap.httpsResourceAccessor` só no backend service da **prévia** (`scripts/grant-iap.sh`). No staging ela não entra: um agente lá usa a credencial de uma pessoa da lista.
+
+Quem roda o teste gera um token curto (1 h) por impersonação. Para isso precisa
+de `roles/iam.serviceAccountTokenCreator` na SA. Peça ao Ari; hoje só ele tem.
+
+```bash
+URL=https://preview.34-120-191-197.nip.io
+export IAP_TOKEN=$(deploy/gke/scripts/iap-token.sh $URL)   # JWT assinado pela SA, aud = $URL/*
+curl -s -o /dev/null -w '%{http_code}\n' -H "Proxy-Authorization: Bearer $IAP_TOKEN" $URL/login   # 200
+```
+
+Os dois headers funcionam: o IAP valida e **remove** tanto `Proxy-Authorization`
+quanto `Authorization`, então o backend do Mike nunca vê o token, e a sessão
+continua no cookie. Use:
+- `Proxy-Authorization` no curl e em clientes HTTP;
+- `Authorization` no browser, porque o Chrome bloqueia `Proxy-Authorization`.
+
+O token só vale para o host do `aud`: um token do preview não abre o staging.
+
+Playwright (`playwright.config.ts`). O header vai só para o host do Mike, nunca para terceiros:
+
+```ts
+const BASE = process.env.MIKE_URL ?? "https://preview.34-120-191-197.nip.io";
+export default defineConfig({ use: { baseURL: BASE } });
+
+// em um fixture/beforeEach:
+await context.route("**/*", (route) => {
+  const req = route.request();
+  if (new URL(req.url()).host !== new URL(BASE).host) return route.continue();
+  return route.continue({ headers: { ...req.headers(), authorization: `Bearer ${process.env.IAP_TOKEN}` } });
+});
+```
+
+Depois faça o login no Mike normalmente, pela tela `/login`, com uma conta demo
+(`DEMO_PASSWORD` no env do teste, lida do Secret como acima). O token expira em
+1 h: gere um novo por rodada, nunca o salve em arquivo versionado.
+
+### Screenshots para a revisão de um PR
+
+`scripts/preview-shots.mjs` tira as capturas de uma lista de telas em JSON:
+- quem loga (`legal` ou `solicitante`), a rota, as larguras e os temas;
+- os passos antes da foto (abrir um painel, escolher uma aba).
+
+Ele usa um Chromium headless para a rodada inteira, uma página por vez, e só contra a prévia remota: nada de `next dev`, stack local ou e2e completo. O header do IAP vai só para o host do Mike. Em 390 px, o script avisa quando a página rola para o lado.
+
+```bash
+export MIKE_URL=https://preview.34-120-191-197.nip.io
+export IAP_TOKEN=$(deploy/gke/scripts/iap-token.sh "$MIKE_URL")
+export DEMO_PASSWORD=...   # do Secret preview/mike-secrets; nunca em arquivo
+node deploy/gke/scripts/preview-shots.mjs deploy/gke/shots/pedidos.json /tmp/shots/pedidos
+```
+
+O backend aceita poucos logins errados por conta (10 em 15 min), então o script loga uma vez por conta e troca o tema na mesma sessão. Junte os roteiros numa rodada só em vez de rodar um por vez. Um passo que falha não interrompe a rodada: a foto sai do mesmo jeito, marcada com ⚠, e o script termina com código 1. O limite geral é por pessoa (300 a cada 15 min por IP do cliente): o backend usa `TRUST_PROXY_HOPS=2` (LB + proxy do Next), e uma rodada de capturas cabe nele.
+
+Cada feature mantém o seu roteiro em `deploy/gke/shots/<feature>.json`. O de Pedidos (`pedidos.json`) serve de exemplo de passos: ele clica na linha "Triagem pronta" para fotografar o painel aberto. Precisa de `playwright-core` (vem com o `@playwright/test` da raiz) e de um Chromium no cache do Playwright, ou `CHROME=<caminho>`.
+
+## Prévia de integração: um comando
+
+```bash
+deploy/gke/scripts/update-preview.sh
+```
+
+1. Recria `integration/preview` a partir de `origin/sync/upstream-2026-10` com merge, em ordem:
+   - `infra/gke-staging`
+   - `feat/card-events`
+   - `feat/ui-verdict`
+   - `feat/ui-agent-suggestion`
+   - `feat/intake-orquestracao`
+   - `feat/ux-nav-pt`
+   - `feat/radar-regulatorio`
+   - `feat/inicio-contract-intelligence`
+   - `feat/revisao-playbook`
+
+   Usa sempre a branch do `origin`; se ela não estiver pushada, pula. A exceção
+   é quem estiver em `LOCAL_OK` (hoje só `feat/radar-regulatorio`), que entra
+   pelos commits locais com aviso.
+2. Resolve sozinho só os conflitos de acréscimo, sempre com diff3:
+   - `backend/schema.sql`, `app.ts`, `jobs/registry.ts`, `mikeApi.ts` e `mikeApi.contracts.test.ts`: os dois lados. O ledger de migrações sai reordenado;
+   - `sentryPrivacy.ts` (back e front) e `scriptedDb.ts`: união das palavras (`union-words.pl`);
+   - `navItems.ts` e o teste dele: união dos itens do menu na ordem do doc 05, Início · Pedidos · Esteira · Contratos · Prazos · Radar regulatório · Perguntar (`union-nav.py`);
+   - `AppSidebar.tsx`: por trecho, fica o lado que contém o outro (`superset.pl`).
+
+   Uma branch com outro conflito, ou cujas migrações criam uma tabela que outra
+   branch já cria, **fica de fora** e é nomeada no fim. As demais entram, e o
+   dono rebaseia na `integration/preview`.
+3. Faz push de `integration/preview`, que é gerada e nunca editada à mão.
+4. Faz o Cloud Build do commit, o apply no namespace `preview` e roda as migrações
+   (db-init), o rollout e o seed.
+
+Conflito real que fica fora dessas regras não é resolvido aqui: a branch fica de
+fora e o dono rebaseia na `integration/preview`.
+
+Variáveis: `RESET_DB=1` recria o banco do preview (sintético, re-seed), para quando uma branch reescreveu uma migração já aplicada; `BRANCHES="..."` troca a lista, `SKIP_MERGE=1` redeploya a branch como
+está, `SKIP_BUILD=1` reaproveita a imagem do commit.
+
+## Seed
+
+- `seed/`, só no preview (o staging não tem seed):
+  - 2 usuários demo;
+  - 12 cards nas 6 lanes;
+  - termos de contratos vigentes;
+  - 7 prazos com data relativa a hoje.
+- `seed/integration/`, só no preview. Cada arquivo declara na linha 1 as tabelas de que precisa e é pulado se o PR dele ficou fora do build:
+  - org do time do Legal;
+  - 6 pedidos LEG-0001..0006 em todos os status;
+  - 2 varreduras do radar e 4 achados (alto/médio/baixo, cruzados com os cards);
+  - `agent_runs` e o log `card_events`;
+  - Início (`extra-inicio.sql`, do Beacon): 1 pasta monitorada, 6 documentos e 6 revisões em todos os estados;
+  - Revisão (`extra-revisao.sql`, do Quill, gerado por `backend/scripts/seed-revisao/generate.ts`): versão revisada com tracked changes de Nuvem Contábil e DataVale, Playbook Avenia v1, execuções, Fichas e uma decisão. Os .docx ficam em `seed/integration/files/`, e o script os copia para o volume do backend;
+  - Painel (`extra-zz-painel.sql`, roda por último): revisão por agente nos contratos com termos ou afetados pelo radar, área de quem pediu (com um card sem área) e mudanças em aberto nas duas varreduras.
+
+A linha 1 de cada arquivo (`-- requires-table:`) aceita `schema.tabela` ou `schema.tabela.coluna`.
+
+Tudo fictício, com ids fixos e idempotente. Os atos regulatórios são inventados
+e as URLs apontam para `example.invalid`.
+
+## Segredos
+
+`scripts/bootstrap-secrets.sh <ns>` gera os segredos de cada namespace (JWT do
+Supabase, senha do Postgres, chaves de assinatura do backend, senha demo). Os
+valores ficam só no Secret do namespace: nada em git, nada impresso. `ROTATE=1`
+regenera e derruba as sessões.

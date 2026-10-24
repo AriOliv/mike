@@ -289,8 +289,12 @@ describe("RegulatoryRadarView", () => {
     it("moves through the list with j and k", async () => {
         render(<RegulatoryRadarView />);
         await screen.findByText("Resolução BCB nº 999");
-        fireEvent.keyDown(window, { key: "j" });
-        expect(nav.replace).toHaveBeenLastCalledWith("?mudanca=c1", { scroll: false });
+        // The key listener is re-registered after each render: press until it is the one
+        // listening. The selection comes from the (mocked) URL, so pressing again changes nothing.
+        await waitFor(() => {
+            fireEvent.keyDown(window, { key: "j" });
+            expect(nav.replace).toHaveBeenLastCalledWith("?mudanca=c1", { scroll: false });
+        });
     });
 
     it("adds up every scan when there are several and none is selected", async () => {

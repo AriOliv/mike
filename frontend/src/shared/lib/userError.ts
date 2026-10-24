@@ -249,6 +249,11 @@ export const CODE_KINDS: Readonly<Record<string, UserErrorKind>> = {
     // Something else changed first
     review_running: "conflict",
     review_stale: "conflict",
+    // Two decisions wrote the same contract at once: the second was not recorded; send it again.
+    document_busy: "conflict",
+    // The clause changed since the analysis, or sits in the contract more than once: a new analysis or the review screen settles it.
+    analysis_text_changed: "conflict",
+    analysis_text_ambiguous: "conflict",
     memory_revision_conflict: "conflict",
     upload_target_busy: "conflict",
     access_inherited: "conflict",

@@ -256,7 +256,7 @@ describe("Tokens de acesso para agentes", () => {
         expect(submit().disabled).toBe(true);
         fireEvent.change(screen.getByPlaceholderText("Ex.: Claude Code do notebook"), { target: { value: "Codex" } });
         expect(submit().disabled).toBe(false);
-        for (const box of screen.getAllByRole("checkbox")) fireEvent.click(box);
+        for (const box of screen.getAllByRole("checkbox")) if ((box as HTMLInputElement).checked) fireEvent.click(box);
         expect(submit().disabled).toBe(true);
         expect(screen.getByText("Escolha ao menos uma permissão.")).toBeTruthy();
     });

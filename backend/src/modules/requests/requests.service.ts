@@ -18,6 +18,7 @@ export {
     inviteParticipant,
     revokeParticipant,
     whoAmI,
+    listLegalTeamMembers,
     TRIAGE_JOB_KIND,
     type CreateRequestInput,
     type RequestPublicView,
@@ -34,7 +35,43 @@ export {
     setIntakeTemplate,
     type RequestIntake,
 } from "./requests.checklist";
+export { getTerms, setTerms, parseTerms, termEnd, MAX_TERM_MONTHS, MIN_TERM_MONTHS, type RequestTerms } from "./requests.terms";
+export {
+    applyAssignmentRules,
+    getAssignmentRules,
+    matchRule,
+    parseAssignmentRules,
+    reloadAfterRules,
+    setAssignmentRules,
+    valueFromIntake,
+    type AssignmentRule,
+} from "./requests.rules";
+export { parseMoney } from "./requests.money";
+export {
+    buildStrip,
+    currentStage,
+    laneOfStage,
+    moveStage,
+    stageOwner,
+    STAGE_CATALOG,
+    STAGES,
+    syncStage,
+    type Stage,
+    type StageStrip,
+} from "./requests.stages";
+export { searchContracts, listAmendmentsOf, type ContractChoice, type LinkedAmendment } from "./requests.parent";
 export { handleIntakePrefill, parsePrefill, PREFILL_JOB_KIND } from "./requests.prefill";
+export {
+    enqueueRenewalSweep,
+    getRenewalSettings,
+    handleRenewalSweep,
+    runRenewalSweep,
+    setRenewalSettings,
+    DEFAULT_RENEWAL_LEAD_DAYS,
+    RENEWAL_JOB_KIND,
+    type RenewalSettings,
+    type RenewalSweep,
+} from "./requests.renewals";
 export {
     DEFAULT_INTAKE_TEMPLATE,
     intakeForAnalysis,

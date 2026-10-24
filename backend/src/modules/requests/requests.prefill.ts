@@ -12,12 +12,16 @@ import { readStoredDocumentText } from "../documents/documents.service";
 import { finishAgentRun, recordCardEvent, startAgentRun } from "../contracts/contracts.service";
 import { REQUEST_COLUMNS, type RequestRow } from "./requests.access";
 import {
+    applicableItems,
     effectiveTemplate,
+    parseByKind,
+    parseIntakeTemplate,
     mergeInferred,
     readAnswers,
     type IntakeItem,
 } from "./requests.intake";
 import { teamOwner, triageModel } from "./requests.triage";
+import { readDate, readMonths, type InferredTerms } from "./requests.terms";
 
 export const PREFILL_JOB_KIND = "request.intake_prefill";
 export const PREFILL_AGENT = "intake";
@@ -29,13 +33,18 @@ const MAX_TEXT = 60_000;
 /** Room for nine answers with their quotes; at 1500 a small model's JSON came back cut off. */
 const MAX_OUTPUT_TOKENS = 4000;
 
-type Inferred = Record<string, { value: string; quote?: string | null; choice?: "sim" | "nao" | null }>;
+type Inferred = Record<
+    string,
+    { value: string; quote?: string | null; choice?: "sim" | "nao" | null; selected?: string[] }
+>;
 
 function systemPrompt(items: IntakeItem[]): string {
     const list = items
         .map(
             (i) =>
-                `- "${i.key}": ${i.label}${i.kind === "yes_no" ? ` (sim/não${i.detail_label ? `; e ${i.detail_label}` : ""})` : ""}`,
+                `- "${i.key}": ${i.label}${i.kind === "yes_no" ? ` (sim/não${i.detail_label ? `; e ${i.detail_label}` : ""})` : ""}${
+                    i.options ? ` (escolha ${i.kind === "choice" ? "uma" : "uma ou mais"} destas, pelo código: ${i.options.map((o) => `"${o.value}" = ${o.label}`).join("; ")})` : ""
+                }`,
         )
         .join("\n");
     return `Você prepara o checklist de intake de um pedido ao time jurídico, lendo o contrato anexado.
@@ -47,9 +56,11 @@ Regras:
 - Responda SOMENTE o que o contrato diz de forma explícita. Se o contrato não responde a pergunta, deixe-a de fora.
 - Nunca responda o que só quem pediu sabe: se aprovou, se concorda com a proposta, a intenção comercial.
 - Para cada resposta, copie em "quote" o trecho LITERAL do contrato de onde ela saiu: a menor frase que prova a resposta (até 200 caracteres), sem alterar uma palavra.
+- Perguntas de escolha: "value" é o código da opção (ou os códigos separados por vírgula, se puder mais de uma), nunca um texto livre.
 - Perguntas de sim/não: "choice" é "sim" ou "nao", e "value" é a resposta curta com o detalhe ("Sim. As duas partes trocam informações sobre clientes.").
 - Português do Brasil, objetivo. Valores e datas como estão no contrato.
-- Responda apenas com JSON válido, sem cercas de código: {"answers": {"<chave>": {"value": "...", "quote": "...", "choice": "sim"|"nao"|null}}}.`;
+- Além das perguntas, leia os dados do contrato em "terms", cada um só se o contrato disser de forma explícita, com o mesmo "quote" literal: "counterparty" (nome da outra parte, não a Avenia nem empresa do grupo), "term_start" (data de início da vigência, como AAAA-MM-DD) e "term_months" (prazo em meses, só o número; converta anos em meses).
+- Responda apenas com JSON válido, sem cercas de código: {"answers": {"<chave>": {"value": "...", "quote": "...", "choice": "sim"|"nao"|null}}, "terms": {"counterparty": {"value": "...", "quote": "..."}, "term_start": {"value": "AAAA-MM-DD", "quote": "..."}, "term_months": {"value": "12", "quote": "..."}}}.`;
 }
 
 /**
@@ -142,13 +153,60 @@ export function parsePrefill(
             dropped += 1;
             continue;
         }
+        const item = items.find((i) => i.key === key)!;
+        let selected: string[] | undefined;
+        if (item.kind === "choice" || item.kind === "multi_choice") {
+            const codes = new Set((item.options ?? []).map((o) => o.value));
+            selected = [...new Set(value.split(",").map((v) => v.trim()))].filter((v) => codes.has(v));
+            if (selected.length === 0 || (item.kind === "choice" && selected.length > 1)) {
+                dropped += 1;
+                continue;
+            }
+        }
         inferred[key] = {
             value,
             quote,
             choice: a.choice === "sim" || a.choice === "nao" ? a.choice : null,
+            ...(selected ? { selected } : {}),
         };
     }
     return { inferred, dropped, unparsed: false };
+}
+
+/**
+ * The terms the model read: each only with a quote that is literally in the
+ * contract, and a value that normalizes (a date as AAAA-MM-DD, months as a
+ * whole number in range). Anything else is dropped, never guessed.
+ */
+export function parseTermsInferred(raw: string, contractText: string): { terms: InferredTerms; dropped: number } {
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    let block: Record<string, unknown> = {};
+    try {
+        const parsed = JSON.parse(start !== -1 && end > start ? cleaned.slice(start, end + 1) : cleaned) as { terms?: unknown };
+        if (parsed && typeof parsed.terms === "object" && parsed.terms) block = parsed.terms as Record<string, unknown>;
+    } catch {
+        return { terms: {}, dropped: 0 };
+    }
+    const haystack = squash(contractText);
+    const terms: InferredTerms = {};
+    let dropped = 0;
+    for (const key of ["counterparty", "term_start", "term_months"] as const) {
+        const entry = block[key];
+        if (!entry || typeof entry !== "object") continue;
+        const a = entry as Record<string, unknown>;
+        const value = typeof a.value === "string" ? a.value.trim() : typeof a.value === "number" ? String(a.value) : "";
+        const quote = typeof a.quote === "string" ? a.quote.trim() : "";
+        if (!value) continue;
+        const normalized = key === "term_start" ? readDate(value) : key === "term_months" ? (readMonths(value) === null ? null : String(readMonths(value))) : value.slice(0, 200);
+        if (!normalized || !quote || squash(quote).length < 4 || !haystack.includes(squash(quote))) {
+            dropped += 1;
+            continue;
+        }
+        terms[key] = { value: normalized, quote };
+    }
+    return { terms, dropped };
 }
 
 /** The newest document on the card and its current version. */
@@ -180,11 +238,25 @@ export async function handleIntakePrefill(
     if (!row || !row.project_id) return { skipped: "missing" };
     if (row.status === "entregue" || row.status === "cancelado") return { skipped: "closed" };
 
-    const { data: team } = await db.from("legal_teams").select("intake_template").eq("org_id", row.org_id).maybeSingle();
-    const template = effectiveTemplate((team as { intake_template?: unknown } | null)?.intake_template);
+    const { data: team } = await db
+        .from("legal_teams")
+        .select("intake_template, intake_by_kind")
+        .eq("org_id", row.org_id)
+        .maybeSingle();
+    const teamRow = team as { intake_template?: unknown; intake_by_kind?: unknown } | null;
+    const own = parseIntakeTemplate(teamRow?.intake_template);
+    // Only this kind's questions are put to the model, and not the ones that are
+    // the requester's own ("o que você quer saber", the contract an amendment changes).
+    const template = applicableItems(
+        effectiveTemplate(teamRow?.intake_template),
+        own.ok && own.items.length ? "org" : "padrao",
+        row.kind,
+        parseByKind(teamRow?.intake_by_kind),
+    ).filter((i) => !i.no_unknown && i.kind !== "contract");
     const stored = readAnswers(row.intake);
     const open = template.filter((i) => !stored[i.key]);
-    if (open.length === 0) return { skipped: "answered" };
+    const termsOpen = !row.counterparty || !row.term_start || row.term_months == null;
+    if (open.length === 0 && !termsOpen) return { skipped: "answered" };
 
     const doc = await latestDocument(db, row.project_id);
     if (!doc) return { skipped: "no_document" };
@@ -219,6 +291,7 @@ export async function handleIntakePrefill(
     });
     const started = Date.now();
     let result: ReturnType<typeof parsePrefill> = { inferred: {}, dropped: 0, unparsed: false };
+    let rawReply = "";
     try {
         const raw = await completeText({
             model: selected.model,
@@ -227,6 +300,7 @@ export async function handleIntakePrefill(
             maxTokens: MAX_OUTPUT_TOKENS,
             apiKeys: selected.apiKeys,
         });
+        rawReply = raw;
         result = parsePrefill(raw, open, text.text);
         if (result.unparsed) {
             // Logged, not retried: the same contract would get the same answer.
@@ -252,11 +326,32 @@ export async function handleIntakePrefill(
             .eq("id", row.id);
         if (updateError) throw updateError;
     }
+    // The contract's own terms: kept apart, only where the requester has not answered.
+    let termsFound = 0;
+    if (!result.unparsed) {
+        const read = parseTermsInferred(rawReply, text.text);
+        const { data: current } = await db
+            .from("legal_requests")
+            .select("counterparty, term_start, term_months, terms_inferred")
+            .eq("id", row.id)
+            .maybeSingle();
+        const c = (current ?? {}) as { counterparty?: string | null; term_start?: string | null; term_months?: number | null; terms_inferred?: InferredTerms | null };
+        const taken: InferredTerms = { ...(c.terms_inferred ?? {}) };
+        if (read.terms.counterparty && !c.counterparty) taken.counterparty = read.terms.counterparty;
+        if (read.terms.term_start && !c.term_start) taken.term_start = read.terms.term_start;
+        if (read.terms.term_months && c.term_months == null) taken.term_months = read.terms.term_months;
+        termsFound = Object.keys(taken).length - Object.keys(c.terms_inferred ?? {}).length;
+        if (termsFound > 0) {
+            const { error: termsError } = await db.from("legal_requests").update({ terms_inferred: taken, updated_at: now }).eq("id", row.id);
+            if (termsError) throw termsError;
+        }
+        result.dropped += read.dropped;
+    }
     await finishAgentRun(db, runId, {
         status: "succeeded",
         modelResolved: selected.model,
         latencyMs: Date.now() - started,
-        output: { filled: merged.filled, dropped: result.dropped, unparsed: result.unparsed },
+        output: { filled: merged.filled, terms: termsFound, dropped: result.dropped, unparsed: result.unparsed },
     });
     await recordCardEvent(db, {
         projectId: row.project_id,
@@ -269,5 +364,5 @@ export async function handleIntakePrefill(
         runId,
         source: "agent",
     });
-    return { filled: merged.filled.length, dropped: result.dropped, ...(result.unparsed ? { unparsed: true } : {}) };
+    return { filled: merged.filled.length, terms: termsFound, dropped: result.dropped, ...(result.unparsed ? { unparsed: true } : {}) };
 }

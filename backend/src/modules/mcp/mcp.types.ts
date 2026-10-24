@@ -26,6 +26,7 @@ export const MCP_SCOPES = [
     "pedidos:read",
     "pedidos:write",
     "agente:config",
+    "feedback:write",
 ] as const;
 export type McpScope = (typeof MCP_SCOPES)[number];
 

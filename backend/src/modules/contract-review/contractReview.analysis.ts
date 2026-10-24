@@ -14,13 +14,17 @@
 // rule takes the light the playbook gave that rule.
 
 import { locateQuote } from "./contractReview.ficha";
+import { parseModelJson } from "./contractReview.shared";
+// jsonrepair declares "type": "module" but ships a CommonJS build; importing
+// it normally trips TS1479 under this package's Node16 CJS resolution.
+const { jsonrepair } = require("jsonrepair") as { jsonrepair: (text: string) => string };
 
 /** Shown on every analysis: it is a draft for the legal team. */
 export const ANALYSIS_NOTICE = "Rascunho gerado por IA para o time jurídico. Não é parecer jurídico.";
-export const ANALYSIS_PROMPT_VERSION = "analise-analista-v1";
+export const ANALYSIS_PROMPT_VERSION = "analise-analista-v2";
 
 export type Light = "red" | "yellow" | "green";
-export type IntakeAnswer = { key: string; label: string; value: string; source?: string | null };
+export type IntakeAnswer = { key: string; label: string; value: string; source?: string | null; unknown?: boolean };
 
 export type AnalysisItem = {
     id: string;
@@ -48,6 +52,9 @@ export type OpenPoint = {
     id: string;
     text: string;
     depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro";
+    /** For a "não sei" answer: the contract's own words that seem to answer it, to confirm with who asked. */
+    quote?: string;
+    span?: { start: number; end: number } | null;
 };
 export type AnalysisResult = {
     notice: string;
@@ -63,6 +70,8 @@ export type AnalysisResult = {
         term_termination_penalties: string;
     };
     open_points: OpenPoint[];
+    /** Set when the answer was cut off and some sections could not be recovered. */
+    partial?: { missing: string[] };
 };
 export type DroppedCitation = { section: string; title: string; quote: string; reason: string };
 
@@ -87,6 +96,9 @@ const SECTION_BY_LIGHT: Record<Light, "critical" | "attention" | "favorable"> = 
 };
 const DEPENDS_ON = new Set<OpenPoint["depends_on"]>(["juridico_interno", "founder", "contraparte", "due_diligence", "outro"]);
 
+/** How many items each section may carry: what keeps the whole answer well under the output cap. */
+export const SECTION_LIMITS = { critical: 6, attention: 6, favorable: 4, redlines: 6, open_points: 6 } as const;
+
 /** The prompt: the contract, the intake answers as context, and the playbook as the yardstick when there is one. */
 export function analysisPrompt(args: {
     documentText: string;
@@ -95,7 +107,7 @@ export function analysisPrompt(args: {
     playbook: { name: string; findings: RuleFinding[] } | null;
 }): string {
     const intake = args.intake.length
-        ? args.intake.map((a) => `- ${a.label}: ${a.value}`).join("\n")
+        ? args.intake.map((a) => (a.unknown ? `- [${a.key}] ${a.label}: NÃO SEI (não assuma resposta)` : `- ${a.label}: ${a.value}`)).join("\n")
         : "(o checklist de intake não foi preenchido; trate o que faltar como ponto aberto)";
     const yardstick = args.playbook
         ? `\nRÉGUA: o playbook "${args.playbook.name}" da organização já julgou este contrato. Use esses julgamentos: um item sobre uma regra leva o rule_id dela, e regra inaceitável ou obrigatória ausente é risco crítico; regra a revisar é ponto de atenção; regra aceitável pode ser ponto favorável.\n${JSON.stringify(
@@ -109,9 +121,11 @@ export function analysisPrompt(args: {
 Regras invioláveis:
 - Português do Brasil, tom profissional e objetivo.
 - NUNCA diga se a Avenia deve ou não assinar: aponte riscos e sugira ajustes; a decisão é humana.
-- NUNCA invente cláusula ou trecho. Todo risco, ponto de atenção e ponto favorável cita TEXTUALMENTE um trecho do contrato (até 400 caracteres, copiado sem alterar), com o número da cláusula quando houver.
+- NUNCA invente cláusula ou trecho. Todo risco, ponto de atenção e ponto favorável cita TEXTUALMENTE um trecho do contrato (até 250 caracteres, copiado sem alterar; o trecho mais curto que identifica a cláusula), com o número da cláusula quando houver.
 - Redline: "from" é o trecho original exato; "to" é a redação completa que o substitui.
 - Ponto aberto é o que depende de informação externa: jurídico interno, founder, contraparte ou due diligence.
+- Resposta marcada NÃO SEI no intake: nunca infira nem preencha o valor e não a repita em open_points, o sistema já registra esse ponto aberto. Só se o contrato responder a pergunta com um trecho literal, devolva esse trecho em "unknown_suggestions" com a chave da pergunta; se não responder, omita.
+- Seja conciso, a resposta tem teto de tamanho: no máximo ${SECTION_LIMITS.critical} itens em critical, ${SECTION_LIMITS.attention} em attention, ${SECTION_LIMITS.favorable} em favorable, ${SECTION_LIMITS.redlines} em redlines e ${SECTION_LIMITS.open_points} em open_points (os mais relevantes, do mais grave ao menos). "rationale" e "why" com no máximo 2 frases curtas; "suggestion" com 1 frase; em redline, "from" e "to" só a cláusula alterada, não o artigo inteiro.
 
 CHECKLIST DE INTAKE (contexto do pedido):
 ${intake}
@@ -123,10 +137,108 @@ Responda só JSON:
 "favorable":[mesmo formato],
 "redlines":[{"clause":"cl. X"|null,"from":"trecho original exato","to":"redação sugerida","why":"","item_index":{"section":"critical|attention","index":0}|null}],
 "compliance":{"data_protection":"","confidentiality":"","governing_law_forum":"","term_termination_penalties":""},
-"open_points":[{"text":"","depends_on":"juridico_interno|founder|contraparte|due_diligence|outro"}]}
+"open_points":[{"text":"","depends_on":"juridico_interno|founder|contraparte|due_diligence|outro"}],
+"unknown_suggestions":[{"key":"chave da pergunta NÃO SEI","quote":"trecho literal do contrato"}]}
 
 CONTRATO (${args.documentName}):
 ${args.documentText.slice(0, 180_000)}`;
+}
+
+const SECTIONS = ["executive_summary", "critical", "attention", "favorable", "redlines", "compliance", "open_points"] as const;
+export type AnalysisSection = (typeof SECTIONS)[number];
+/** The sections' names for the people reading a partial analysis. */
+export const SECTION_LABELS: Record<AnalysisSection, string> = {
+    executive_summary: "resumo executivo",
+    critical: "riscos críticos",
+    attention: "pontos de atenção",
+    favorable: "pontos favoráveis",
+    redlines: "redlines",
+    compliance: "compliance",
+    open_points: "pontos abertos",
+};
+
+export type ParsedAnswer =
+    | { ok: true; value: Record<string, unknown>; missing: AnalysisSection[] }
+    | { ok: false; reason: "invalid_json" | "incomplete_answer" };
+
+/**
+ * The model's answer as an object, mending small syntax slips. When the text
+ * stops before its closing brace (the output cap), what is kept is what came
+ * whole: the section being written when it stopped loses its last item, which
+ * may be half there.
+ */
+function parseTolerant(raw: string): { value: Record<string, unknown>; cutOff: boolean } | null {
+    let value: unknown;
+    try {
+        value = parseModelJson(raw);
+    } catch {
+        const start = raw.indexOf("{");
+        if (start === -1) return null;
+        try {
+            value = JSON.parse(jsonrepair(raw.slice(start)));
+        } catch {
+            return null;
+        }
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const object = { ...(value as Record<string, unknown>) };
+    const cutOff = !/}\s*(```)?\s*$/.test(raw.trim());
+    if (cutOff) {
+        const last = Object.keys(object).pop();
+        if (last !== undefined) {
+            const tail = object[last];
+            if (Array.isArray(tail)) object[last] = tail.slice(0, -1);
+            else delete object[last];
+        }
+    }
+    return { value: object, cutOff };
+}
+
+const present = (value: Record<string, unknown>, section: AnalysisSection): boolean => {
+    const entry = value[section];
+    if (section === "executive_summary")
+        return !!entry && typeof entry === "object" && typeof (entry as { text?: unknown }).text === "string";
+    if (section === "compliance") return !!entry && typeof entry === "object" && !Array.isArray(entry);
+    return Array.isArray(entry);
+};
+
+/**
+ * The analysis from the model's answer. A whole answer passes; a cut-off one
+ * passes with the sections that came whole and the list of those that did not
+ * (a section cut mid-way counts as missing, so it can be asked again). Without
+ * the executive summary there is nothing worth keeping.
+ */
+export function parseAnalysisAnswer(raw: string): ParsedAnswer {
+    const parsed = parseTolerant(raw);
+    if (!parsed) return { ok: false, reason: "invalid_json" };
+    const { value, cutOff } = parsed;
+    if (!present(value, "executive_summary")) return { ok: false, reason: "incomplete_answer" };
+    const lastKey = cutOff ? Object.keys(value).pop() : undefined;
+    const missing = SECTIONS.filter((section) => !present(value, section) || section === lastKey);
+    return { ok: true, value, missing };
+}
+
+/** The sections asked for again, as an answer: only the keys requested, whole items only. */
+export function parseSectionsAnswer(raw: string, sections: AnalysisSection[]): Record<string, unknown> {
+    const parsed = parseTolerant(raw);
+    if (!parsed) return {};
+    const out: Record<string, unknown> = {};
+    for (const section of sections) if (present(parsed.value, section)) out[section] = parsed.value[section];
+    return out;
+}
+
+/** The second try after an answer that was not the analysis: the same task, much shorter. */
+export function analysisRetryPrompt(prompt: string): string {
+    return `${prompt}
+
+ATENÇÃO: a resposta anterior veio inválida. Responda de novo, só com o JSON completo e válido no formato acima, e BEM mais curto: no máximo 3 itens por seção, 1 frase em "rationale" e "why", trechos citados de até 150 caracteres.`;
+}
+
+/** The ask for the sections the first answer lacked: the same contract, only those keys, small. */
+export function analysisCompletionPrompt(prompt: string, missing: AnalysisSection[]): string {
+    return `${prompt}
+
+ATENÇÃO: as outras seções já estão prontas. Responda só JSON com ESTAS chaves e nenhuma outra: ${missing.join(", ")}. Mesmo formato acima, no máximo 4 itens por seção, 1 frase em "rationale" e "why", trechos citados de até 200 caracteres.`;
 }
 
 const text = (value: unknown, max: number): string =>
@@ -247,30 +359,94 @@ export function normalizeAnalysis(
     };
 }
 
-/** An open point that the intake checklist was not filled, added when the analysis ran without it. */
-export function withMissingIntake(result: AnalysisResult, intake: IntakeAnswer[]): AnalysisResult {
-    if (intake.length) return result;
-    return {
-        ...result,
-        open_points: [
-            { id: "o0", text: "Checklist de intake não preenchido: a análise não considerou o contexto do pedido.", depends_on: "outro" },
-            ...result.open_points,
-        ],
-    };
+/** Quotes the model offered for "não sei" answers, kept only when the contract really has them. */
+export function unknownSuggestions(
+    value: Record<string, unknown>,
+    intake: IntakeAnswer[],
+    documentText: string,
+): Map<string, { quote: string; span: { start: number; end: number } | null }> {
+    const unknown = new Set(intake.filter((a) => a.unknown === true).map((a) => a.key));
+    const found = new Map<string, { quote: string; span: { start: number; end: number } | null }>();
+    const raw = Array.isArray(value.unknown_suggestions) ? (value.unknown_suggestions as unknown[]) : [];
+    for (const entry of raw.slice(0, 20)) {
+        const item = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+        const key = text(item.key, 100);
+        const quote = text(item.quote, 1_000);
+        if (!unknown.has(key) || !quote || found.has(key)) continue;
+        const located = locateQuote(documentText, quote);
+        if (located.match === "nao_encontrado") continue;
+        found.set(key, { quote, span: located.span });
+    }
+    return found;
 }
 
-// List prices in US$ per million tokens (input, output), by model family. An
-// estimate: the provider layer does not report usage to this module yet.
+/** Open points the server adds itself, after the model's: no checklist, or answers marked "não sei". */
+export function withMissingIntake(
+    result: AnalysisResult,
+    intake: IntakeAnswer[],
+    suggestions: ReturnType<typeof unknownSuggestions> = new Map(),
+): AnalysisResult {
+    const added: OpenPoint[] = intake.length
+        ? intake
+              .filter((a) => a.unknown === true)
+              .map((a) => {
+                  const hint = suggestions.get(a.key);
+                  const base = `Pedido sem resposta: "${a.label.slice(0, 200)}" (marcado como não sei).`;
+                  return {
+                      id: `u_${a.key.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40)}`,
+                      text: hint
+                          ? `${base} O contrato diz: "${hint.quote}". Sugestão, confirmar com quem pediu.`
+                          : `${base} Confirmar antes de fechar.`,
+                      depends_on: "outro" as const,
+                      ...(hint && { quote: hint.quote, span: hint.span }),
+                  };
+              })
+        : [{ id: "o0", text: "Checklist de intake não preenchido: a análise não considerou o contexto do pedido.", depends_on: "outro" as const }];
+    if (!added.length) return result;
+    return { ...result, open_points: [...result.open_points, ...added] };
+}
+
+// List prices in US$ per million tokens (input, output), by model family.
 const PRICES: [RegExp, number, number][] = [
     [/haiku/i, 1, 5],
     [/sonnet/i, 3, 15],
     [/opus/i, 15, 75],
 ];
 
-/** Tokens from characters (≈4 per token) and the list price of the model's family; null price when unknown. */
-export function estimateUsage(model: string, calls: { input: number; output: number }[]) {
-    const input = Math.round(calls.reduce((sum, call) => sum + call.input, 0) / 4);
-    const output = Math.round(calls.reduce((sum, call) => sum + call.output, 0) / 4);
+/** List price (input, output) in US$ per million tokens for the model's family; null when unknown. */
+export function priceOf(model: string): { input: number; output: number } | null {
+    const price = PRICES.find(([pattern]) => pattern.test(model));
+    return price ? { input: price[1], output: price[2] } : null;
+}
+
+/** Fewest output tokens worth starting a call for: below this it would only come back cut off. */
+export const MIN_CALL_OUTPUT_TOKENS = 1_500;
+
+/**
+ * The output tokens a call may ask for so that the whole analysis stays inside
+ * its cap: what is left of the budget, less the (conservatively estimated)
+ * input of this call, at the output price. `null` price means no limit known;
+ * a result under MIN_CALL_OUTPUT_TOKENS means the call should not start.
+ */
+export function outputBudget(model: string, spentUsd: number, capUsd: number, inputChars: number, wanted: number): number {
+    const price = priceOf(model);
+    if (!price) return wanted;
+    const inputCost = (Math.ceil(inputChars / 3) / 1e6) * price.input;
+    const room = Math.floor(((capUsd - spentUsd - inputCost) / price.output) * 1e6);
+    return Math.min(wanted, room);
+}
+
+/**
+ * Tokens as the provider reported them, else from characters (≈4 per token,
+ * which undercounts Portuguese), at the list price of the model's family;
+ * null price when unknown. `estimated` says whether any call had no report.
+ */
+export function estimateUsage(
+    model: string,
+    calls: { input: number; output: number; maxTokens?: number; reported?: { inputTokens: number; outputTokens: number } | null }[],
+) {
+    const input = calls.reduce((sum, call) => sum + (call.reported ? call.reported.inputTokens : Math.round(call.input / 4)), 0);
+    const output = calls.reduce((sum, call) => sum + (call.reported ? call.reported.outputTokens : Math.round(call.output / 4)), 0);
     const price = PRICES.find(([pattern]) => pattern.test(model));
     const cost = price ? (input / 1e6) * price[1] + (output / 1e6) * price[2] : null;
     return {
@@ -279,7 +455,17 @@ export function estimateUsage(model: string, calls: { input: number; output: num
         input_tokens: input,
         output_tokens: output,
         estimated_cost_usd: cost === null ? null : Math.round(cost * 10_000) / 10_000,
-        estimated: true,
+        estimated: calls.some((call) => !call.reported),
+        per_call: calls.map((call) => {
+            const i = call.reported ? call.reported.inputTokens : Math.round(call.input / 4);
+            const o = call.reported ? call.reported.outputTokens : Math.round(call.output / 4);
+            return {
+                input_tokens: i,
+                output_tokens: o,
+                max_tokens: call.maxTokens ?? null,
+                estimated_cost_usd: price ? Math.round(((i / 1e6) * price[1] + (o / 1e6) * price[2]) * 10_000) / 10_000 : null,
+            };
+        }),
     };
 }
 

@@ -22,14 +22,20 @@ import {
 } from "./requests.access";
 import {
     applyAnswers,
+    applicableItems,
     effectiveTemplate,
     intakeStatus,
+    parseByKind,
     parseIntakeTemplate,
     readAnswers,
     type IntakeItem,
     type IntakeStatus,
 } from "./requests.intake";
+import { contractLabel, findContract, type ContractChoice } from "./requests.parent";
 import { PREFILL_JOB_KIND } from "./requests.prefill";
+import { REQUEST_KINDS } from "./requests.shared";
+import { applyAssignmentRules, reloadAfterRules } from "./requests.rules";
+import { syncStage } from "./requests.stages";
 
 /**
  * The job kind requests.analysis.ts handles. Named here, not imported, so the
@@ -65,14 +71,39 @@ export type RequestIntake = IntakeStatus & {
     can_answer: boolean;
     /** The organization's own checklist, or the generic one. */
     template_source: "org" | "padrao";
+    /** The kind of request these questions are for. */
+    kind: string;
+    /** The kind changed since the requester last saw the checklist (the triage corrected it). */
+    kind_changed: { from: string; to: string } | null;
+    /** For an amendment: the Mike contract it was tied to. */
+    parent_contract: ContractChoice | null;
 };
 
-export async function loadTemplate(db: Db, orgId: string): Promise<{ items: IntakeItem[]; source: "org" | "padrao" }> {
-    const { data, error } = await db.from("legal_teams").select("intake_template").eq("org_id", orgId).maybeSingle();
+export type Template = {
+    items: IntakeItem[];
+    source: "org" | "padrao";
+    by_kind: Record<string, string[]>;
+};
+
+/** The organization's checklist whole, and its per-kind map. Use `forKind` for what a request is asked. */
+export async function loadTemplate(db: Db, orgId: string): Promise<Template> {
+    const { data, error } = await db
+        .from("legal_teams")
+        .select("intake_template, intake_by_kind")
+        .eq("org_id", orgId)
+        .maybeSingle();
     if (error) throw error;
-    const stored = (data as { intake_template?: unknown } | null)?.intake_template;
-    const own = parseIntakeTemplate(stored);
-    return own.ok && own.items.length ? { items: own.items, source: "org" } : { items: effectiveTemplate(null), source: "padrao" };
+    const team = data as { intake_template?: unknown; intake_by_kind?: unknown } | null;
+    const own = parseIntakeTemplate(team?.intake_template);
+    const by_kind = parseByKind(team?.intake_by_kind);
+    return own.ok && own.items.length
+        ? { items: own.items, source: "org", by_kind }
+        : { items: effectiveTemplate(null), source: "padrao", by_kind };
+}
+
+/** The questions a request of this kind is asked. */
+export function forKind(template: Template, kind: string | null): IntakeItem[] {
+    return applicableItems(template.items, template.source, kind, template.by_kind);
 }
 
 /** Skips that mean the agent could not do its job, as opposed to having none. */
@@ -98,17 +129,21 @@ export async function prefillState(db: Db, requestId: string): Promise<PrefillSt
 
 function view(
     row: RequestRow,
-    template: { items: IntakeItem[]; source: "org" | "padrao" },
+    template: Template,
     canAnswer: boolean,
     prefill: PrefillState,
+    parent: ContractChoice | null = null,
 ): RequestIntake {
     return {
-        ...intakeStatus(template.items, readAnswers(row.intake)),
+        ...intakeStatus(forKind(template, row.kind), readAnswers(row.intake)),
         request_id: row.id,
         completed_at: row.intake_completed_at,
         prefill,
         can_answer: canAnswer,
         template_source: template.source,
+        kind: row.kind,
+        kind_changed: row.intake_kind && row.intake_kind !== row.kind ? { from: row.intake_kind, to: row.kind } : null,
+        parent_contract: parent,
     };
 }
 
@@ -118,6 +153,8 @@ function mayAnswer(row: RequestRow, audience: Awaited<ReturnType<typeof loadRequ
     return audience.audience.kind === "requester" || isTeam(audience.audience);
 }
 
+const key_in = (o: Record<string, unknown>, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+
 /** The request's checklist: each item, its answer and state, and what is still open. */
 export async function getIntake(db: Db, caller: Caller, requestId: string): Promise<ServiceResult<RequestIntake>> {
     const loaded = await loadRequestFor(db, caller, requestId);
@@ -125,7 +162,8 @@ export async function getIntake(db: Db, caller: Caller, requestId: string): Prom
     if (loaded.audience.kind === "guest") return failure("forbidden", "O checklist do pedido é de quem pediu e do time do Legal.");
     try {
         const template = await loadTemplate(db, loaded.row.org_id);
-        return ok(view(loaded.row, template, mayAnswer(loaded.row, loaded), await prefillState(db, loaded.row.id)));
+        const parent = loaded.row.parent_project_id ? await findContract(db, loaded.row.org_id, loaded.row.parent_project_id) : null;
+        return ok(view(loaded.row, template, mayAnswer(loaded.row, loaded), await prefillState(db, loaded.row.id), parent));
     } catch (error) {
         return internalFailure(error);
     }
@@ -156,23 +194,41 @@ export async function answerIntake(
         return internalFailure(error);
     }
     const now = new Date().toISOString();
-    const applied = applyAnswers(template.items, readAnswers(row.intake), body, now);
+    const items = forKind(template, row.kind);
+    // A contract picked from the Mike list: its label is the answer, the card is the link.
+    let picked: ContractChoice | null | undefined;
+    const given = body.answers && typeof body.answers === "object" && !Array.isArray(body.answers) ? { ...(body.answers as Record<string, unknown>) } : null;
+    const contractItem = items.find((i) => i.kind === "contract" && given && key_in(given, i.key));
+    if (given && contractItem) {
+        const raw = given[contractItem.key];
+        const projectId = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>).project_id : undefined;
+        if (projectId !== undefined) {
+            picked = await findContract(db, row.org_id, projectId);
+            if (!picked) return failure("validation", "Esse contrato não está no Mike. Escolha outro ou digite o nome.");
+            given[contractItem.key] = { value: contractLabel(picked), project_id: picked.id };
+        } else {
+            picked = null;
+        }
+    }
+    const applied = applyAnswers(items, readAnswers(row.intake), given ? { ...body, answers: given } : body, now);
     if (!applied.ok) return failure("validation", applied.detail);
     const prefill = await prefillState(db, row.id);
     if (applied.changed.length === 0) return ok(view(row, template, true, prefill));
 
-    const status = intakeStatus(template.items, applied.answers);
+    const status = intakeStatus(items, applied.answers);
     const closing = status.complete && !row.intake_completed_at;
     const { data, error } = await db
         .from("legal_requests")
         .update({
             intake: applied.answers,
+            intake_kind: row.kind,
+            ...(picked !== undefined ? { parent_project_id: picked ? picked.id : null } : {}),
             ...(closing ? { intake_completed_at: now } : {}),
             ...(!status.complete && row.intake_completed_at ? { intake_completed_at: null } : {}),
             updated_at: now,
         })
         .eq("id", row.id)
-        .select("id, intake, intake_completed_at")
+        .select("id, intake, intake_completed_at, intake_kind, parent_project_id")
         .single();
     if (error || !data) return internalFailure(error);
     const updated = { ...row, ...(data as Partial<RequestRow>) } as RequestRow;
@@ -190,7 +246,11 @@ export async function answerIntake(
     }
     // The checklist just closed: the contract's analysis runs for the team.
     if (closing && row.project_id) await enqueueAnalysis(db, row.id);
-    return ok(view(updated, template, true, prefill));
+    // The checklist may carry the contract value a rule is waiting for.
+    if (closing) await applyAssignmentRules(db, updated);
+    await syncStage(db, closing ? await reloadAfterRules(db, updated) : updated, closing ? "checklist fechado" : null);
+    const parent = updated.parent_project_id ? (picked ?? (await findContract(db, row.org_id, updated.parent_project_id))) : null;
+    return ok(view(updated, template, true, prefill, parent));
 }
 
 /** Queue the intake agent for a request whose card has a contract. Never fails the caller. */
@@ -207,11 +267,10 @@ export async function queueIntakePrefill(db: Db, requestId: string): Promise<voi
     }
 }
 
+export type OrgTemplate = { items: IntakeItem[]; source: "org" | "padrao"; by_kind: Record<string, string[]> };
+
 /** The organization's checklist, for whoever is on the legal team. */
-export async function getIntakeTemplate(
-    db: Db,
-    caller: Caller,
-): Promise<ServiceResult<{ items: IntakeItem[]; source: "org" | "padrao" }>> {
+export async function getIntakeTemplate(db: Db, caller: Caller): Promise<ServiceResult<OrgTemplate>> {
     let team;
     try {
         team = await loadLegalTeam(db);
@@ -229,14 +288,15 @@ export async function getIntakeTemplate(
 }
 
 /**
- * Replace the organization's checklist (the Head only). An empty list goes
- * back to the generic one. Answers already given stay on their requests.
+ * Replace the organization's checklist (the Head only), and optionally which
+ * questions apply to each kind (`by_kind`: kind -> keys of the list). An empty
+ * list goes back to the generic one. Answers already given stay on their requests.
  */
 export async function setIntakeTemplate(
     db: Db,
     caller: Caller,
-    body: { items?: unknown },
-): Promise<ServiceResult<{ items: IntakeItem[]; source: "org" | "padrao" }>> {
+    body: { items?: unknown; by_kind?: unknown },
+): Promise<ServiceResult<OrgTemplate>> {
     let team;
     try {
         team = await loadLegalTeam(db);
@@ -248,10 +308,21 @@ export async function setIntakeTemplate(
     if (role !== "owner" && role !== "admin") return failure("forbidden", "Só a liderança do Legal pode fazer isso.");
     const parsed = parseIntakeTemplate(body.items);
     if (!parsed.ok) return failure("validation", parsed.detail);
-    const { error } = await db
-        .from("legal_teams")
-        .update({ intake_template: parsed.items, updated_at: new Date().toISOString() })
-        .eq("org_id", team.org_id);
+    const patch: Record<string, unknown> = { intake_template: parsed.items, updated_at: new Date().toISOString() };
+    if (body.by_kind !== undefined) {
+        const byKind = parseByKind(body.by_kind);
+        const keys = new Set((parsed.items.length ? parsed.items : effectiveTemplate(null)).map((i) => i.key));
+        for (const [kind, list] of Object.entries(byKind)) {
+            if (!REQUEST_KINDS.includes(kind as (typeof REQUEST_KINDS)[number])) {
+                return failure("validation", "Um dos tipos de pedido da lista por tipo não existe.");
+            }
+            if (list.some((k) => !keys.has(k))) {
+                return failure("validation", "A lista por tipo cita uma pergunta que não está no checklist.");
+            }
+        }
+        patch.intake_by_kind = byKind;
+    }
+    const { error } = await db.from("legal_teams").update(patch).eq("org_id", team.org_id);
     if (error) return internalFailure(error);
-    return ok(parsed.items.length ? { items: parsed.items, source: "org" } : { items: effectiveTemplate(null), source: "padrao" });
+    return ok(await loadTemplate(db, team.org_id));
 }

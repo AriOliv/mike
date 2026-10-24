@@ -136,6 +136,14 @@ describe("agent runs", () => {
         await finishAgentRun(fake.db, "r1", { status: "succeeded", output: { counts: {} } });
         expect(fake.calls[1].payload).toMatchObject({ status: "succeeded", output: { counts: {} } });
         expect(fake.calls[1].filters).toEqual([["eq", "id", "r1"]]);
+        expect(fake.calls[1].payload).not.toHaveProperty("tokens_in");
+        fake.done();
+    });
+
+    it("records the tokens and cost an agent reports", async () => {
+        const fake = scriptedDb([{ table: "agent_runs", op: "update" }]);
+        await finishAgentRun(fake.db, "r1", { status: "succeeded", tokensIn: 1200, tokensOut: 300, costUsd: 0.0081 });
+        expect(fake.calls[0].payload).toMatchObject({ tokens_in: 1200, tokens_out: 300, cost_usd: 0.0081 });
         fake.done();
     });
 

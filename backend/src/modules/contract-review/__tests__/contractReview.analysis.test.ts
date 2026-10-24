@@ -2,9 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
     analysisCounts,
     analysisPrompt,
+    SECTION_LIMITS,
     ANALYSIS_NOTICE,
     estimateUsage,
+    MIN_CALL_OUTPUT_TOKENS,
+    outputBudget,
+    parseAnalysisAnswer,
     normalizeAnalysis,
+    unknownSuggestions,
     withMissingIntake,
 } from "../contractReview.analysis";
 
@@ -98,8 +103,52 @@ describe("analysisPrompt", () => {
 describe("withMissingIntake and estimateUsage", () => {
     it("adds an open point only when the intake is empty", () => {
         const { result } = normalizeAnalysis(answer, CONTRACT);
-        expect(withMissingIntake(result, [])).toMatchObject({ open_points: [{ id: "o0", depends_on: "outro" }, {}, {}] });
+        const n = result.open_points.length;
+        const none = withMissingIntake(result, []);
+        expect(none.open_points).toHaveLength(n + 1);
+        expect(none.open_points[n]).toMatchObject({ id: "o0", depends_on: "outro" });
         expect(withMissingIntake(result, [{ key: "a", label: "A", value: "b" }])).toBe(result);
+    });
+
+    it("appends one server open point per 'não sei' answer, after the model's, and marks them in the prompt", () => {
+        const { result } = normalizeAnalysis(answer, CONTRACT);
+        const intake = [
+            { key: "prazo", label: "Prazo desejado", value: "12 meses" },
+            { key: "valor", label: "Valor estimado", value: "Não sei", unknown: true },
+            { key: "foro", label: "Foro", value: "Não sei", unknown: true },
+            { key: "x", label: "Falso", value: "Não sei", unknown: "true" as unknown as boolean },
+        ];
+        const out = withMissingIntake(result, intake);
+        const n = result.open_points.length;
+        expect(out.open_points.slice(0, n)).toEqual(result.open_points);
+        expect(out.open_points.slice(n).map((p) => p.id)).toEqual(["u_valor", "u_foro"]);
+        expect(out.open_points[n].text).toContain("Valor estimado");
+        const prompt = analysisPrompt({ documentText: CONTRACT, documentName: "c.pdf", intake, playbook: null });
+        expect(prompt).toContain("- [valor] Valor estimado: NÃO SEI (não assuma resposta)");
+        expect(prompt).toContain("- Prazo desejado: 12 meses");
+        expect(prompt).toContain("não a repita em open_points");
+    });
+
+    it("shows the contract's literal answer to a 'não sei' as a suggestion to confirm, never invented", () => {
+        const intake = [
+            { key: "foro", label: "Foro", value: "Não sei", unknown: true },
+            { key: "valor", label: "Valor estimado", value: "Não sei", unknown: true },
+            { key: "prazo", label: "Prazo", value: "12 meses" },
+        ];
+        const real = "Fica eleito o foro da Comarca de São Paulo.";
+        const suggestions = unknownSuggestions(
+            { unknown_suggestions: [{ key: "foro", quote: real }, { key: "valor", quote: "trecho inventado que não existe no contrato" }, { key: "prazo", quote: real }] },
+            intake,
+            CONTRACT,
+        );
+        expect([...suggestions.keys()]).toEqual(["foro"]);
+        const { result } = normalizeAnalysis(answer, CONTRACT);
+        const points = withMissingIntake(result, intake, suggestions).open_points.slice(result.open_points.length);
+        expect(points[0]).toMatchObject({ id: "u_foro", quote: real });
+        expect(points[0].text).toContain("confirmar com quem pediu");
+        expect(points[1].text).toContain("Confirmar antes de fechar");
+        expect(points[1].quote).toBeUndefined();
+        expect(analysisPrompt({ documentText: CONTRACT, documentName: "c.pdf", intake, playbook: null })).toContain("- [foro] Foro: NÃO SEI");
     });
 
     it("estimates tokens and cost from characters and the model family's list price", () => {
@@ -110,7 +159,79 @@ describe("withMissingIntake and estimateUsage", () => {
             output_tokens: 10_000,
             estimated_cost_usd: 0.45,
             estimated: true,
+            per_call: [
+                { input_tokens: 100_000, output_tokens: 10_000, max_tokens: null, estimated_cost_usd: 0.45 },
+                { input_tokens: 0, output_tokens: 0, max_tokens: null, estimated_cost_usd: 0 },
+            ],
         });
         expect(estimateUsage("gemini-4-argon", [{ input: 4, output: 4 }]).estimated_cost_usd).toBeNull();
+    });
+
+    it("uses the provider's token counts when it reports them", () => {
+        expect(
+            estimateUsage("claude-sonnet-5-5", [{ input: 400_000, output: 40_000, reported: { inputTokens: 150_000, outputTokens: 12_000 } }]),
+        ).toEqual({
+            model: "claude-sonnet-5-5",
+            calls: 1,
+            input_tokens: 150_000,
+            output_tokens: 12_000,
+            estimated_cost_usd: 0.63,
+            estimated: false,
+            per_call: [{ input_tokens: 150_000, output_tokens: 12_000, max_tokens: null, estimated_cost_usd: 0.63 }],
+        });
+    });
+
+    it("limits a call's output to what the cap still pays, and refuses a call that would only come back cut off", () => {
+        // Sonnet: US$ 3 in / 15 out per million. 0.32 spent of 0.40, 12k-char input (~4k tokens ≈ 0.012).
+        const room = outputBudget("claude-sonnet-5-5", 0.32, 0.4, 12_000, 8_000);
+        expect(room).toBe(Math.floor(((0.4 - 0.32 - 0.012) / 15) * 1e6));
+        expect(room).toBeLessThan(8_000);
+        // The call at that limit cannot take the analysis over the cap.
+        expect(0.32 + 0.012 + (room / 1e6) * 15).toBeLessThanOrEqual(0.4);
+        expect(outputBudget("claude-sonnet-5-5", 0, 0.4, 100_000, 16_000)).toBe(16_000);
+        expect(outputBudget("claude-sonnet-5-5", 0.39, 0.4, 12_000, 8_000)).toBeLessThan(MIN_CALL_OUTPUT_TOKENS);
+        expect(outputBudget("gemini-4-argon", 0.39, 0.4, 12_000, 8_000)).toBe(8_000);
+    });
+});
+
+describe("parseAnalysisAnswer", () => {
+    const whole = {
+        executive_summary: { text: "x" }, critical: [], attention: [], favorable: [], redlines: [],
+        compliance: {}, open_points: [],
+    };
+
+    it("reads a whole answer, fenced or with a small JSON slip", () => {
+        expect(parseAnalysisAnswer(JSON.stringify(whole))).toMatchObject({ ok: true });
+        expect(parseAnalysisAnswer("```json\n" + JSON.stringify(whole) + "\n```")).toMatchObject({ ok: true });
+        expect(parseAnalysisAnswer(JSON.stringify(whole).replace('"critical":[]', '"critical":[1,2,]'))).toMatchObject({
+            ok: true,
+            value: { critical: [1, 2] },
+        });
+    });
+
+    it("keeps what came whole from a cut-off answer and lists the sections that did not", () => {
+        const text = JSON.stringify({
+            ...whole,
+            critical: [{ title: "a", quote: "x" }, { title: "b", quote: "y" }],
+            attention: [{ title: "c", quote: "z" }, { title: "d", quote: "w" }],
+        });
+        // Stops in the middle of the second attention item, before favorable.
+        const cut = text.slice(0, text.indexOf('"title":"d"') + 6);
+        const parsed = parseAnalysisAnswer(cut);
+        expect(parsed).toMatchObject({ ok: true, value: { critical: [{ title: "a" }, { title: "b" }], attention: [{ title: "c" }] } });
+        if (parsed.ok) expect(parsed.missing).toEqual(["attention", "favorable", "redlines", "compliance", "open_points"]);
+    });
+
+    it("tells an answer without a summary, or that is not JSON at all", () => {
+        expect(parseAnalysisAnswer(JSON.stringify(whole).slice(0, 20))).toEqual({ ok: false, reason: "incomplete_answer" });
+        expect(parseAnalysisAnswer("Desculpe, não consigo.")).toEqual({ ok: false, reason: "invalid_json" });
+    });
+});
+
+describe("analysisPrompt size limits", () => {
+    it("asks for a short answer: item limits per section and short quotes", () => {
+        const prompt = analysisPrompt({ documentText: "Contrato.", documentName: "c.docx", intake: [], playbook: null });
+        expect(prompt).toContain(`no máximo ${SECTION_LIMITS.critical} itens em critical`);
+        expect(prompt).toContain("até 250 caracteres");
     });
 });
