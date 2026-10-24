@@ -4881,6 +4881,46 @@ export interface RequestIntake {
     nothing_to_fill?: boolean;
 }
 
+export type RequestTermKey = "counterparty" | "term_start" | "term_months";
+
+/** What the agent read from the contract and waits for a person to confirm. */
+export type InferredRequestTerm = { value: string; quote: string };
+
+/** The contract's terms on a request: the other party, the start and term, and the end worked out from them. */
+export interface RequestTerms {
+    counterparty: string | null;
+    /** Team only: kept for later, never mailed. Null for whoever asked. */
+    counterparty_email: string | null;
+    term_start: string | null;
+    term_months: number | null;
+    /** start + months − 1 day (Código Civil, art. 132, §3º); null until both are known. */
+    term_end: string | null;
+    inferred: Partial<Record<RequestTermKey, InferredRequestTerm>>;
+    can_answer: boolean;
+}
+
+export async function getRequestTerms(id: string): Promise<RequestTerms> {
+    return apiRequest(`/requests/${id}/terms`);
+}
+
+/** Save what the person typed and/or confirm the agent's suggestions; an empty string clears a field. */
+export async function saveRequestTerms(
+    id: string,
+    body: {
+        counterparty?: string;
+        counterparty_email?: string;
+        term_start?: string;
+        term_months?: number | string;
+        confirm?: RequestTermKey[];
+    },
+): Promise<RequestTerms> {
+    return apiRequest(`/requests/${id}/terms`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
 export type IntakeAnswerInput =
     | string
     | boolean
