@@ -85,6 +85,7 @@ describe("access token words", () => {
         expect(clientLabel("hermes")).toBe("Hermes");
         expect(clientLabel("outro")).toBe("outro");
         expect(TOOL_LABELS.mike_contratos_ficha).toBe("leu a Ficha de um contrato");
+        expect(TOOL_LABELS.mike_pedidos_status_e_plano).toBe("viu o andamento de um pedido");
     });
 
     it("says 'all permissions' in one phrase instead of repeating eight", () => {

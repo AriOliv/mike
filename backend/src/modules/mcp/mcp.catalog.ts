@@ -8,6 +8,7 @@ import { CONTRACT_TOOLS } from "../contracts/contracts.service";
 import { DASHBOARD_TOOLS } from "../dashboard/dashboard.service";
 import { AGENT_TOOLS } from "../legal-agent/legalAgent.service";
 import { REGULATORY_TOOLS } from "../regulatory/regulatory.service";
+import { REQUEST_TOOLS } from "../requests/requests.service";
 import { TABULAR_TOOLS } from "../tabular/tabular.service";
 import { whoAmITool } from "./mcp.whoami";
 import type { AnyMcpTool } from "./mcp.types";
@@ -27,6 +28,7 @@ export function catalogTools(): readonly AnyMcpTool[] {
         whoAmITool(() => catalogTools()),
         ...CONTRACT_REVIEW_TOOLS,
         ...CONTRACT_TOOLS,
+        ...REQUEST_TOOLS,
         ...CNPJ_TOOLS,
         // Offered only while the feedback flag is on (the catalog is built once, at first use).
         ...(process.env.FEEDBACK_ENABLED === "true" ? FEEDBACK_TOOLS : []),

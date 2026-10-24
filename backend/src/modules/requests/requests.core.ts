@@ -15,7 +15,7 @@ import {
     ok,
     type ServiceResult,
 } from "../../lib/serviceResult";
-import { applyAmendedTerm, recordCardEvent } from "../contracts/contracts.service";
+import { applyAmendedTerm, LANES, recordCardEvent, type Lane } from "../contracts/contracts.service";
 import {
     HEAD_ONLY,
     isHead,
@@ -28,6 +28,7 @@ import {
     TEAM_ONLY,
     type Audience,
     type Caller,
+    type McpActor,
     type RequestRow,
 } from "./requests.access";
 import { queueNotifications } from "./requests.notifications";
@@ -39,7 +40,12 @@ import {
     effectiveDueAt,
     isEmail,
     KIND_LABELS,
+    LANE_LABELS,
     OPEN_STATUSES,
+    parseRequestCode,
+    requestPlan,
+    type PlanInput,
+    type PlanStep,
     REQUEST_KINDS,
     REQUESTER_AREAS,
     requestCode,
@@ -163,7 +169,7 @@ function sourceOf(value: unknown): Record<string, unknown> {
     const src = value as Record<string, unknown>;
     const channel = allowed.includes(String(src.channel)) ? String(src.channel) : "form";
     const out: Record<string, unknown> = { channel };
-    for (const key of ["channel_id", "thread_ts", "permalink", "bot"]) {
+    for (const key of ["channel_id", "thread_ts", "permalink", "bot", "client"]) {
         const v = cleanText(src[key], 500);
         if (v) out[key] = v;
     }
@@ -221,6 +227,74 @@ function validateCreate(input: CreateRequestInput):
         documentIds,
         terms: { counterpartyEmail: terms.counterpartyEmail, termStart: terms.termStart, termMonths: terms.termMonths },
     };
+}
+
+/**
+ * What createRequest would do, without doing it: the kind, the title, the
+ * deadline the team's SLA gives and the area that would be recorded. The
+ * MCP's first step shows this to the person before anything is created.
+ */
+export async function previewCreateRequest(
+    db: Db,
+    caller: Caller,
+    input: CreateRequestInput,
+): Promise<
+    ServiceResult<{
+        kind: RequestKind;
+        kind_label: string;
+        title: string;
+        counterparty: string | null;
+        urgency: Urgency;
+        due_at: string;
+        area: string | null;
+        attachments: number;
+    }>
+> {
+    if (!normalizeEmail(caller.userEmail)) return failure("validation", "Sua conta não tem e-mail.");
+    const valid = validateCreate(input);
+    if (!valid.ok) return failure("validation", valid.detail);
+    let team;
+    try {
+        team = await loadLegalTeam(db);
+    } catch (error) {
+        return internalFailure(error);
+    }
+    if (!team) return NO_LEGAL_TEAM;
+    let area = normalizeArea(input.requester_area);
+    if (!area) {
+        const { data } = await db
+            .from("legal_requester_areas")
+            .select("area")
+            .eq("user_id", caller.userId)
+            .maybeSingle();
+        area = normalizeArea((data as { area?: string } | null)?.area);
+    }
+    return ok({
+        kind: valid.kind,
+        kind_label: KIND_LABELS[valid.kind],
+        title: valid.title,
+        counterparty: valid.counterparty,
+        urgency: valid.urgency,
+        due_at: computeDueAt(new Date(), valid.kind, valid.urgency, valid.neededBy, team.sla_days).toISOString(),
+        area,
+        attachments: valid.documentIds.length,
+    });
+}
+
+/**
+ * The request's id from what a person or an assistant would type: its code
+ * ("LEG-0042", "42") or its id. Says nothing about access: the caller still
+ * goes through loadRequestFor, which answers "not found" to outsiders.
+ */
+export async function resolveRequestRef(db: Db, ref: string): Promise<ServiceResult<string>> {
+    const value = ref.trim();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return ok(value);
+    const number = parseRequestCode(value);
+    if (number === null) return failure("validation", "Informe o código do pedido, como LEG-0042.");
+    const { data, error } = await db.from("legal_requests").select("id").eq("number", number).maybeSingle();
+    if (error) return internalFailure(error);
+    const id = (data as { id?: string } | null)?.id;
+    return id ? ok(id) : failure("not_found", "Pedido não encontrado.");
 }
 
 /**
@@ -289,7 +363,8 @@ async function resolveArea(
             .from("legal_requester_areas")
             .upsert({ user_id: caller.userId, area, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
         if (error) console.error("[requests] remember area failed", { error: safeError(error) });
-        return { area, source: channel === "form" ? "form" : "slack" };
+        // Chosen by the person, on the form or through an assistant (MCP); sent by the chat bot otherwise.
+        return { area, source: channel === "form" || channel === "mcp" ? "form" : "slack" };
     }
     const { data } = await db
         .from("legal_requester_areas")
@@ -429,14 +504,18 @@ export async function createRequest(
     await recordCardEvent(db, {
         projectId,
         orgId: team.org_id,
-        // The platform opening a renewal is the system, not a chat bot acting for someone.
-        actorType: channel === "sistema" ? "system" : channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
-        actorId: channel === "sistema" ? `system:${String(row.source.bot ?? "sistema")}` : channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
-        actorName: requesterName ?? requesterEmail,
-        onBehalfOf: channel === "form" || channel === "sistema" ? null : requesterEmail,
+        ...(caller.actor
+            ? actorFields(caller.actor)
+            : {
+                  // The platform opening a renewal is the system, not a chat bot acting for someone.
+                  actorType: channel === "sistema" ? "system" : channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
+                  actorId: channel === "sistema" ? `system:${String(row.source.bot ?? "sistema")}` : channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
+                  actorName: requesterName ?? requesterEmail,
+                  onBehalfOf: channel === "form" || channel === "sistema" ? null : requesterEmail,
+                  source: channel === "sistema" ? "cron" : channel === "form" ? "ui" : "mcp",
+              }),
         action: "request.created",
-        after: { code: requestCode(row.number), kind: valid.kind, channel, attachments: attached },
-        source: channel === "sistema" ? "cron" : channel === "form" ? "ui" : "mcp",
+        after: { code: requestCode(row.number), kind: valid.kind, channel: channelLabel(row.source), attachments: attached },
     });
     await queueNotifications(db, [
         {
@@ -644,6 +723,39 @@ export async function getRequest(
     }
 }
 
+/**
+ * Where a request stands and what comes next, for whoever may see it: the
+ * caller's view plus the orchestration plan. The requester's plan has the
+ * triage's "what is missing" (it is theirs to send) but not the internal
+ * review step. MCP: `mike_pedidos_status_e_plano`.
+ */
+export async function getRequestPlan(
+    db: Db,
+    caller: Caller,
+    requestId: string,
+): Promise<ServiceResult<{ request: RequestPublicView | RequestTeamView; plan: PlanStep[] }>> {
+    const loaded = await loadRequestFor(db, caller, requestId);
+    if (!loaded.ok) return loaded;
+    try {
+        const view = await buildView(db, loaded.row, loaded.audience);
+        const triage = loaded.row.triage as PlanInput["triage"];
+        const plan = requestPlan(
+            {
+                status: view.status,
+                assignee_name: view.assignee_name,
+                requester_name: view.requester_name,
+                requester_email: view.requester_email,
+                triage,
+                answered: view.messages.some((m) => m.kind === "answer"),
+            },
+            { forRequester: !isTeam(loaded.audience) },
+        );
+        return ok({ request: view, plan });
+    } catch (error) {
+        return internalFailure(error);
+    }
+}
+
 export type RequestListItem = {
     id: string;
     code: string;
@@ -834,6 +946,30 @@ async function teamCallerName(db: Db, caller: Caller): Promise<string> {
     return (await displayName(db, caller.userId)) ?? normalizeEmail(caller.userEmail) ?? "Legal";
 }
 
+function actorFields(actor: McpActor) {
+    const { actorType, actorId, actorName, onBehalfOf, source } = actor;
+    return { actorType, actorId, actorName, onBehalfOf, source } as const;
+}
+
+/**
+ * Who an event is by: the MCP client acting for the person when the call
+ * came through it, the person otherwise.
+ */
+async function actorOf(db: Db, caller: Caller, name?: string) {
+    if (caller.actor) return actorFields(caller.actor);
+    return {
+        actorType: "user",
+        actorId: caller.userId,
+        actorName: name ?? (await teamCallerName(db, caller)),
+    } as const;
+}
+
+/** "mcp:<client>" for a request that came through an assistant, the channel otherwise. */
+function channelLabel(source: Record<string, unknown> | null | undefined): string {
+    const channel = String(source?.channel ?? "form");
+    return channel === "mcp" && source?.client ? `mcp:${String(source.client)}` : channel;
+}
+
 async function updateRow(
     db: Db,
     id: string,
@@ -903,9 +1039,7 @@ export async function assignRequest(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: "assignee.changed",
             field: "assignee",
             before: row.assignee_id ? { id: row.assignee_id } : null,
@@ -972,9 +1106,7 @@ export async function decideTriage(
             await recordCardEvent(db, {
                 projectId: row.project_id,
                 orgId: row.org_id,
-                actorType: "user",
-                actorId: caller.userId,
-                actorName: await teamCallerName(db, caller),
+                ...(await actorOf(db, caller)),
                 action: "triage.reopened",
                 before: { decision: triage.decision },
             });
@@ -1033,9 +1165,7 @@ export async function decideTriage(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: `triage.${decision}`,
             after: { agent: TRIAGE_AGENT_NAME, ...applied, reason: cleanText(body.reason, 300) },
         });
@@ -1112,9 +1242,7 @@ export async function postMessage(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: authorName,
+            ...(await actorOf(db, caller, authorName)),
             action: kind === "question" ? "request.question" : kind === "answer" ? "request.answered" : "comment.added",
             after: { preview: text.slice(0, 140) },
         });
@@ -1133,6 +1261,53 @@ export async function postMessage(
         ]);
     }
     return getRequest(db, caller, requestId);
+}
+
+/**
+ * Move the request's card to another stage of the pipeline (the team's six
+ * lanes). The requester's four steps follow from it: Assinatura shows as
+ * "Assinatura", Arquivado as "Concluído". Any team member can move it, as on
+ * the board.
+ */
+export async function moveRequestStage(
+    db: Db,
+    caller: Caller,
+    requestId: string,
+    body: { lane?: unknown },
+): Promise<ServiceResult<RequestTeamView>> {
+    const loaded = await loadRequestFor(db, caller, requestId);
+    if (!loaded.ok) return loaded;
+    if (!isTeam(loaded.audience)) return TEAM_ONLY;
+    const row = loaded.row;
+    if (!LANES.includes(body.lane as Lane)) {
+        return failure("validation", `Escolha uma etapa: ${LANES.map((l) => LANE_LABELS[l]).join(", ")}.`);
+    }
+    const lane = body.lane as Lane;
+    if (!row.project_id) return failure("conflict", "Este pedido não tem card na esteira.");
+    const { data: card, error: cardError } = await db
+        .from("projects")
+        .select("lane")
+        .eq("id", row.project_id)
+        .maybeSingle();
+    if (cardError) return internalFailure(cardError);
+    const before = (card as { lane?: string | null } | null)?.lane ?? null;
+    if (before === lane) return getTeamView(db, caller, requestId);
+    const now = new Date().toISOString();
+    const { error } = await db
+        .from("projects")
+        .update({ lane, lane_updated_at: now, updated_at: now })
+        .eq("id", row.project_id);
+    if (error) return internalFailure(error);
+    await recordCardEvent(db, {
+        projectId: row.project_id,
+        orgId: row.org_id,
+        ...(await actorOf(db, caller)),
+        action: "lane.changed",
+        field: "lane",
+        before,
+        after: lane,
+    });
+    return getTeamView(db, caller, requestId);
 }
 
 /**
@@ -1211,9 +1386,7 @@ export async function deliverRequest(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: "request.delivered",
             after: { documents: documentIds.length },
         });
@@ -1272,9 +1445,7 @@ export async function inviteParticipant(
         await recordCardEvent(db, {
             projectId: row.project_id,
             orgId: row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: inviter,
+            ...(await actorOf(db, caller, inviter)),
             action: "participant.invited",
             after: { email, role, label: cleanText(body.label, 120), expires_at: expiresAt },
         });
@@ -1318,9 +1489,7 @@ export async function revokeParticipant(
         await recordCardEvent(db, {
             projectId: loaded.row.project_id,
             orgId: loaded.row.org_id,
-            actorType: "user",
-            actorId: caller.userId,
-            actorName: await teamCallerName(db, caller),
+            ...(await actorOf(db, caller)),
             action: "participant.revoked",
             after: { email: (data as { email: string }).email },
         });

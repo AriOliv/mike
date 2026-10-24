@@ -19,6 +19,20 @@ import type { McpContext } from "./mcp.types";
 
 export { buildServer, SERVER_INFO } from "./mcp.server";
 export {
+    challengeFor,
+    decideAuthorization,
+    describeAuthorization,
+    exchangeCode,
+    exchangeRefresh,
+    getClient,
+    oauthConfig,
+    OAuthGrantError,
+    OAUTH_DEFAULT_SCOPES,
+    registerClient,
+    revokeOAuthToken,
+    startAuthorization,
+} from "./mcp.oauth";
+export {
     createAccessToken,
     listAccessTokens,
     revokeAccessToken,
@@ -105,7 +119,7 @@ export async function openMcpCall(
         if (!person.ok) return refuse({ status: person.reason === "not_member" ? 403 : 401, message: REJECTION_MESSAGE[person.reason] });
         token = {
             id: row.id,
-            kind: "pessoal",
+            kind: checked.oauth ? "oauth" : "pessoal",
             userId: row.user_id,
             userEmail: person.userEmail,
             displayName: person.displayName,

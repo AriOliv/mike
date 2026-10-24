@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { Check, CircleDashed, Sparkles } from "lucide-react";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { answerRequestIntake, getRequestIntake, type IntakeAnswerInput, type RequestIntake } from "@/app/lib/mikeApi";
+import {
+    answerRequestIntake,
+    getRequestIntake,
+    searchRequestContracts,
+    type ContractChoice,
+    type IntakeAnswerInput,
+    type RequestIntake,
+} from "@/app/lib/mikeApi";
 import { notifyError } from "@/app/lib/userFacingError";
 import { showToast } from "@/app/components/ui/toast";
 import { cn } from "@/app/lib/utils";
@@ -16,14 +23,20 @@ type Item = RequestIntake["items"][number];
 
 /** How often the checklist looks again while the agent is reading the contract. */
 export const PREFILL_POLL_MS = 5000;
-type Draft = { value: string; detail: string; selected: string[]; unknown: boolean };
-const EMPTY: Draft = { value: "", detail: "", selected: [], unknown: false };
+type Draft = { value: string; detail: string; selected: string[]; unknown: boolean; contract: ContractChoice | null };
+const EMPTY: Draft = { value: "", detail: "", selected: [], unknown: false, contract: null };
+
+/** How long a search waits for the person to stop typing, and how many letters it takes. */
+export const CONTRACT_SEARCH_MS = 250;
+const CONTRACT_MIN_LETTERS = 2;
+const NOT_IN_MIKE = "Não está no Mike, vou anexar";
 
 const isChoice = (item: Item) => item.kind === "choice" || item.kind === "multi_choice";
 
 /** What the person gave for a question, in the shape the server takes; null while it is blank. */
 function answerOf(item: Item, d: Draft): IntakeAnswerInput | null {
     if (d.unknown) return { unknown: true };
+    if (item.kind === "contract" && d.contract) return { project_id: d.contract.id };
     if (isChoice(item)) return d.selected.length ? (item.kind === "multi_choice" ? d.selected : d.selected[0]) : null;
     if (!d.value.trim()) return null;
     return d.detail.trim() ? { value: d.value, detail: d.detail } : d.value;
@@ -34,7 +47,8 @@ function draftFrom(item: Item): Draft {
     const a = item.answer;
     if (!a) return EMPTY;
     if (a.unknown) return { ...EMPTY, unknown: true };
-    return { value: a.choice ?? (isChoice(item) ? "" : a.value), detail: a.detail ?? "", selected: a.selected ?? [], unknown: false };
+    // A contract answer is picked again, never re-sent from its label: that would untie the link.
+    return { ...EMPTY, value: a.choice ?? (isChoice(item) || item.kind === "contract" ? "" : a.value), detail: a.detail ?? "", selected: a.selected ?? [] };
 }
 
 const kindLabel = (kind: string) => KIND_OPTIONS.find((k) => k.value === kind)?.label ?? kind;
@@ -205,6 +219,119 @@ function AnswerField({ id, item, draft, onDraft }: { id: string; item: Item; dra
     );
 }
 
+/**
+ * "Qual é o contrato original?": search the Mike's contracts by name or
+ * counterparty and pick one, or type that it is not there (a plain answer,
+ * which also unties a contract picked before).
+ */
+function ContractPicker({ id, draft, onDraft }: { id: string; draft: Draft; onDraft: (patch: Partial<Draft>) => void }) {
+    const [query, setQuery] = useState("");
+    const [found, setFound] = useState<ContractChoice[] | null>(null);
+    const [failed, setFailed] = useState(false);
+    const [typing, setTyping] = useState(draft.value !== "");
+    const term = query.trim();
+    const searching = !typing && term.length >= CONTRACT_MIN_LETTERS;
+    useEffect(() => {
+        if (!searching) return;
+        const controller = new AbortController();
+        const timer = setTimeout(() => {
+            searchRequestContracts(term, controller.signal)
+                .then((list) => {
+                    setFound(list);
+                    setFailed(false);
+                })
+                .catch(() => {
+                    if (!controller.signal.aborted) setFailed(true);
+                });
+        }, CONTRACT_SEARCH_MS);
+        return () => {
+            clearTimeout(timer);
+            controller.abort();
+        };
+    }, [term, searching]);
+
+    if (draft.contract) {
+        return (
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-2 py-1.5">
+                <span className="min-w-0 break-words text-gray-900">
+                    {draft.contract.name}
+                    {draft.contract.counterparty ? <span className="text-gray-500"> · {draft.contract.counterparty}</span> : null}
+                </span>
+                <button type="button" className="shrink-0 text-[11px] text-gray-500 underline underline-offset-2" onClick={() => onDraft({ contract: null })}>
+                    Trocar
+                </button>
+            </div>
+        );
+    }
+    if (typing) {
+        return (
+            <div>
+                <input
+                    id={id}
+                    className={FIELD}
+                    placeholder="Diga qual é, se souber"
+                    value={draft.value}
+                    onChange={(e) => onDraft({ value: e.target.value })}
+                />
+                <button type="button" className="mt-1 text-[11px] text-gray-500 underline underline-offset-2" onClick={() => {
+                        setTyping(false);
+                        onDraft({ value: "" });
+                    }}>
+                    Procurar no Mike
+                </button>
+            </div>
+        );
+    }
+    return (
+        <div>
+            <input
+                id={id}
+                className={FIELD}
+                role="combobox"
+                aria-expanded={searching && found !== null}
+                aria-controls={`${id}-lista`}
+                placeholder="Procure pelo nome ou pela contraparte"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+            />
+            {searching && found !== null ? (
+                <ul id={`${id}-lista`} role="listbox" aria-label="Contratos encontrados" className="mt-1 max-h-40 overflow-auto rounded-lg border border-gray-200">
+                    {found.length ? (
+                        found.map((c) => (
+                            <li key={c.id} role="option" aria-selected={false}>
+                                <button
+                                    type="button"
+                                    className="block w-full px-2 py-1.5 text-left hover:bg-gray-50"
+                                    onClick={() => {
+                                        onDraft({ contract: c });
+                                        setQuery("");
+                                    }}
+                                >
+                                    {c.name}
+                                    {c.counterparty ? <span className="text-gray-500"> · {c.counterparty}</span> : null}
+                                </button>
+                            </li>
+                        ))
+                    ) : (
+                        <li className="px-2 py-1.5 text-gray-500">Nenhum contrato com esse nome.</li>
+                    )}
+                </ul>
+            ) : null}
+            {searching && failed ? <p className="mt-1 text-[11px] text-gray-500" role="status">Não consegui buscar agora. Escreva o nome e anexe o contrato.</p> : null}
+            <button
+                type="button"
+                className="mt-1 text-[11px] text-gray-500 underline underline-offset-2"
+                onClick={() => {
+                    setTyping(true);
+                    onDraft({ value: NOT_IN_MIKE });
+                }}
+            >
+                Não está no Mike, vou anexar
+            </button>
+        </div>
+    );
+}
+
 function AnswerInput({
     id,
     item,
@@ -244,6 +371,9 @@ function AnswerInput({
                 ) : null}
             </div>
         );
+    }
+    if (item.kind === "contract") {
+        return <ContractPicker id={id} draft={draft} onDraft={onDraft} />;
     }
     if (item.kind === "choice" || item.kind === "multi_choice") {
         const single = item.kind === "choice";

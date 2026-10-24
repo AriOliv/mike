@@ -4829,7 +4829,7 @@ export async function inviteRequestParticipant(
     return apiRequest(`/requests/${id}/participants`, jsonPost(body));
 }
 
-export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money" | "choice" | "multi_choice";
+export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money" | "choice" | "multi_choice" | "contract";
 
 export interface IntakeItem {
     key: string;
@@ -4879,6 +4879,55 @@ export interface RequestIntake {
     kind_changed?: { from: string; to: string } | null;
     /** No question is required for this kind (a legal question): the screen says so instead of "0 de 0". */
     nothing_to_fill?: boolean;
+    /** The contract an amendment changes, when one was picked from the Mike. */
+    parent_contract?: ContractChoice | null;
+}
+
+/** A contract of the Mike to tie a request to: only its name and counterparty. */
+export interface ContractChoice {
+    id: string;
+    name: string;
+    counterparty: string | null;
+}
+
+export type RequestTermKey = "counterparty" | "term_start" | "term_months";
+
+/** What the agent read from the contract and waits for a person to confirm. */
+export type InferredRequestTerm = { value: string; quote: string };
+
+/** The contract's terms on a request: the other party, the start and term, and the end worked out from them. */
+export interface RequestTerms {
+    counterparty: string | null;
+    /** Team only: kept for later, never mailed. Null for whoever asked. */
+    counterparty_email: string | null;
+    term_start: string | null;
+    term_months: number | null;
+    /** start + months − 1 day (Código Civil, art. 132, §3º); null until both are known. */
+    term_end: string | null;
+    inferred: Partial<Record<RequestTermKey, InferredRequestTerm>>;
+    can_answer: boolean;
+}
+
+export async function getRequestTerms(id: string): Promise<RequestTerms> {
+    return apiRequest(`/requests/${id}/terms`);
+}
+
+/** Save what the person typed and/or confirm the agent's suggestions; an empty string clears a field. */
+export async function saveRequestTerms(
+    id: string,
+    body: {
+        counterparty?: string;
+        counterparty_email?: string;
+        term_start?: string;
+        term_months?: number | string;
+        confirm?: RequestTermKey[];
+    },
+): Promise<RequestTerms> {
+    return apiRequest(`/requests/${id}/terms`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
 }
 
 export type IntakeAnswerInput =
@@ -4886,7 +4935,17 @@ export type IntakeAnswerInput =
     | boolean
     | string[]
     | { value: string | boolean; detail?: string }
+    | { project_id: string }
     | { unknown: true };
+
+/** Contracts of the Mike matching a name or counterparty (two letters at least). */
+export async function searchRequestContracts(q: string, signal?: AbortSignal): Promise<ContractChoice[]> {
+    const { contracts } = await apiRequest<{ contracts: ContractChoice[] }>(
+        `/requests/contracts?q=${encodeURIComponent(q)}`,
+        { signal },
+    );
+    return contracts;
+}
 
 export async function getRequestIntake(id: string): Promise<RequestIntake> {
     return apiRequest(`/requests/${id}/intake`);
@@ -5938,6 +5997,100 @@ export async function getLegalDashboard(params?: {
     return apiRequest(`/dashboard${suffix}`);
 }
 
+// ── Notion por org (Configurações → Integrações) ───────────────────────────
+
+export type NotionLane = "entrada" | "triagem" | "revisao" | "negociacao" | "assinatura" | "arquivado";
+export type NotionStageTarget = { lane: NotionLane; tag: string | null };
+
+export interface NotionConnection {
+    connected: boolean;
+    token_last4: string | null;
+    database_id: string | null;
+    data_source_id: string | null;
+    database_title: string | null;
+    field_map: Record<string, string>;
+    stage_map: Record<string, NotionStageTarget>;
+    sync_enabled: boolean;
+    poll_minutes: number;
+    last_sync_at: string | null;
+    last_sync_error: string | null;
+    can_manage: boolean;
+    fields: { field: string; label: string; types: string[]; owner: "legal" | "mike" | "key" }[];
+}
+
+export interface NotionBoardSchema {
+    database_id: string;
+    title: string;
+    properties: { name: string; type: string; options?: string[] }[];
+    stage_options: string[];
+    suggested_field_map: Record<string, string>;
+    suggested_stage_map: Record<string, NotionStageTarget>;
+}
+
+const notionPath = (orgId: string, rest = "") => `/orgs/${encodeURIComponent(orgId)}/integrations/notion${rest}`;
+const notionJson = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+});
+
+export async function getNotionConnection(orgId: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId));
+}
+
+export async function connectNotion(orgId: string, token: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/token"), notionJson("PUT", { token }));
+}
+
+export async function disconnectNotion(orgId: string): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/token"), { method: "DELETE" });
+}
+
+export async function listNotionDatabases(orgId: string): Promise<{ id: string; data_source_id: string; title: string }[]> {
+    return apiRequest(notionPath(orgId, "/databases"));
+}
+
+export async function describeNotionBoard(orgId: string, databaseId: string): Promise<NotionBoardSchema> {
+    return apiRequest(notionPath(orgId, `/board?database_id=${encodeURIComponent(databaseId)}`));
+}
+
+export async function saveNotionMapping(
+    orgId: string,
+    mapping: { database_id: string; field_map: Record<string, string>; stage_map: Record<string, NotionStageTarget>; poll_minutes: number },
+): Promise<NotionConnection> {
+    return apiRequest(notionPath(orgId, "/mapping"), notionJson("PUT", mapping));
+}
+
+export type NotionImportMatch = "linked" | "project" | "duplicate" | "new";
+
+export interface NotionImportPlan {
+    total: number;
+    counts: Record<NotionImportMatch, number> & { skipped: number };
+    items: {
+        page_id: string;
+        name: string;
+        counterparty: string | null;
+        lane: NotionLane | null;
+        tag: string | null;
+        match: NotionImportMatch;
+        project_id: string | null;
+        warnings: string[];
+    }[];
+    skipped: { page_id: string; reason: string }[];
+}
+
+export async function previewNotionImport(orgId: string): Promise<NotionImportPlan> {
+    return apiRequest(notionPath(orgId, "/import"));
+}
+
+export async function applyNotionImport(
+    orgId: string,
+    writeBack = false,
+): Promise<{ created: number; linked: number; skipped: number; failed: number }> {
+    return apiRequest(notionPath(orgId, "/import"), notionJson("POST", { write_back: writeBack }));
+}
+
+
 // ── Agente do Legal (org settings) ──────────────────────────────────────────
 
 export type LegalAgentTone = "formal" | "cordial" | "direto";
@@ -6084,7 +6237,8 @@ export type McpScope =
 export interface McpAccessToken {
     id: string;
     name: string;
-    kind: "pessoal" | "servico";
+    /** "aplicativo": an app the person connected by OAuth (Claude.ai, …). */
+    kind: "pessoal" | "servico" | "aplicativo";
     /** "personal" or an organization id. */
     workspace: string;
     /** The first characters, to recognise a token without showing it. */
@@ -6118,6 +6272,33 @@ export async function createMcpToken(body: {
 
 export async function revokeMcpToken(id: string): Promise<McpAccessToken> {
     return apiRequest(`/mcp-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── Conectar um aplicativo ao Mike (OAuth do MCP, doc 09 §3.4) ──────────────
+
+export interface McpAuthorizationRequest {
+    id: string;
+    client: { client_id: string; client_name: string | null; redirect_host: string };
+    scopes: McpScope[];
+    expires_at: string;
+}
+
+/** What the consent screen shows: who asks for what, and where the answer goes. */
+export async function getMcpAuthorization(requestId: string): Promise<McpAuthorizationRequest> {
+    return apiRequest(`/mcp-oauth/pedido/${encodeURIComponent(requestId)}`);
+}
+
+/** The person's answer; the browser then goes to `redirect`, back to the app. */
+export async function decideMcpAuthorization(body: {
+    pedido: string;
+    aprovar: boolean;
+    espaco?: string;
+}): Promise<{ redirect: string }> {
+    return apiRequest("/mcp-oauth/decisao", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
 }
 
 // ── Consulta de CNPJ (L-54) ─────────────────────────────────────────────────

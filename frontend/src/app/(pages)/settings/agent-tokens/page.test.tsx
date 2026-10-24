@@ -89,6 +89,21 @@ describe("Tokens de acesso para agentes", () => {
         expect(within(items[1]).queryByRole("button")).toBeNull();
     });
 
+    it("lists an app the person connected, and disconnects it", async () => {
+        vi.mocked(listMcpTokens).mockResolvedValue([token({ id: "app", kind: "aplicativo", name: "Claude", prefix: "mike_ort_x…", last_client: "claude-ai" })]);
+        vi.mocked(revokeMcpToken).mockResolvedValue(token({ id: "app", kind: "aplicativo", name: "Claude", revoked_at: new Date().toISOString() }));
+        await renderPage();
+        const item = within(screen.getByRole("list", { name: "Tokens de acesso" })).getByRole("listitem");
+        expect(item.textContent).toContain("Aplicativo conectado");
+        expect(item.textContent).not.toContain("mike_ort_");
+        fireEvent.click(within(item).getByRole("button", { name: "Desconectar Claude" }));
+        expect(screen.getByText(/conecte de novo pelo próprio aplicativo/)).toBeTruthy();
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Desconectar" }));
+        });
+        expect(revokeMcpToken).toHaveBeenCalledWith("app");
+    });
+
     it("shows skeleton lines while loading, then an empty state with a way to start", async () => {
         let resolve!: (v: McpAccessToken[]) => void;
         vi.mocked(listMcpTokens).mockReturnValue(new Promise((r) => (resolve = r)));

@@ -242,12 +242,20 @@ export default function AgentTokensPage() {
                                             <div className="min-w-0 space-y-1">
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <SettingsLabel>{t.name}</SettingsLabel>
+                                                    {t.kind === "aplicativo" ? (
+                                                        <span className="text-[11px] text-gray-500">Aplicativo conectado</span>
+                                                    ) : null}
                                                     <span title={CHIP[state].title}>
                                                         <StatusChip status={CHIP[state].status} className={CHIP[state].className} label={STATE_LABEL[state]} />
                                                     </span>
                                                 </div>
                                                 <p className="break-words text-xs text-gray-500">
-                                                    <span className="font-mono">{t.prefix}</span> · {workspaceName(t.workspace)} ·{" "}
+                                                    {t.kind === "aplicativo" ? null : (
+                                                        <>
+                                                            <span className="font-mono">{t.prefix}</span> ·{" "}
+                                                        </>
+                                                    )}
+                                                    {workspaceName(t.workspace)} ·{" "}
                                                     {lastUseLabel(t)} · {validityLabel(t)}
                                                 </p>
                                                 <p className="text-[11px] text-gray-400">
@@ -255,8 +263,8 @@ export default function AgentTokensPage() {
                                                 </p>
                                             </div>
                                             {live ? (
-                                                <PillButtonUI tone="white" size="xs" onClick={() => setRevoking(t)} aria-label={`Revogar ${t.name}`}>
-                                                    Revogar
+                                                <PillButtonUI tone="white" size="xs" onClick={() => setRevoking(t)} aria-label={`${t.kind === "aplicativo" ? "Desconectar" : "Revogar"} ${t.name}`}>
+                                                    {t.kind === "aplicativo" ? "Desconectar" : "Revogar"}
                                                 </PillButtonUI>
                                             ) : null}
                                         </SettingsRow>
@@ -422,9 +430,13 @@ export default function AgentTokensPage() {
 
             <ConfirmPopup
                 open={revoking !== null}
-                title={revoking ? `Revogar “${revoking.name}”?` : ""}
-                message="O agente que usa este token perde o acesso na próxima chamada. Não dá para desfazer; para voltar, crie outro token."
-                confirmLabel="Revogar"
+                title={revoking ? `${revoking.kind === "aplicativo" ? "Desconectar" : "Revogar"} “${revoking.name}”?` : ""}
+                message={
+                    revoking?.kind === "aplicativo"
+                        ? "O aplicativo perde o acesso agora. Para voltar, conecte de novo pelo próprio aplicativo."
+                        : "O agente que usa este token perde o acesso na próxima chamada. Não dá para desfazer; para voltar, crie outro token."
+                }
+                confirmLabel={revoking?.kind === "aplicativo" ? "Desconectar" : "Revogar"}
                 confirmVariant="danger"
                 confirmStatus={revokeBusy ? "loading" : "idle"}
                 cancelLabel="Cancelar"
