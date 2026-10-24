@@ -107,6 +107,7 @@ describe("the sections each role is offered", () => {
       "Agente do Legal",
       "Registro de auditoria",
       "Bring Your Own Keys",
+      "Integrações",
       "Privacy & Data",
     ]);
   });
@@ -115,7 +116,7 @@ describe("the sections each role is offered", () => {
     mocks.role = "admin";
     renderShell();
     await screen.findByText("section for Elite Law LLP");
-    expect(sections()).toEqual(["General", "Members", "Agente do Legal", "Registro de auditoria", "Bring Your Own Keys"]);
+    expect(sections()).toEqual(["General", "Members", "Agente do Legal", "Registro de auditoria", "Bring Your Own Keys", "Integrações"]);
   });
 
   it("offers a member General and Members only", async () => {
