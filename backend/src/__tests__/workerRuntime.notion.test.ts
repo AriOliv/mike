@@ -68,7 +68,7 @@ afterEach(() => {
 
 describe("worker runtime and the Notion sync switch", () => {
     it("boots with the switch off and no Notion credential, and never sweeps", async () => {
-        const runtime = await import("../workerRuntime");
+        const runtime = await import("../workerRuntime.js");
         expect(() => runtime.startAllWorkers()).not.toThrow();
         await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
         expect(notion.enqueueDueNotionSyncs).not.toHaveBeenCalled();
@@ -77,7 +77,7 @@ describe("worker runtime and the Notion sync switch", () => {
 
     it("with the switch on, the sweep runs every minute", async () => {
         process.env.NOTION_SYNC_ENABLED = "true";
-        const runtime = await import("../workerRuntime");
+        const runtime = await import("../workerRuntime.js");
         runtime.startAllWorkers();
         await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
         expect(notion.enqueueDueNotionSyncs.mock.calls.length).toBeGreaterThanOrEqual(3);
