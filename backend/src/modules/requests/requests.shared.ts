@@ -197,6 +197,22 @@ export function parseRequestCode(value: string): number | null {
 // catalogue, so the lanes, the steps and the team's strip share one table.
 export { REQUESTER_STEPS, requesterStep, type RequesterStep } from "./requests.stages";
 
+/**
+ * The pipeline's lanes (the contracts module's LANES), kept here too so the
+ * MCP tools' input schemas do not need another module loaded to be built.
+ */
+export const PIPELINE_LANES = ["entrada", "triagem", "revisao", "negociacao", "assinatura", "arquivado"] as const;
+
+/** The pipeline's lanes as the team reads them. */
+export const LANE_LABELS: Record<string, string> = {
+    entrada: "Entrada",
+    triagem: "Triagem",
+    revisao: "Revisão",
+    negociacao: "Negociação",
+    assinatura: "Assinatura",
+    arquivado: "Arquivado",
+};
+
 export function isEmail(value: unknown): value is string {
     return typeof value === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.trim());
 }
@@ -205,4 +221,90 @@ export function cleanText(value: unknown, max: number): string | null {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
     return trimmed ? trimmed.slice(0, max) : null;
+}
+
+export type PlanStep = {
+    id: string;
+    owner: { kind: "agent" | "person" | "requester"; name: string };
+    task: string;
+    state: "feito" | "rodando" | "a_fazer" | "aguardando";
+    /** The step leaves the Mike (e-mail, chat): it asks before acting. */
+    asksFirst?: boolean;
+};
+
+export type PlanInput = {
+    status: string;
+    assignee_name: string | null;
+    requester_name: string | null;
+    requester_email: string;
+    triage: {
+        kind?: string | null;
+        assignee_name?: string | null;
+        playbook_name?: string | null;
+        missing?: string[] | null;
+    } | null;
+    answered: boolean;
+};
+
+/**
+ * The orchestration plan of a request: who does what, in order, and where it
+ * stands, agents and people on the same list. The same plan the team panel
+ * draws (frontend lib/requests.ts requestPlan); the MCP tools return it.
+ * `forRequester` leaves out the internal review step (which playbook runs).
+ */
+export function requestPlan(request: PlanInput, options: { forRequester?: boolean } = {}): PlanStep[] {
+    const triage = request.triage;
+    const closed = request.status === "entregue" || request.status === "cancelado";
+    const person = request.assignee_name ?? triage?.assignee_name ?? "Responsável";
+    const kindLabel = triage?.kind ? (KIND_LABELS[triage.kind as RequestKind] ?? triage.kind) : null;
+    const steps: PlanStep[] = [
+        {
+            id: "triagem",
+            owner: { kind: "agent", name: "Agente de triagem" },
+            task: kindLabel ? `classificou como ${kindLabel} e listou o que falta` : "classificar e listar o que falta",
+            state: triage ? "feito" : "rodando",
+        },
+        {
+            id: "atribuicao",
+            owner: { kind: "agent", name: "Agente de atribuição" },
+            task: triage?.assignee_name ? `sugeriu ${triage.assignee_name} pela carga do time` : "sugerir quem pega",
+            state: triage ? "feito" : "a_fazer",
+        },
+    ];
+    if (triage?.playbook_name && !options.forRequester) {
+        steps.push({
+            id: "revisao",
+            owner: { kind: "agent", name: "Agente de revisão" },
+            task: `rodar o playbook "${triage.playbook_name}" quando o documento chegar`,
+            state: closed ? "feito" : "a_fazer",
+        });
+    }
+    const missing = triage?.missing ?? [];
+    if (missing.length > 0 || request.status === "aguardando_solicitante") {
+        steps.push({
+            id: "solicitante",
+            owner: { kind: "requester", name: request.requester_name ?? request.requester_email },
+            task: missing.length ? `enviar: ${missing.join(", ")}` : "responder a pergunta do Legal",
+            state:
+                request.status === "aguardando_solicitante"
+                    ? "aguardando"
+                    : closed || request.answered
+                      ? "feito"
+                      : "a_fazer",
+        });
+    }
+    steps.push({
+        id: "analise",
+        owner: { kind: "person", name: person },
+        task: "analisar e decidir",
+        state: closed ? "feito" : request.assignee_name && request.status === "em_andamento" ? "rodando" : "a_fazer",
+    });
+    steps.push({
+        id: "devolutiva",
+        owner: { kind: "person", name: person },
+        task: "devolver ao solicitante por e-mail",
+        state: request.status === "entregue" ? "feito" : "a_fazer",
+        asksFirst: true,
+    });
+    return steps;
 }

@@ -7,7 +7,8 @@ const audit = vi.hoisted(() => ({ recordAudit: vi.fn(async () => undefined) }));
 vi.mock("../../../lib/audit", () => audit);
 // The server derives the role; here nobody is on the legal team.
 const requests = vi.hoisted(() => ({ whoAmI: vi.fn(async () => ({ ok: true, data: { configured: false, role: "requester", area: null, areas: [] } })) }));
-vi.mock("../../requests/requests.service", () => requests);
+// The catalog also lists the Pedidos tools (REQUEST_TOOLS): keep the real module, replace only whoAmI.
+vi.mock("../../requests/requests.service", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../requests/requests.service")>()), ...requests }));
 const queue = vi.hoisted(() => ({ enqueueDbJob: vi.fn(async () => ({ id: "j", deduped: false })) }));
 vi.mock("../../../lib/dbq/enqueue", () => queue);
 
