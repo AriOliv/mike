@@ -20,6 +20,14 @@ on:
   workflow_dispatch:
   # Include stacked PRs whose base is another feature branch.
   pull_request:
+    # The Word add-in is not part of what these specs drive (they run the web
+    # app), so a PR that only touches it, or only docs, does not need this run.
+    # The add-in has its own workflow, Docker images still builds it, and the
+    # nightly run below covers any drift.
+    paths-ignore:
+      - "word-addin/**"
+      - "docs/**"
+      - "**/*.md"
   # Nightly run against the default branch, so drift that lands BETWEEN pull
   # requests (a dependency bump, a Supabase CLI change, an upstream UI tweak
   # breaking a selector) is caught within a day instead of surfacing on the next
@@ -180,8 +188,22 @@ jobs:
           --moduleResolution nodenext --target es2022 --skipLibCheck
           --esModuleInterop --types node e2e/*.ts playwright.config.ts
 
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-chromium
+
+      # A cache miss downloads the browsers (the CDN download is what stalls
+      # the job for ~30 min on bad days); a hit only installs the OS libs.
       - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS dependencies
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Verify and start deterministic model provider
         run: |

@@ -20,8 +20,10 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 describe("access token words", () => {
     it("offers only read permissions by default", () => {
-        expect(DEFAULT_SCOPES).toEqual(SCOPE_OPTIONS.map((o) => o.scope));
-        expect(SCOPE_OPTIONS.every((o) => o.readOnly)).toBe(true);
+        expect(DEFAULT_SCOPES).toEqual(SCOPE_OPTIONS.filter((o) => o.readOnly).map((o) => o.scope));
+        // A write is offered, but never ticked for the person.
+        expect(SCOPE_OPTIONS.filter((o) => !o.readOnly).map((o) => o.scope)).toEqual(["feedback:write"]);
+        expect(DEFAULT_SCOPES).not.toContain("feedback:write");
         expect(DEFAULT_SCOPES).not.toContain("pedidos:write");
     });
 
@@ -71,7 +73,7 @@ describe("access token words", () => {
         expect(scopes({ configured: true, role: "head" })).toContain("painel:read");
         expect(scopes({ configured: true, role: "team" })).not.toContain("painel:read");
         expect(scopes({ configured: true, role: "team" })).toContain("contratos:read");
-        expect(scopes({ configured: true, role: "requester" })).toEqual(["pedidos:read"]);
+        expect(scopes({ configured: true, role: "requester" })).toEqual(["pedidos:read", "feedback:write"]);
         // No Legal team configured, or role not known yet: the team's, as the menu.
         expect(scopes({ configured: false, role: "requester" })).toEqual(scopes({ configured: true, role: "team" }));
         expect(scopes(null)).toEqual(scopes({ configured: true, role: "team" }));

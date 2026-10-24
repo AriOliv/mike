@@ -157,18 +157,22 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
     requestId: string | null;
+    /** The form field a 422 points at, when the server names one. */
+    field: string | null;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
         requestId?: string | null;
+        field?: string | null;
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
         this.requestId = args.requestId ?? null;
+        this.field = args.field ?? null;
     }
 }
 
@@ -308,6 +312,7 @@ async function toApiError(
             detail?: unknown;
             code?: unknown;
             request_id?: unknown;
+            field?: unknown;
         };
         const requestId =
             typeof parsed.request_id === "string"
@@ -342,6 +347,7 @@ async function toApiError(
             status: response.status,
             code,
             requestId,
+            field: typeof parsed.field === "string" ? parsed.field : null,
             // A 4xx whose body carries no usable `detail` is a malformed
             // error response, and it is treated as one. `API error: 409` used
             // to be produced here instead — and because a 4xx message is the
@@ -4598,6 +4604,43 @@ export interface RequestParticipant {
     revoked_at: string | null;
 }
 
+export type RequestStage =
+    | "recebido"
+    | "triagem"
+    | "checklist"
+    | "analise"
+    | "negociacao"
+    | "assinatura"
+    | "concluido";
+export type StageOwnerKind = "agent" | "person" | "requester" | "none";
+export type StageOwner = { kind: StageOwnerKind; id: string | null; name: string | null };
+export type StageStripEntry = {
+    stage: RequestStage;
+    label: string;
+    state: "concluida" | "atual" | "pendente";
+    owner: StageOwner | null;
+    since: string | null;
+};
+/** Team view of a request's spine: where it is, with whom and since when. */
+export type RequestStageStrip = {
+    stage: RequestStage;
+    label: string;
+    /** "etapa 3 de 5": null on the two ends, which do not count. */
+    position: { index: number; of: number } | null;
+    owner: StageOwner;
+    /** Null on a request older than the history: leave "desde" out. */
+    since: string | null;
+    strip: StageStripEntry[];
+};
+export type RequestStageRow = {
+    stage: RequestStage;
+    owner_kind: StageOwnerKind;
+    owner_name: string | null;
+    entered_at: string;
+    left_at: string | null;
+    note: string | null;
+};
+
 export interface RequestTriage {
     kind?: RequestKind;
     kind_changed?: boolean;
@@ -4653,6 +4696,10 @@ export interface LegalRequest {
     participants?: RequestParticipant[];
     source?: { channel?: string; permalink?: string };
     can_decide?: boolean;
+    /** Team view: the spine, from the stage catalogue. */
+    stage?: RequestStageStrip;
+    /** Team view: the stages it went through, oldest first. */
+    stages?: RequestStageRow[];
     /** Team view: the intake checklist closed. */
     intake_completed_at?: string | null;
     /** Team view: the analysis found a critical risk and the Head was alerted. */
@@ -4707,6 +4754,10 @@ export interface NewRequest {
     needed_by?: string | null;
     document_ids?: string[];
     requester_area?: string;
+    /** Part 2, all optional: the other party's e-mail (kept, never sent to), the start and the term. */
+    counterparty_email?: string;
+    term_start?: string;
+    term_months?: number;
 }
 
 const jsonPost = (body: unknown): RequestInit => ({
@@ -4778,7 +4829,7 @@ export async function inviteRequestParticipant(
     return apiRequest(`/requests/${id}/participants`, jsonPost(body));
 }
 
-export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money";
+export type IntakeKind = "text" | "long_text" | "yes_no" | "date" | "money" | "choice" | "multi_choice";
 
 export interface IntakeItem {
     key: string;
@@ -4787,12 +4838,20 @@ export interface IntakeItem {
     required: boolean;
     hint?: string;
     detail_label?: string;
+    /** For choice and multi_choice: what the person picks from (value is the code the server stores). */
+    options?: { value: string; label: string }[];
+    /** The question cannot be answered "não sei" (it is the request itself). */
+    no_unknown?: boolean;
 }
 
 export interface IntakeAnswer {
     value: string;
     choice?: "sim" | "nao";
     detail?: string;
+    /** For choice and multi_choice: the option codes picked. */
+    selected?: string[];
+    /** The requester pressed "Não sei". */
+    unknown?: true;
     source: "requester" | "inferred";
     confirmed: boolean;
     /** For an inferred answer: the contract's words it came from. */
@@ -4814,9 +4873,60 @@ export interface RequestIntake {
     prefill: "lendo" | "concluido" | "falhou" | null;
     can_answer: boolean;
     template_source: "org" | "padrao";
+    /** The kind these questions are for; absent on a server older than the per-kind checklist. */
+    kind?: string;
+    /** The kind changed since the person last saw the checklist (the triage corrected it). */
+    kind_changed?: { from: string; to: string } | null;
+    /** No question is required for this kind (a legal question): the screen says so instead of "0 de 0". */
+    nothing_to_fill?: boolean;
 }
 
-export type IntakeAnswerInput = string | boolean | { value: string | boolean; detail?: string };
+export type RequestTermKey = "counterparty" | "term_start" | "term_months";
+
+/** What the agent read from the contract and waits for a person to confirm. */
+export type InferredRequestTerm = { value: string; quote: string };
+
+/** The contract's terms on a request: the other party, the start and term, and the end worked out from them. */
+export interface RequestTerms {
+    counterparty: string | null;
+    /** Team only: kept for later, never mailed. Null for whoever asked. */
+    counterparty_email: string | null;
+    term_start: string | null;
+    term_months: number | null;
+    /** start + months − 1 day (Código Civil, art. 132, §3º); null until both are known. */
+    term_end: string | null;
+    inferred: Partial<Record<RequestTermKey, InferredRequestTerm>>;
+    can_answer: boolean;
+}
+
+export async function getRequestTerms(id: string): Promise<RequestTerms> {
+    return apiRequest(`/requests/${id}/terms`);
+}
+
+/** Save what the person typed and/or confirm the agent's suggestions; an empty string clears a field. */
+export async function saveRequestTerms(
+    id: string,
+    body: {
+        counterparty?: string;
+        counterparty_email?: string;
+        term_start?: string;
+        term_months?: number | string;
+        confirm?: RequestTermKey[];
+    },
+): Promise<RequestTerms> {
+    return apiRequest(`/requests/${id}/terms`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+export type IntakeAnswerInput =
+    | string
+    | boolean
+    | string[]
+    | { value: string | boolean; detail?: string }
+    | { unknown: true };
 
 export async function getRequestIntake(id: string): Promise<RequestIntake> {
     return apiRequest(`/requests/${id}/intake`);
@@ -5170,7 +5280,68 @@ export interface Obligation {
     done: boolean;
     note: string | null;
     source_quote: string | null;
+    /** Who looks after the deadline and is warned; null = whoever created it. */
+    owner_email: string | null;
+    /** Days before the due date when the warning starts. */
+    alert_days: number;
+    /** What the deadline is: the end of the term, the notice, the decision, or one entered by hand. */
+    kind: ObligationKind;
+    /** Where it stands; `done` follows it (feito and dispensado are done). */
+    status: ObligationStatus;
     projects?: { name: string; counterparty: string | null; lane: string | null } | null;
+}
+
+export type ObligationKind = "vigencia" | "aviso_previo" | "renovacao" | "manual";
+export type ObligationStatus = "aberto" | "feito" | "dispensado";
+
+/** A deadline of one contract, with the days left (negative = overdue). */
+export interface ContractAlert extends Obligation {
+    days_left: number;
+}
+
+export async function getContractAlerts(projectId: string): Promise<ContractAlert[]> {
+    return apiRequest(`/projects/${encodeURIComponent(projectId)}/alerts`);
+}
+
+/** An amendment tied to a contract ("contrato original" of a request). */
+export interface LinkedAmendment {
+    id: string;
+    code: string;
+    title: string;
+    status: string;
+    delivered_at: string | null;
+    /** The term this amendment sets, when it states both start and months. */
+    term_end: string | null;
+}
+
+export async function getContractAmendments(projectId: string): Promise<LinkedAmendment[]> {
+    return apiRequest(`/projects/${encodeURIComponent(projectId)}/amendments`);
+}
+
+/** One deadline as a calendar file, for "criar evento". */
+export async function downloadObligationIcs(id: string): Promise<{ blob: Blob; filename: string }> {
+    const file = await apiBlobRequest(`/obligations/${encodeURIComponent(id)}/ics`);
+    return { blob: file.blob, filename: file.filename ?? "prazo.ics" };
+}
+
+/** A deadline whose warning window is open for the caller; negative = overdue. */
+export interface ObligationAlert extends Obligation {
+    days_left: number;
+}
+
+export async function getObligationAlerts(): Promise<ObligationAlert[]> {
+    return apiRequest("/obligations/alerts");
+}
+
+/** A person who can own a deadline: the legal team. */
+export interface ObligationOwner {
+    user_id: string;
+    email: string;
+    name: string;
+}
+
+export async function getObligationOwners(): Promise<ObligationOwner[]> {
+    return apiRequest("/obligations/owners");
 }
 
 export async function getObligations(params?: {
@@ -5192,6 +5363,8 @@ export async function createObligation(input: {
     mark?: ObligationMark;
     project_id?: string | null;
     note?: string | null;
+    owner_email?: string | null;
+    alert_days?: number;
 }): Promise<Obligation> {
     return apiRequest("/obligations", {
         method: "POST",
@@ -5202,7 +5375,16 @@ export async function createObligation(input: {
 
 export async function updateObligation(
     id: string,
-    patch: { done?: boolean; title?: string; due_date?: string; mark?: ObligationMark; note?: string | null },
+    patch: {
+        done?: boolean;
+        title?: string;
+        due_date?: string;
+        mark?: ObligationMark;
+        note?: string | null;
+        owner_email?: string | null;
+        alert_days?: number;
+        status?: ObligationStatus;
+    },
 ): Promise<Obligation> {
     return apiRequest(`/obligations/${id}`, {
         method: "PATCH",
@@ -5335,6 +5517,8 @@ export async function decideReviewClause(
     runId: string,
     findingId: string,
     input: { decision: "aceito" | "editado" | "rejeitado" | "desfeito"; edited_text?: string; reason?: string },
+    /** Leaving the page: the browser finishes the request after the tab is gone. */
+    options: { keepalive?: boolean } = {},
 ): Promise<{ decision: ReviewDecision | null; edit: EditAnnotation | null }> {
     return apiRequest(
         contractReviewPath(
@@ -5345,6 +5529,7 @@ export async function decideReviewClause(
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(input),
+            ...(options.keepalive ? { keepalive: true } : {}),
         },
     );
 }
@@ -5403,7 +5588,9 @@ export interface AnalysisResult {
         governing_law_forum: string;
         term_termination_penalties: string;
     };
-    open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro" }[];
+    open_points: { id: string; text: string; depends_on: "juridico_interno" | "founder" | "contraparte" | "due_diligence" | "outro"; quote?: string; span?: { start: number; end: number } | null }[];
+    /** Set when the model's answer was cut off and these sections could not be recovered. */
+    partial?: { missing: string[] };
 }
 export interface AnalystAnalysis {
     id: string;
@@ -5483,6 +5670,8 @@ export interface ContractPortfolioRow {
     verified: number;
     total: number;
     risk: "critico" | "atencao" | "ok" | null;
+    /** Who holds the contract's request, by name. */
+    assignee: string | null;
 }
 
 export interface ContractPortfolio {
@@ -5929,7 +6118,8 @@ export type McpScope =
     | "painel:read"
     | "pedidos:read"
     | "pedidos:write"
-    | "agente:config";
+    | "agente:config"
+    | "feedback:write";
 
 export interface McpAccessToken {
     id: string;
@@ -5968,4 +6158,51 @@ export async function createMcpToken(body: {
 
 export async function revokeMcpToken(id: string): Promise<McpAccessToken> {
     return apiRequest(`/mcp-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── Consulta de CNPJ (L-54) ─────────────────────────────────────────────────
+
+export interface CnpjRecord {
+    cnpj: string;
+    razao_social: string;
+    nome_fantasia: string | null;
+    situacao: string | null;
+    natureza_juridica: string | null;
+    cnae: { codigo: string | null; descricao: string | null };
+    porte: string | null;
+    endereco: string | null;
+    fonte: "cache" | "brasilapi" | "receitaws";
+    consultado_em: string;
+}
+
+/** The company record from the Receita's public data; off (404-like `cnpj_disabled`) until the server switches it on. */
+export async function lookupCnpj(cnpj: string): Promise<CnpjRecord> {
+    return apiRequest(`/cnpj/${encodeURIComponent(cnpj.replace(/\D/g, ""))}`);
+}
+
+// ── Algo errado? Conte (feedback no app, doc 13) ────────────────────────────
+
+export interface FeedbackReceipt {
+    number: number;
+    /** "REL-0042": the number the person is given. */
+    label: string;
+    redacted: boolean;
+}
+
+/** Whether the server has the feedback feature on; the entry points hide when not. */
+export async function getFeedbackStatus(): Promise<{ enabled: boolean }> {
+    return apiRequest("/feedback/status");
+}
+
+export async function sendFeedback(body: {
+    kind: "bug" | "feature";
+    body: string;
+    expected?: string;
+    route?: string;
+    app_version?: string;
+    browser?: string;
+    org_id?: string | null;
+    role?: string | null;
+}): Promise<FeedbackReceipt> {
+    return apiRequest("/feedback", jsonInit("POST", body));
 }

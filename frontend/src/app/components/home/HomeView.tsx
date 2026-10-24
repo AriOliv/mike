@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronUp, Diamond, FolderInput, Upload } from "lucide-react";
 import { PageHeader } from "@/app/components/shared/PageHeader";
@@ -31,6 +32,8 @@ import { SendContractsModal } from "./SendContractsModal";
 
 // While an agent is working, the screen refreshes itself.
 const POLL_MS = 5_000;
+/** How many reviews the Início draws; the rest is one click away on /contratos. */
+export const HOME_ROWS = 8;
 
 export function HomeView() {
     const router = useRouter();
@@ -87,6 +90,12 @@ export function HomeView() {
         () => (home ? filterReviews(home.reviews, { tab, filter, me, query }) : []),
         [home, tab, filter, me, query],
     );
+    // The Início is a glance: the first few, and a way to the rest. The full
+    // list still drives j/k and ?doc=; only what is drawn is cut. Without the
+    // cut, a long queue pushed the notice deadlines and the activity below it
+    // and they were painted over its last rows.
+    const shown = rows.slice(0, HOME_ROWS);
+    const hidden = rows.length - shown.length;
     const selected = home?.reviews.find((r) => r.id === selectedId) ?? null;
 
     const open = useCallback(
@@ -383,16 +392,28 @@ export function HomeView() {
                                     className="ml-auto h-7 w-full min-w-0 rounded-full border border-gray-200 bg-app-surface px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 sm:w-72"
                                 />
                             </div>
-                            <div className="flex max-h-[min(30rem,65vh)] flex-col">
+                            {/* A real height, not only a ceiling: the table's scroll area is h-full, and h-full of a parent with just a max-height collapses to auto, so the rows overflowed it. */}
+                            <div className="flex max-h-[min(30rem,65vh)] min-h-0 flex-col overflow-hidden rounded-xl">
                                 <HomeReviewTable
                                     onRetry={retry}
-                                    reviews={rows}
+                                    reviews={shown}
                                     loading={loading}
                                     selectedId={selectedId}
                                     onOpen={open}
                                     empty={emptyTable}
                                 />
                             </div>
+                            {hidden > 0 && (
+                                <p className="mt-2 text-right text-xs text-gray-500">
+                                    Mostrando {shown.length} de {rows.length}.{" "}
+                                    <Link
+                                        href="/contratos"
+                                        className="rounded text-gray-900 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                                    >
+                                        Ver todos os contratos ({rows.length})
+                                    </Link>
+                                </p>
+                            )}
                         </section>
 
                         <div className="mt-8 grid gap-8 lg:grid-cols-2">

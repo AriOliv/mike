@@ -15,7 +15,7 @@ import {
     ok,
     type ServiceResult,
 } from "../../lib/serviceResult";
-import { LANES, recordCardEvent, type Lane } from "../contracts/contracts.service";
+import { applyAmendedTerm, LANES, recordCardEvent, type Lane } from "../contracts/contracts.service";
 import {
     HEAD_ONLY,
     isHead,
@@ -56,8 +56,11 @@ import {
     type RequestStatus,
     type Urgency,
 } from "./requests.shared";
+import { parseTerms, termEnd, type Terms } from "./requests.terms";
+import { buildStrip, loadStageHistory, syncStage, type StageRow, type StageStrip } from "./requests.stages";
 import { loadTeamMembers, TRIAGE_AGENT_NAME } from "./requests.triage";
-import { loadTemplate, queueIntakePrefill } from "./requests.checklist";
+import { forKind, loadTemplate, queueIntakePrefill } from "./requests.checklist";
+import { applyAssignmentRules } from "./requests.rules";
 import { applyAnswers, intakeStatus } from "./requests.intake";
 
 export const TRIAGE_JOB_KIND = "request.triage";
@@ -76,10 +79,15 @@ export type CreateRequestInput = {
     requester_name?: unknown;
     /** The requesting area; remembered for next time. The chat bot sends it from the person's profile. */
     requester_area?: unknown;
-    /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp", ...} */
+    /** {channel: "form" | "slack" | "whatsapp" | "email" | "mcp" | "sistema", ...}; "sistema" is the platform itself (a renewal opened by a contract's end). */
     source?: unknown;
     /** Checklist answers given with the request: {key: value | {value, detail}}. */
     intake?: unknown;
+    /** The other party's e-mail: only kept (for the validation by link), never mailed. */
+    counterparty_email?: unknown;
+    /** When the contract starts (YYYY-MM-DD) and for how many months; the end is computed. */
+    term_start?: unknown;
+    term_months?: unknown;
     idempotency_key?: unknown;
 };
 
@@ -124,6 +132,17 @@ export type RequestTeamView = RequestPublicView & {
     intake_completed_at: string | null;
     /** The analysis found a critical risk and the Head was alerted. */
     critical_alert_at: string | null;
+    /** What the form asked about the contract. The end is computed; the e-mail is only kept, never mailed. */
+    terms: {
+        counterparty_email: string | null;
+        term_start: string | null;
+        term_months: number | null;
+        term_end: string | null;
+    };
+    /** The spine: current stage, who holds the ball and since when, and the strip. */
+    stage: StageStrip;
+    /** The stages it went through, oldest first; the open one is the current stage. */
+    stages: StageRow[];
 };
 
 export type RequestMessage = {
@@ -145,7 +164,7 @@ export type Participant = {
 };
 
 function sourceOf(value: unknown): Record<string, unknown> {
-    const allowed = ["form", "slack", "whatsapp", "email", "mcp"];
+    const allowed = ["form", "slack", "whatsapp", "email", "mcp", "sistema"];
     if (!value || typeof value !== "object") return { channel: "form" };
     const src = value as Record<string, unknown>;
     const channel = allowed.includes(String(src.channel)) ? String(src.channel) : "form";
@@ -167,8 +186,9 @@ function validateCreate(input: CreateRequestInput):
           urgency: Urgency;
           neededBy: string | null;
           documentIds: string[];
+          terms: Terms;
       }
-    | { ok: false; detail: string } {
+    | { ok: false; detail: string; field?: string } {
     const kind = REQUEST_KINDS.includes(input.kind as RequestKind) ? (input.kind as RequestKind) : null;
     if (!kind) return { ok: false, detail: "Escolha o tipo de pedido." };
     const context = cleanText(input.context, 8000) ?? "";
@@ -194,7 +214,19 @@ function validateCreate(input: CreateRequestInput):
     if (documentIds.length > MAX_ATTACHMENTS) {
         return { ok: false, detail: `Anexe no máximo ${MAX_ATTACHMENTS} arquivos.` };
     }
-    return { ok: true, kind, title, counterparty, context, urgency, neededBy, documentIds };
+    const terms = parseTerms(input);
+    if (!terms.ok) return { ok: false, detail: terms.detail, field: terms.field };
+    return {
+        ok: true,
+        kind,
+        title,
+        counterparty,
+        context,
+        urgency,
+        neededBy,
+        documentIds,
+        terms: { counterpartyEmail: terms.counterpartyEmail, termStart: terms.termStart, termMonths: terms.termMonths },
+    };
 }
 
 /**
@@ -322,6 +354,9 @@ async function resolveArea(
     given: unknown,
     channel: string,
 ): Promise<{ area: RequesterArea | null; source: "form" | "slack" | "perfil" | null }> {
+    // The platform has no requesting area, and must not borrow the one
+    // remembered for the person it acts through.
+    if (channel === "sistema") return { area: null, source: null };
     const area = normalizeArea(given);
     if (area) {
         const { error } = await db
@@ -356,7 +391,7 @@ export async function createRequest(
     const requesterEmail = normalizeEmail(caller.userEmail);
     if (!requesterEmail) return failure("validation", "Sua conta não tem e-mail.");
     const valid = validateCreate(input);
-    if (!valid.ok) return failure("validation", valid.detail);
+    if (!valid.ok) return failure("validation", valid.detail, valid.field ? `field:${valid.field}` : undefined);
 
     let team;
     try {
@@ -435,12 +470,16 @@ export async function createRequest(
             requester_area: area.area,
             requester_area_source: area.source,
             kind: valid.kind,
+            intake_kind: valid.kind,
             title: valid.title,
             counterparty: valid.counterparty,
             context: valid.context,
             urgency: valid.urgency,
             needed_by: valid.neededBy,
             due_at: dueAt.toISOString(),
+            counterparty_email: valid.terms.counterpartyEmail,
+            term_start: valid.terms.termStart,
+            term_months: valid.terms.termMonths,
             source: sourceOf(input.source),
             idempotency_key: idempotencyKey,
         })
@@ -452,6 +491,7 @@ export async function createRequest(
         return internalFailure(insertError);
     }
     const row = created as unknown as RequestRow;
+    await syncStage(db, row, "pedido recebido");
 
     let attached = 0;
     try {
@@ -467,11 +507,12 @@ export async function createRequest(
         ...(caller.actor
             ? actorFields(caller.actor)
             : {
-                  actorType: channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
-                  actorId: channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
+                  // The platform opening a renewal is the system, not a chat bot acting for someone.
+                  actorType: channel === "sistema" ? "system" : channel === "slack" || channel === "whatsapp" || channel === "mcp" ? "hermes" : "user",
+                  actorId: channel === "sistema" ? `system:${String(row.source.bot ?? "sistema")}` : channel === "form" ? caller.userId : `hermes:${String(row.source.bot ?? channel)}`,
                   actorName: requesterName ?? requesterEmail,
-                  onBehalfOf: channel === "form" ? null : requesterEmail,
-                  source: channel === "form" ? "ui" : "mcp",
+                  onBehalfOf: channel === "form" || channel === "sistema" ? null : requesterEmail,
+                  source: channel === "sistema" ? "cron" : channel === "form" ? "ui" : "mcp",
               }),
         action: "request.created",
         after: { code: requestCode(row.number), kind: valid.kind, channel: channelLabel(row.source), attachments: attached },
@@ -487,6 +528,8 @@ export async function createRequest(
             payload: { due: dueAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) },
         },
     ]);
+    // Fixed rules first: they name the owner without a model. The triage still runs and suggests the rest.
+    await applyAssignmentRules(db, row);
     try {
         await enqueueDbJob(db, {
             kind: TRIAGE_JOB_KIND,
@@ -499,12 +542,18 @@ export async function createRequest(
 
     // Checklist answers given on the form count as the requester's; the
     // intake agent then reads the attached contract for what is still open.
+    // A kind with nothing required (an organization's own lists may have none)
+    // has nothing to wait for: the checklist is closed at once.
+    const kindItems = forKind(await loadTemplate(db, team.org_id), row.kind);
+    if (intakeStatus(kindItems, {}).complete) {
+        await db.from("legal_requests").update({ intake_completed_at: new Date().toISOString() }).eq("id", row.id);
+    }
     if (input.intake && typeof input.intake === "object") {
         try {
-            const template = await loadTemplate(db, team.org_id);
-            const applied = applyAnswers(template.items, {}, { answers: input.intake }, new Date().toISOString());
+            const items = forKind(await loadTemplate(db, team.org_id), row.kind);
+            const applied = applyAnswers(items, {}, { answers: input.intake }, new Date().toISOString());
             if (applied.ok && applied.changed.length) {
-                const complete = intakeStatus(template.items, applied.answers).complete;
+                const complete = intakeStatus(items, applied.answers).complete;
                 await db
                     .from("legal_requests")
                     .update({ intake: applied.answers, ...(complete ? { intake_completed_at: new Date().toISOString() } : {}) })
@@ -632,8 +681,14 @@ async function buildView(
         .eq("request_id", row.id)
         .order("created_at", { ascending: true });
     if (error) throw error;
+    // The history follows the request: a card moved on the board, or a request
+    // older than the history, is recorded the first time anyone looks.
+    const current = await syncStage(db, row);
+    const stages = await loadStageHistory(db, row.id);
     return {
         ...base,
+        stage: buildStrip(current.stage, current.owner, stages),
+        stages,
         number: row.number,
         project_id: row.project_id,
         lane,
@@ -644,6 +699,12 @@ async function buildView(
         can_decide: isHead(audience),
         intake_completed_at: row.intake_completed_at,
         critical_alert_at: row.critical_alert_at,
+        terms: {
+            counterparty_email: row.counterparty_email,
+            term_start: row.term_start,
+            term_months: row.term_months,
+            term_end: termEnd(row.term_start, row.term_months),
+        },
     };
 }
 
@@ -958,6 +1019,7 @@ export async function assignRequest(
     const updated = await updateRow(db, row.id, {
         assignee_id: assigneeId,
         assigned_at: assigneeId ? new Date().toISOString() : null,
+        assigned_by: assigneeId ? "person" : null,
         status,
     });
     if (!updated.ok) return updated;
@@ -984,6 +1046,7 @@ export async function assignRequest(
             after: member ? { id: member.user_id, name: member.name } : null,
         });
     }
+    await syncStage(db, { ...row, ...updated.data }, member ? "responsável definido" : "responsável retirado");
     if (member) {
         await queueNotifications(db, [
             {
@@ -1252,6 +1315,31 @@ export async function moveRequestStage(
  * the card's documents. The requester is mailed; the card's progress is
  * marked done (the lane stays the team's call).
  */
+/**
+ * A delivered amendment changes the term of the contract it amends: the end
+ * of the term and the notice deadline are recomputed from the start and the
+ * months the requester confirmed (never from the model's "confirme" reading).
+ * Only an amendment tied to a contract of the team's organization, with both
+ * values; anything else leaves the contract alone. The delivery is already
+ * done, so a failure here is logged, never returned.
+ */
+async function applyAmendmentToParent(db: Db, caller: Caller, row: RequestRow): Promise<void> {
+    if (row.kind !== "aditivo" || !row.parent_project_id) return;
+    const end = termEnd(row.term_start, row.term_months);
+    if (!end) return;
+    try {
+        await applyAmendedTerm(db, {
+            projectId: row.parent_project_id,
+            orgId: row.org_id,
+            termEnd: end,
+            source: `Aditivo ${requestCode(row.number)}`,
+            actor: { userId: caller.userId, name: await teamCallerName(db, caller) },
+        });
+    } catch (error) {
+        console.error("[requests] amended term not applied", { requestId: row.id, error: safeError(error) });
+    }
+}
+
 export async function deliverRequest(
     db: Db,
     caller: Caller,
@@ -1288,6 +1376,8 @@ export async function deliverRequest(
         delivery: { message, document_ids: documentIds, delivered_by: caller.userId },
     });
     if (!updated.ok) return updated;
+    await syncStage(db, updated.data, "devolutiva enviada");
+    await applyAmendmentToParent(db, caller, row);
     if (row.project_id) {
         await db
             .from("projects")
@@ -1434,4 +1524,21 @@ export async function whoAmI(
         area,
         areas: REQUESTER_AREAS,
     });
+}
+
+
+/** The legal team's people, for a picker ("who looks after this"). Team members only. */
+export async function listLegalTeamMembers(
+    db: Db,
+    caller: Caller,
+): Promise<ServiceResult<{ user_id: string; email: string; name: string }[]>> {
+    try {
+        const team = await loadLegalTeam(db);
+        if (!team) return NO_LEGAL_TEAM;
+        if (!(await teamRole(db, caller, team.org_id))) return TEAM_ONLY;
+        const members = await loadTeamMembers(db, team.org_id);
+        return ok(members.sort((a, b) => a.name.localeCompare(b.name, "pt-BR")));
+    } catch (error) {
+        return internalFailure(error);
+    }
 }

@@ -1,0 +1,66 @@
+# Supabase Postgres (ships the base roles, auth schema, auth.uid…). One replica
+# on a regional-balanced PD; staging data is synthetic and rebuildable.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mike-db
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+spec:
+  selector: { app: db }
+  ports: [{ name: pg, port: 5432, targetPort: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+spec:
+  serviceName: db
+  replicas: 1
+  selector: { matchLabels: { app: db } }
+  template:
+    metadata: { labels: { app: db } }
+    spec:
+      serviceAccountName: mike-db
+      initContainers:
+        # A fresh PD has lost+found; initdb refuses a non-empty data dir.
+        - name: clean-lost-found
+          image: busybox:1.37
+          command: ["sh", "-c", "rm -rf /var/lib/postgresql/data/lost+found"]
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          resources: { requests: { cpu: 50m, memory: 64Mi } }
+      containers:
+        - name: postgres
+          image: supabase/postgres:17.6.1.136
+          ports: [{ containerPort: 5432 }]
+          env:
+            - name: POSTGRES_DB
+              value: postgres
+            - name: JWT_EXP
+              value: "3600"
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: POSTGRES_PASSWORD } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: mike-secrets, key: JWT_SECRET } }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d/zz-roles.sh, subPath: zz-roles.sh }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-h", "127.0.0.1"] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: init
+          configMap: { name: db-init-sql, defaultMode: 0755 }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: standard-rwo
+        resources: { requests: { storage: 10Gi } }
