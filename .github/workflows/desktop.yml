@@ -161,7 +161,7 @@ jobs:
 
       - name: Upload e2e artifacts (screenshots, summary)
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: desktop-local-e2e
           path: desktop/e2e/artifacts/

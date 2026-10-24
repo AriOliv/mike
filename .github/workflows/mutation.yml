@@ -64,7 +64,7 @@ jobs:
       # run is exactly when you want to read it.
       - name: Upload mutation report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: mutation-report
           path: backend/reports/mutation/
